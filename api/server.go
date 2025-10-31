@@ -795,7 +795,27 @@ func (s *Server) handlePerformance(c *gin.Context) {
 // authMiddleware JWT认证中间件
 func (s *Server) authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 如果是管理员模式，直接使用admin用户
+		authHeader := c.GetHeader("Authorization")
+
+		// 如果提供了Authorization头，优先验证JWT token（让登录用户看到自己的数据）
+		if authHeader != "" {
+			// 检查Bearer token格式
+			tokenParts := strings.Split(authHeader, " ")
+			if len(tokenParts) == 2 && tokenParts[0] == "Bearer" {
+				// 验证JWT token
+				claims, err := auth.ValidateJWT(tokenParts[1])
+				if err == nil {
+					// JWT验证成功，使用JWT中的用户ID（让用户看到自己的数据）
+					c.Set("user_id", claims.UserID)
+					c.Set("email", claims.Email)
+					c.Next()
+					return
+				}
+				// JWT验证失败，继续下面的逻辑
+			}
+		}
+
+		// 如果没有有效的JWT token，且是管理员模式，使用admin用户
 		if auth.IsAdminMode() {
 			c.Set("user_id", "admin")
 			c.Set("email", "admin@localhost")
@@ -803,33 +823,15 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		authHeader := c.GetHeader("Authorization")
+		// 非管理员模式且没有有效的token，返回未授权
 		if authHeader == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "缺少Authorization头"})
 			c.Abort()
 			return
 		}
 
-		// 检查Bearer token格式
-		tokenParts := strings.Split(authHeader, " ")
-		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "无效的Authorization格式"})
-			c.Abort()
-			return
-		}
-
-		// 验证JWT token
-		claims, err := auth.ValidateJWT(tokenParts[1])
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "无效的token: " + err.Error()})
-			c.Abort()
-			return
-		}
-
-		// 将用户信息存储到上下文中
-		c.Set("user_id", claims.UserID)
-		c.Set("email", claims.Email)
-		c.Next()
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "无效的token"})
+		c.Abort()
 	}
 }
 
