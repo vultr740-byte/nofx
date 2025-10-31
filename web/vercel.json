@@ -1,8 +1,0 @@
-{
-  "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "https://nofx-2vs8.onrender.com/api/:path*"
-    }
-  ]
-}
