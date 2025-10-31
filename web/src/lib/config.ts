@@ -5,6 +5,13 @@ export interface SystemConfig {
 let configPromise: Promise<SystemConfig> | null = null;
 let cachedConfig: SystemConfig | null = null;
 
+const isDev = window.location.origin.includes('localhost') || 
+              window.location.origin.includes('127.0.0.1');
+
+const API_BASE = isDev
+  ? '/api'
+  : 'https://nofx-2vs8.onrender.com/api';
+
 export function getSystemConfig(): Promise<SystemConfig> {
   if (cachedConfig) {
     return Promise.resolve(cachedConfig);
@@ -12,7 +19,7 @@ export function getSystemConfig(): Promise<SystemConfig> {
   if (configPromise) {
     return configPromise;
   }
-  configPromise = fetch('/api/config')
+  configPromise = fetch(`${API_BASE}/config`)
     .then((res) => res.json())
     .then((data: SystemConfig) => {
       cachedConfig = data;

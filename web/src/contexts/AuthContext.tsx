@@ -19,6 +19,14 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// 添加 API base 配置
+const isDev = window.location.origin.includes('localhost') || 
+              window.location.origin.includes('127.0.0.1');
+
+const API_BASE = isDev
+  ? '/api'
+  : 'https://nofx-2vs8.onrender.com/api';
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -60,7 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (email: string, password: string) => {
     try {
-      const response = await fetch('/api/login', {
+      const response = await fetch(`${API_BASE}/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -91,7 +99,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const register = async (email: string, password: string) => {
     try {
-      const response = await fetch('/api/register', {
+      const response = await fetch(`${API_BASE}/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -119,7 +127,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const verifyOTP = async (userID: string, otpCode: string) => {
     try {
-      const response = await fetch('/api/verify-otp', {
+      const response = await fetch(`${API_BASE}/verify-otp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -152,7 +160,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const completeRegistration = async (userID: string, otpCode: string) => {
     try {
-      const response = await fetch('/api/complete-registration', {
+      const response = await fetch(`${API_BASE}/complete-registration`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
