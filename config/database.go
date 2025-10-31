@@ -17,6 +17,35 @@ import (
 // Database 配置数据库
 type Database struct {
 	db *sql.DB
+	isPostgreSQL bool
+}
+
+// 辅助函数：根据数据库类型选择参数占位符
+func (d *Database) getPlaceholder(index int) string {
+	if d.isPostgreSQL {
+		return fmt.Sprintf("$%d", index)
+	}
+	return "?"
+}
+
+// 辅助函数：转换查询语句中的占位符
+func (d *Database) convertQuery(sqliteQuery string) string {
+	if !d.isPostgreSQL {
+		return sqliteQuery
+	}
+
+	// 将 ? 转换为 $1, $2, $3...
+	result := sqliteQuery
+	placeholderCount := 0
+
+	for strings.Contains(result, "?") {
+		placeholderCount++
+		oldPlaceholder := "?"
+		newPlaceholder := fmt.Sprintf("$%d", placeholderCount)
+		result = strings.Replace(result, oldPlaceholder, newPlaceholder, 1)
+	}
+
+	return result
 }
 
 // NewDatabase 创建配置数据库
@@ -43,7 +72,14 @@ func NewDatabase(dbPath string) (*Database, error) {
 		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
 
-	database := &Database{db: db}
+	// 检查数据库类型
+	dbURL := os.Getenv("DATABASE_URL")
+	isPostgreSQL := dbURL != "" && strings.Contains(dbURL, "supabase")
+
+	database := &Database{
+		db:          db,
+		isPostgreSQL: isPostgreSQL,
+	}
 
 	// Supabase 数据库不需要创建表（通过 SQL 迁移脚本创建）
 	if dbURL != "" && strings.Contains(dbURL, "supabase") {
@@ -458,10 +494,11 @@ func GenerateOTPSecret() (string, error) {
 
 // CreateUser 创建用户
 func (d *Database) CreateUser(user *User) error {
-	_, err := d.db.Exec(`
+	query := d.convertQuery(`
 		INSERT INTO users (id, email, password_hash, otp_secret, otp_verified)
 		VALUES (?, ?, ?, ?, ?)
-	`, user.ID, user.Email, user.PasswordHash, user.OTPSecret, user.OTPVerified)
+	`)
+	_, err := d.db.Exec(query, user.ID, user.Email, user.PasswordHash, user.OTPSecret, user.OTPVerified)
 	return err
 }
 
@@ -494,11 +531,12 @@ func (d *Database) EnsureAdminUser() error {
 // GetUserByEmail 通过邮箱获取用户
 func (d *Database) GetUserByEmail(email string) (*User, error) {
 	var user User
-	err := d.db.QueryRow(`
+	query := d.convertQuery(`
 		SELECT id, email, password_hash, otp_secret, otp_verified, created_at, updated_at
 		FROM users WHERE email = ?
-	`, email).Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret, 
+	`)
+	err := d.db.QueryRow(query, email).Scan(
+		&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret,
 		&user.OTPVerified, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
@@ -510,11 +548,12 @@ func (d *Database) GetUserByEmail(email string) (*User, error) {
 // GetUserByID 通过ID获取用户
 func (d *Database) GetUserByID(userID string) (*User, error) {
 	var user User
-	err := d.db.QueryRow(`
+	query := d.convertQuery(`
 		SELECT id, email, password_hash, otp_secret, otp_verified, created_at, updated_at
 		FROM users WHERE id = ?
-	`, userID).Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret, 
+	`)
+	err := d.db.QueryRow(query, userID).Scan(
+		&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret,
 		&user.OTPVerified, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
@@ -525,7 +564,8 @@ func (d *Database) GetUserByID(userID string) (*User, error) {
 
 // UpdateUserOTPVerified 更新用户OTP验证状态
 func (d *Database) UpdateUserOTPVerified(userID string, verified bool) error {
-	_, err := d.db.Exec(`UPDATE users SET otp_verified = ? WHERE id = ?`, verified, userID)
+	query := d.convertQuery(`UPDATE users SET otp_verified = ? WHERE id = ?`)
+	_, err := d.db.Exec(query, verified, userID)
 	return err
 }
 
@@ -768,19 +808,22 @@ func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 
 // UpdateTraderStatus 更新交易员状态
 func (d *Database) UpdateTraderStatus(userID, id string, isRunning bool) error {
-	_, err := d.db.Exec(`UPDATE traders SET is_running = ? WHERE id = ? AND user_id = ?`, isRunning, id, userID)
+	query := d.convertQuery(`UPDATE traders SET is_running = ? WHERE id = ? AND user_id = ?`)
+	_, err := d.db.Exec(query, isRunning, id, userID)
 	return err
 }
 
 // UpdateTraderCustomPrompt 更新交易员自定义Prompt
 func (d *Database) UpdateTraderCustomPrompt(userID, id string, customPrompt string, overrideBase bool) error {
-	_, err := d.db.Exec(`UPDATE traders SET custom_prompt = ?, override_base_prompt = ? WHERE id = ? AND user_id = ?`, customPrompt, overrideBase, id, userID)
+	query := d.convertQuery(`UPDATE traders SET custom_prompt = ?, override_base_prompt = ? WHERE id = ? AND user_id = ?`)
+	_, err := d.db.Exec(query, customPrompt, overrideBase, id, userID)
 	return err
 }
 
 // DeleteTrader 删除交易员
 func (d *Database) DeleteTrader(userID, id string) error {
-	_, err := d.db.Exec(`DELETE FROM traders WHERE id = ? AND user_id = ?`, id, userID)
+	query := d.convertQuery(`DELETE FROM traders WHERE id = ? AND user_id = ?`)
+	_, err := d.db.Exec(query, id, userID)
 	return err
 }
 
@@ -826,7 +869,8 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 // GetSystemConfig 获取系统配置
 func (d *Database) GetSystemConfig(key string) (string, error) {
 	var value string
-	err := d.db.QueryRow(`SELECT value FROM system_config WHERE key = ?`, key).Scan(&value)
+	query := d.convertQuery(`SELECT value FROM system_config WHERE key = ?`)
+	err := d.db.QueryRow(query, key).Scan(&value)
 	return value, err
 }
 
