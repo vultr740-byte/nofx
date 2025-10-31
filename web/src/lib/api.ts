@@ -8,12 +8,7 @@ import type {
   CompetitionData,
 } from '../types';
 
-const isDev = window.location.origin.includes('localhost') || 
-              window.location.origin.includes('127.0.0.1');
-
-const API_BASE = isDev
-  ? '/api'
-  : 'https://nofx-2vs8.onrender.com/api';
+const API_BASE = '/api';
 
 export const api = {
   // 竞赛相关接口
