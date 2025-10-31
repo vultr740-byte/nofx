@@ -586,19 +586,24 @@ func (tm *TraderManager) LoadUserTraders(database *config.Database, userID strin
 func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiModelCfg *config.AIModelConfig, exchangeCfg *config.ExchangeConfig, coinPoolURL string, maxDailyLoss, maxDrawdown float64, stopTradingMinutes int, btcEthLeverage, altcoinLeverage int) error {
 	// 构建AutoTraderConfig
 	traderConfig := trader.AutoTraderConfig{
-		ID:              traderCfg.ID,
-		Name:            traderCfg.Name,
-		AIModel:         aiModelCfg.Provider, // 使用provider作为模型标识
-		Exchange:        exchangeCfg.ID,      // 使用exchange ID
-		InitialBalance:  traderCfg.InitialBalance,
-		ScanInterval:    time.Duration(traderCfg.ScanIntervalMinutes) * time.Minute,
-		CoinPoolAPIURL:  coinPoolURL,
-		MaxDailyLoss:    maxDailyLoss,
-		MaxDrawdown:     maxDrawdown,
-		StopTradingTime: time.Duration(stopTradingMinutes) * time.Minute,
-		IsCrossMargin:   traderCfg.IsCrossMargin,
-		BTCETHLeverage:  btcEthLeverage,
-		AltcoinLeverage: altcoinLeverage,
+		ID:                    traderCfg.ID,
+		Name:                  traderCfg.Name,
+		AIModel:               aiModelCfg.Provider, // 使用provider作为模型标识
+		Exchange:              exchangeCfg.ID,      // 使用exchange ID
+		BinanceAPIKey:         "",
+		BinanceSecretKey:      "",
+		HyperliquidPrivateKey: "",
+		HyperliquidTestnet:    exchangeCfg.Testnet, // 从交易所配置读取testnet设置
+		HyperliquidWalletAddr: "",
+		InitialBalance:        traderCfg.InitialBalance,
+		ScanInterval:          time.Duration(traderCfg.ScanIntervalMinutes) * time.Minute,
+		CoinPoolAPIURL:        coinPoolURL,
+		MaxDailyLoss:          maxDailyLoss,
+		MaxDrawdown:           maxDrawdown,
+		StopTradingTime:       time.Duration(stopTradingMinutes) * time.Minute,
+		IsCrossMargin:         traderCfg.IsCrossMargin,
+		BTCETHLeverage:        btcEthLeverage,
+		AltcoinLeverage:       altcoinLeverage,
 	}
 
 	// 根据交易所类型设置API密钥
@@ -608,6 +613,7 @@ func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiMode
 	} else if exchangeCfg.ID == "hyperliquid" {
 		traderConfig.HyperliquidPrivateKey = exchangeCfg.APIKey // hyperliquid用APIKey存储private key
 		traderConfig.HyperliquidWalletAddr = exchangeCfg.HyperliquidWalletAddr
+		// HyperliquidTestnet 已经在上面设置了
 	} else if exchangeCfg.ID == "aster" {
 		traderConfig.AsterUser = exchangeCfg.AsterUser
 		traderConfig.AsterSigner = exchangeCfg.AsterSigner
