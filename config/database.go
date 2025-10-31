@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	// _ "github.com/lib/pq"  // 暂时注释掉，等网络恢复后启用
+	// _ "github.com/lib/pq"  // 网络问题暂时注释
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -57,11 +57,8 @@ func NewDatabase(dbPath string) (*Database, error) {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL != "" && strings.Contains(dbURL, "supabase") {
 		// 使用 Supabase PostgreSQL
-		log.Printf("📋 连接到 Supabase PostgreSQL 数据库 (需要启用 PostgreSQL 驱动)")
-		// db, err = sql.Open("postgres", dbURL)  // 等网络恢复后启用
-		// 暂时使用 SQLite 作为后备
-		log.Printf("⚠️  网络问题，暂时使用 SQLite 数据库")
-		db, err = sql.Open("sqlite3", dbPath)
+		log.Printf("📋 连接到 Supabase PostgreSQL 数据库")
+		db, err = sql.Open("postgres", dbURL)
 	} else {
 		// 使用本地 SQLite
 		log.Printf("📋 连接到本地 SQLite 数据库: %s", dbPath)
