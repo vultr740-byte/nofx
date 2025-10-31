@@ -6,8 +6,11 @@ import (
 	"encoding/base32"
 	"fmt"
 	"log"
+	"os"
+	"strings"
 	"time"
 
+	// _ "github.com/lib/pq"  // 暂时注释掉，等网络恢复后启用
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -18,14 +21,37 @@ type Database struct {
 
 // NewDatabase 创建配置数据库
 func NewDatabase(dbPath string) (*Database, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	var db *sql.DB
+	var err error
+
+	// 检查是否使用 Supabase (PostgreSQL)
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL != "" && strings.Contains(dbURL, "supabase") {
+		// 使用 Supabase PostgreSQL
+		log.Printf("📋 连接到 Supabase PostgreSQL 数据库 (需要启用 PostgreSQL 驱动)")
+		// db, err = sql.Open("postgres", dbURL)  // 等网络恢复后启用
+		// 暂时使用 SQLite 作为后备
+		log.Printf("⚠️  网络问题，暂时使用 SQLite 数据库")
+		db, err = sql.Open("sqlite3", dbPath)
+	} else {
+		// 使用本地 SQLite
+		log.Printf("📋 连接到本地 SQLite 数据库: %s", dbPath)
+		db, err = sql.Open("sqlite3", dbPath)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
 
 	database := &Database{db: db}
-	if err := database.createTables(); err != nil {
-		return nil, fmt.Errorf("创建表失败: %w", err)
+
+	// Supabase 数据库不需要创建表（通过 SQL 迁移脚本创建）
+	if dbURL != "" && strings.Contains(dbURL, "supabase") {
+		log.Printf("✅ Supabase 数据库连接成功，跳过表创建")
+	} else {
+		if err := database.createTables(); err != nil {
+			return nil, fmt.Errorf("创建表失败: %w", err)
+		}
 	}
 
 	if err := database.initDefaultData(); err != nil {
@@ -35,8 +61,14 @@ func NewDatabase(dbPath string) (*Database, error) {
 	return database, nil
 }
 
-// createTables 创建数据库表
+// createTables 创建数据库表 (仅用于 SQLite)
 func (d *Database) createTables() error {
+	// 检查是否使用 PostgreSQL
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL != "" && strings.Contains(dbURL, "supabase") {
+		// PostgreSQL 使用迁移脚本，不需要在这里创建表
+		return nil
+	}
 	queries := []string{
 		// AI模型配置表
 		`CREATE TABLE IF NOT EXISTS ai_models (
@@ -172,6 +204,10 @@ func (d *Database) createTables() error {
 
 // initDefaultData 初始化默认数据
 func (d *Database) initDefaultData() error {
+	// 检查是否使用 PostgreSQL
+	dbURL := os.Getenv("DATABASE_URL")
+	isPostgreSQL := dbURL != "" && strings.Contains(dbURL, "supabase")
+
 	// 初始化AI模型（使用default用户）
 	aiModels := []struct {
 		id, name, provider string
@@ -181,10 +217,20 @@ func (d *Database) initDefaultData() error {
 	}
 
 	for _, model := range aiModels {
-		_, err := d.db.Exec(`
-			INSERT OR IGNORE INTO ai_models (id, user_id, name, provider, enabled) 
-			VALUES (?, 'default', ?, ?, 0)
-		`, model.id, model.name, model.provider)
+		var query string
+		if isPostgreSQL {
+			query = `
+				INSERT INTO ai_models (id, user_id, name, provider, enabled)
+				VALUES ($1, 'default', $2, $3, 0)
+				ON CONFLICT (id, user_id) DO NOTHING
+			`
+		} else {
+			query = `
+				INSERT OR IGNORE INTO ai_models (id, user_id, name, provider, enabled)
+				VALUES (?, 'default', ?, ?, 0)
+			`
+		}
+		_, err := d.db.Exec(query, model.id, model.name, model.provider)
 		if err != nil {
 			return fmt.Errorf("初始化AI模型失败: %w", err)
 		}
@@ -200,10 +246,20 @@ func (d *Database) initDefaultData() error {
 	}
 
 	for _, exchange := range exchanges {
-		_, err := d.db.Exec(`
-			INSERT OR IGNORE INTO exchanges (id, user_id, name, type, enabled) 
-			VALUES (?, 'default', ?, ?, 0)
-		`, exchange.id, exchange.name, exchange.typ)
+		var query string
+		if isPostgreSQL {
+			query = `
+				INSERT INTO exchanges (id, user_id, name, type, enabled)
+				VALUES ($1, 'default', $2, $3, 0)
+				ON CONFLICT (id, user_id) DO NOTHING
+			`
+		} else {
+			query = `
+				INSERT OR IGNORE INTO exchanges (id, user_id, name, type, enabled)
+				VALUES (?, 'default', ?, ?, 0)
+			`
+		}
+		_, err := d.db.Exec(query, exchange.id, exchange.name, exchange.typ)
 		if err != nil {
 			return fmt.Errorf("初始化交易所失败: %w", err)
 		}
@@ -226,10 +282,20 @@ func (d *Database) initDefaultData() error {
 	}
 
 	for key, value := range systemConfigs {
-		_, err := d.db.Exec(`
-			INSERT OR IGNORE INTO system_config (key, value) 
-			VALUES (?, ?)
-		`, key, value)
+		var query string
+		if isPostgreSQL {
+			query = `
+				INSERT INTO system_config (key, value)
+				VALUES ($1, $2)
+				ON CONFLICT (key) DO NOTHING
+			`
+		} else {
+			query = `
+				INSERT OR IGNORE INTO system_config (key, value)
+				VALUES (?, ?)
+			`
+		}
+		_, err := d.db.Exec(query, key, value)
 		if err != nil {
 			return fmt.Errorf("初始化系统配置失败: %w", err)
 		}

@@ -138,11 +138,14 @@ func main() {
 	adminModeStr, _ := database.GetSystemConfig("admin_mode")
 	adminMode := adminModeStr != "false" // 默认为true
 	
-	// 设置JWT密钥
-	jwtSecret, _ := database.GetSystemConfig("jwt_secret")
+	// 设置JWT密钥 - 优先使用环境变量
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret, _ = database.GetSystemConfig("jwt_secret")
+	}
 	if jwtSecret == "" {
 		jwtSecret = "your-jwt-secret-key-change-in-production-make-it-long-and-random"
-		log.Printf("⚠️  使用默认JWT密钥，建议在生产环境中配置")
+		log.Printf("⚠️  使用默认JWT密钥，建议在生产环境中配置 JWT_SECRET 环境变量")
 	}
 	auth.SetJWTSecret(jwtSecret)
 	
