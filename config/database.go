@@ -73,7 +73,6 @@ func NewDatabase(dbPath string) (*Database, error) {
 	}
 
 	// 检查数据库类型
-	dbURL := os.Getenv("DATABASE_URL")
 	isPostgreSQL := dbURL != "" && strings.Contains(dbURL, "supabase")
 
 	database := &Database{
