@@ -1,15 +1,16 @@
-# 🤖 NOFX - AI-Driven Crypto Futures Auto Trading Competition System
+# 🤖 NOFX - Multi-AI Model Automated Trading Platform
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org/)
 [![React](https://img.shields.io/badge/React-18+-61DAFB?style=flat&logo=react)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?style=flat&logo=typescript)](https://www.typescriptlang.org/)
+[![SQLite](https://img.shields.io/badge/SQLite-3+-003B57?style=flat&logo=sqlite)](https://sqlite.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 **Languages:** [English](README.md) | [中文](README.zh-CN.md) | [Українська](README.uk.md) | [Русский](README.ru.md)
 
 ---
 
-An automated crypto futures trading system powered by **DeepSeek/Qwen AI**, supporting **Binance, Hyperliquid, and Aster DEX exchanges**, **multi-AI model live trading competition**, featuring comprehensive market analysis, AI decision-making, **self-learning mechanism**, and professional Web monitoring interface.
+A modern automated crypto futures trading platform powered by **DeepSeek/Qwen AI**, supporting **Binance, Hyperliquid, and Aster DEX exchanges**. Create and manage multiple AI traders with dynamic configuration through a web interface. Features comprehensive market analysis, AI decision-making, **multi-AI model live trading competition**, **self-learning mechanism**, and professional monitoring dashboard.
 
 > ⚠️ **Risk Warning**: This system is experimental. AI auto-trading carries significant risks. Strongly recommended for learning/research purposes or testing with small amounts only!
 
@@ -23,7 +24,11 @@ Join our Telegram developer community to discuss, share ideas, and get support:
 
 ## 🆕 What's New (Latest Update)
 
-### 🚀 Multi-Exchange Support!
+### 🚀 Complete System Transformation - Web-Based Configuration!
+
+NOFX has been **completely transformed** from a static config-based system to a **dynamic web-based trading platform** with **multi-exchange support**!
+
+#### **Multi-Exchange Support**
 
 NOFX now supports **three major exchanges**: Binance, Hyperliquid, and Aster DEX!
 
@@ -31,26 +36,27 @@ NOFX now supports **three major exchanges**: Binance, Hyperliquid, and Aster DEX
 
 A high-performance decentralized perpetual futures exchange!
 
-**Key Features:**
-- ✅ Full trading support (long/short, leverage, stop-loss/take-profit)
-- ✅ Automatic precision handling (order size & price)
-- ✅ Unified trader interface (seamless exchange switching)
-- ✅ Support for both mainnet and testnet
-- ✅ No API keys needed - just your Ethereum private key
+**Major Changes:**
+- ✅ **Web-Based Configuration**: Create and manage AI traders through a modern web interface
+- ✅ **Database-Driven Architecture**: SQLite database replaces static JSON configuration
+- ✅ **Separate AI Models & Exchanges**: Configure AI models and exchanges independently
+- ✅ **Dynamic Trader Creation**: Create traders by combining configured AI models and exchanges
+- ✅ **Real-Time Management**: Start/stop traders, update configurations without restart
+- ✅ **No Default Traders**: Clean slate - create only the traders you need
 
-**Why Hyperliquid?**
-- 🔥 Lower fees than centralized exchanges
-- 🔒 Non-custodial - you control your funds
-- ⚡ Fast execution with on-chain settlement
-- 🌍 No KYC required
+**New Workflow:**
+1. **Configure AI Models**: Add your DeepSeek/Qwen API keys through the web interface
+2. **Configure Exchanges**: Set up Binance/Hyperliquid API credentials
+3. **Create Traders**: Combine any AI model with any exchange to create custom traders
+4. **Monitor & Control**: Start/stop traders and monitor performance in real-time
 
-**Quick Start:**
-1. Get your MetaMask private key (remove `0x` prefix)
-2. Set `"exchange": "hyperliquid"` in config.json
-3. Add `"hyperliquid_private_key": "your_key"`
-4. Start trading!
+**Why This Update?**
+- 🎯 **User-Friendly**: No more editing JSON files or server restarts
+- 🔧 **Flexible**: Mix and match different AI models with different exchanges
+- 📊 **Scalable**: Create unlimited trader combinations
+- 🔒 **Secure**: Database storage with proper data management
 
-See [Configuration Guide](#-alternative-using-hyperliquid-exchange) for details.
+See [Quick Start](#-quick-start) for the new setup process!
 
 #### **Aster DEX Exchange** (NEW! v2.0.2)
 
@@ -73,7 +79,7 @@ A Binance-compatible decentralized perpetual futures exchange!
 1. Visit [Aster API Wallet](https://www.asterdex.com/en/api-wallet)
 2. Connect your main wallet and create an API wallet
 3. Copy the API Signer address and Private Key
-4. Set `"exchange": "aster"` in config.json
+4. ~~Set `"exchange": "aster"` in config.json~~ *Configure through web interface*
 5. Add `"aster_user"`, `"aster_signer"`, and `"aster_private_key"`
 
 ---
@@ -92,11 +98,11 @@ A Binance-compatible decentralized perpetual futures exchange!
 
 ## ✨ Core Features
 
-### 🏆 Multi-AI Competition Mode
-- **Qwen vs DeepSeek** live trading battle
-- Independent account management and decision logs
-- Real-time performance comparison charts
-- ROI PK and win rate statistics
+### 🎛️ Web-Based Configuration Management
+- **Dynamic AI Model Setup**: Configure DeepSeek and Qwen API keys through web interface
+- **Exchange Management**: Set up Binance and Hyperliquid credentials independently
+- **Flexible Trader Creation**: Mix any AI model with any exchange
+- **Real-Time Control**: Start/stop traders without system restart
 
 ### 🧠 AI Self-Learning Mechanism (NEW!)
 - **Historical Feedback**: Analyzes last 20 cycles of trading performance before each decision
@@ -150,7 +156,7 @@ A Binance-compatible decentralized perpetual futures exchange!
 ```
 nofx/
 ├── main.go                          # Program entry (multi-trader manager)
-├── config.json                      # Configuration file (API keys, multi-trader config)
+├── config.json                      # Configuration file (API keys, ~~multi-trader config~~) (Trader config via web interface)
 │
 ├── api/                            # HTTP API service
 │   └── server.go                   # Gin framework, RESTful API
@@ -226,7 +232,7 @@ Before using this system, you need a Binance Futures account. **Use our referral
 5. **Create API Key**:
    - Go to Account → API Management
    - Create new API key, **enable "Futures" permission**
-   - Save API Key and Secret Key (needed for config.json)
+   - Save API Key and Secret Key (~~needed for config.json~~) *needed for web interface*
    - **Important**: Whitelist your IP address for security
 
 ### Fee Discount Benefits:
@@ -239,20 +245,22 @@ Before using this system, you need a Binance Futures account. **Use our referral
 
 ## 🚀 Quick Start
 
-### 🐳 Option A: Docker One-Click Deployment (EASIEST - Recommended for Beginners!)
+### 🐳 Option A: Docker One-Click Deployment (EASIEST - Recommended!)
 
-**⚡ Start trading in 3 simple steps with Docker - No installation needed!**
+**⚡ Start the platform in 2 simple steps with Docker - No installation needed!**
 
-Docker automatically handles all dependencies (Go, Node.js, TA-Lib) and environment setup. Perfect for beginners!
+Docker automatically handles all dependencies (Go, Node.js, TA-Lib, SQLite) and environment setup.
 
 #### Step 1: Prepare Configuration
 ```bash
 # Copy configuration template
-cp config.json.example config.json
+cp config.example.jsonc config.json
 
 # Edit and fill in your API keys
 nano config.json  # or use any editor
 ```
+
+⚠️ **Note**: Basic config.json is still needed for some settings, but ~~trader configurations~~ are now done through the web interface.
 
 #### Step 2: One-Click Start
 ```bash
@@ -270,10 +278,16 @@ chmod +x start.sh
 docker compose up -d --build
 ```
 
-#### Step 3: Access Dashboard
+#### Step 2: Access Web Interface
 Open your browser and visit: **http://localhost:3000**
 
-**That's it! 🎉** Your AI trading system is now running!
+**That's it! 🎉** Your AI trading platform is now running!
+
+#### Initial Setup (Through Web Interface)
+1. **Configure AI Models**: Add your DeepSeek/Qwen API keys
+2. **Configure Exchanges**: Set up Binance/Hyperliquid credentials  
+3. **Create Traders**: Combine AI models with exchanges
+4. **Start Trading**: Launch your configured traders
 
 #### Manage Your System
 ```bash
@@ -378,71 +392,73 @@ Before configuring the system, you need to obtain AI API keys. Choose one of the
 
 ---
 
-### 5. System Configuration
+### 5. Start the System
 
-**Two configuration modes available:**
-- **🌟 Beginner Mode**: Single trader + default coins (recommended!)
-- **⚔️ Expert Mode**: Multiple traders competition
-
-#### 🌟 Beginner Mode Configuration (Recommended)
-
-**Step 1**: Copy and rename the example config file
+#### **Step 1: Start the Backend**
 
 ```bash
-cp config.json.example config.json
+# Build the program (first time only, or after code changes)
+go build -o nofx
+
+# Start the backend
+./nofx
 ```
 
-**Step 2**: Edit `config.json` with your API keys
+**What you should see:**
 
-```json
-{
-  "traders": [
-    {
-      "id": "my_trader",
-      "name": "My AI Trader",
-      "ai_model": "deepseek",
-      "binance_api_key": "YOUR_BINANCE_API_KEY",
-      "binance_secret_key": "YOUR_BINANCE_SECRET_KEY",
-      "use_qwen": false,
-      "deepseek_key": "sk-xxxxxxxxxxxxx",
-      "qwen_key": "",
-      "initial_balance": 1000.0,
-      "scan_interval_minutes": 3
-    }
-  ],
-  "leverage": {
-    "btc_eth_leverage": 5,
-    "altcoin_leverage": 5
-  },
-  "use_default_coins": true,
-  "coin_pool_api_url": "",
-  "oi_top_api_url": "",
-  "api_server_port": 8080
-}
+```
+╔════════════════════════════════════════════════════════════╗
+║    🤖 AI多模型交易系统 - 支持 DeepSeek & Qwen            ║
+╚════════════════════════════════════════════════════════════╝
+
+🤖 数据库中的AI交易员配置:
+  • 暂无配置的交易员，请通过Web界面创建
+
+🌐 API服务器启动在 http://localhost:8081
 ```
 
-**Step 3**: Replace placeholders with your actual keys
+#### **Step 2: Start the Frontend**
 
-| Placeholder | Replace With | Where to Get |
-|------------|--------------|--------------|
-| `YOUR_BINANCE_API_KEY` | Your Binance API Key | Binance → Account → API Management |
-| `YOUR_BINANCE_SECRET_KEY` | Your Binance Secret Key | Same as above |
-| `sk-xxxxxxxxxxxxx` | Your DeepSeek API Key | [platform.deepseek.com](https://platform.deepseek.com) |
+Open a **NEW terminal window**, then:
 
-**Step 4**: Adjust initial balance (optional)
+```bash
+cd web
+npm run dev
+```
 
-- `initial_balance`: Set to your actual Binance futures account balance
-- Used to calculate profit/loss percentage
-- Example: If you have 500 USDT, set `"initial_balance": 500.0`
+#### **Step 3: Access the Web Interface**
 
-**✅ Configuration Checklist:**
+Open your browser and visit: **🌐 http://localhost:3000**
 
-- [ ] Binance API key filled in (no quotes issues)
-- [ ] Binance Secret key filled in (no quotes issues)
-- [ ] DeepSeek API key filled in (starts with `sk-`)
-- [ ] `use_default_coins` set to `true` (for beginners)
-- [ ] `initial_balance` matches your account balance
-- [ ] File saved as `config.json` (not `.example`)
+### 6. Configure Through Web Interface
+
+**Now configure everything through the web interface - no more JSON editing!**
+
+#### **Step 1: Configure AI Models**
+1. Click "AI模型配置" button
+2. Enable DeepSeek or Qwen (or both)
+3. Enter your API keys
+4. Save configuration
+
+#### **Step 2: Configure Exchanges**  
+1. Click "交易所配置" button
+2. Enable Binance or Hyperliquid (or both)
+3. Enter your API credentials
+4. Save configuration
+
+#### **Step 3: Create Traders**
+1. Click "创建交易员" button
+2. Select an AI model (must be configured first)
+3. Select an exchange (must be configured first)  
+4. Set initial balance and trader name
+5. Create trader
+
+#### **Step 4: Start Trading**
+- Your traders will appear in the main interface
+- Use Start/Stop buttons to control them
+- Monitor performance in real-time
+
+**✅ No more JSON file editing - everything is done through the web interface!**
 
 ---
 
@@ -457,7 +473,7 @@ cp config.json.example config.json
 3. **Remove the `0x` prefix** from the key
 4. Fund your wallet on [Hyperliquid](https://hyperliquid.xyz)
 
-**Step 2**: Configure `config.json` for Hyperliquid
+**Step 2**: ~~Configure `config.json` for Hyperliquid~~ *Configure through web interface*
 
 ```json
 {
@@ -511,7 +527,7 @@ cp config.json.example config.json
    - API Wallet address (Signer)
    - API Wallet Private Key (⚠️ shown only once!)
 
-**Step 2**: Configure `config.json` for Aster
+**Step 2**: ~~Configure `config.json` for Aster~~ *Configure through web interface*
 
 ```json
 {
@@ -629,8 +645,10 @@ For running multiple AI traders competing against each other:
 | `oi_top_api_url` | Open interest API<br>*Optional supplement data* | `""` (empty) | ❌ No |
 | `api_server_port` | Web dashboard port | `8080` | ✅ Yes |
 
-**Default Trading Coins** (when `use_default_coins: true`):
-- BTC, ETH, SOL, BNB, XRP, DOGE, ADA, HYPE
+~~**Default Trading Coins** (when `use_default_coins: true`):
+- BTC, ETH, SOL, BNB, XRP, DOGE, ADA, HYPE~~
+
+*Note: Trading coins are now configured through the web interface*
 
 ---
 
@@ -640,14 +658,16 @@ For running multiple AI traders competing against each other:
 
 The leverage settings control the maximum leverage the AI can use for each trade. This is crucial for risk management, especially for Binance subaccounts which have leverage restrictions.
 
-**Configuration format:**
+~~**Configuration format:**~~
 
-```json
+~~```json
 "leverage": {
   "btc_eth_leverage": 5,    // Maximum leverage for BTC and ETH
   "altcoin_leverage": 5      // Maximum leverage for all other coins
 }
-```
+```~~
+
+*Note: Leverage is now configured through the web interface*
 
 **⚠️ Important: Binance Subaccount Restrictions**
 
@@ -666,21 +686,23 @@ The leverage settings control the maximum leverage the AI can use for each trade
 
 **Examples:**
 
-**Safe configuration (subaccount or conservative):**
-```json
+~~**Safe configuration (subaccount or conservative):**~~
+~~```json
 "leverage": {
   "btc_eth_leverage": 5,
   "altcoin_leverage": 5
 }
-```
+```~~
 
-**Aggressive configuration (main account only):**
-```json
+~~**Aggressive configuration (main account only):**~~
+~~```json
 "leverage": {
   "btc_eth_leverage": 20,
   "altcoin_leverage": 15
 }
-```
+```~~
+
+*Note: Leverage configuration is now done through the web interface*
 
 **How AI uses leverage:**
 
@@ -763,7 +785,7 @@ go build -o nofx
 |--------------|----------|
 | `invalid API key` | Check your Binance API key in config.json |
 | `TA-Lib not found` | Run `brew install ta-lib` (macOS) |
-| `port 8080 already in use` | Change `api_server_port` in config.json |
+| `port 8080 already in use` | ~~Change `api_server_port` in config.json~~ *Change `API_PORT` in .env file* |
 | `DeepSeek API error` | Verify your DeepSeek API key and balance |
 
 **✅ Backend is running correctly when you see:**
@@ -1053,14 +1075,26 @@ Each decision cycle (default 3 minutes), the system executes the following intel
 
 ## 🎛️ API Endpoints
 
-### Competition Related
+### Configuration Management
 
 ```bash
-GET /api/competition          # Competition leaderboard (all traders)
-GET /api/traders              # Trader list
+GET  /api/models              # Get AI model configurations
+PUT  /api/models              # Update AI model configurations
+GET  /api/exchanges           # Get exchange configurations  
+PUT  /api/exchanges           # Update exchange configurations
 ```
 
-### Single Trader Related
+### Trader Management
+
+```bash
+GET    /api/traders           # List all traders
+POST   /api/traders           # Create new trader
+DELETE /api/traders/:id       # Delete trader
+POST   /api/traders/:id/start # Start trader
+POST   /api/traders/:id/stop  # Stop trader
+```
+
+### Trading Data & Monitoring
 
 ```bash
 GET /api/status?trader_id=xxx            # System status
@@ -1069,13 +1103,13 @@ GET /api/positions?trader_id=xxx         # Position list
 GET /api/equity-history?trader_id=xxx    # Equity history (chart data)
 GET /api/decisions/latest?trader_id=xxx  # Latest 5 decisions
 GET /api/statistics?trader_id=xxx        # Statistics
+GET /api/performance?trader_id=xxx       # AI performance analysis
 ```
 
 ### System Endpoints
 
 ```bash
 GET /health                   # Health check
-GET /api/config               # System configuration
 ```
 
 ---
@@ -1151,7 +1185,7 @@ sudo apt-get install libta-lib0-dev
 **Solution**:
 - Coin pool API is optional
 - If API fails, system uses default mainstream coins (BTC, ETH, etc.)
-- Check API URL and auth parameter in config.json
+- ~~Check API URL and auth parameter in config.json~~ *Check configuration in web interface*
 
 ---
 
@@ -1166,6 +1200,61 @@ sudo apt-get install libta-lib0-dev
 ---
 
 ## 🔄 Changelog
+
+### v3.0.0 (2025-10-30) - Major Architecture Transformation
+
+**🚀 Complete System Redesign - Web-Based Configuration Platform**
+
+This is a **major breaking update** that completely transforms NOFX from a static config-based system to a modern web-based trading platform.
+
+**Revolutionary Changes:**
+
+**1. Database-Driven Architecture**
+- ✅ **SQLite Integration**: Replaced static JSON config with SQLite database
+- ✅ **Persistent Storage**: All configurations stored in database with automatic timestamps
+- ✅ **Data Integrity**: Foreign key relationships and triggers for data consistency
+- ✅ **Schema Design**: Separate tables for AI models, exchanges, traders, and system config
+
+**2. Web-Based Configuration Interface**  
+- ✅ **No More JSON Editing**: Complete web-based configuration management
+- ✅ **AI Model Setup**: Configure DeepSeek/Qwen API keys through web interface
+- ✅ **Exchange Management**: Set up Binance/Hyperliquid credentials independently
+- ✅ **Dynamic Trader Creation**: Create traders by combining any AI model with any exchange
+- ✅ **Real-Time Control**: Start/stop traders without system restart
+
+**3. Flexible Architecture**
+- ✅ **Separation of Concerns**: AI models and exchanges configured independently
+- ✅ **Mix & Match**: Create unlimited combinations (e.g., Qwen + Binance, DeepSeek + Hyperliquid)
+- ✅ **Scalable Design**: Support for unlimited traders and configurations
+- ✅ **Clean Slate**: No default traders - create only what you need
+
+**4. Enhanced API Layer**
+- ✅ **RESTful Design**: Complete CRUD operations for all configuration entities
+- ✅ **New Endpoints**: 
+  - `GET/PUT /api/models` - AI model configuration
+  - `GET/PUT /api/exchanges` - Exchange configuration
+  - `POST/DELETE /api/traders` - Trader management
+  - `POST /api/traders/:id/start|stop` - Trader control
+- ✅ **Updated Documentation**: All API endpoints documented
+
+**5. Modernized Codebase**
+- ✅ **Type Safety**: Proper separation of legacy and new configuration types
+- ✅ **Database Abstraction**: Clean database layer with prepared statements
+- ✅ **Error Handling**: Comprehensive error handling and validation
+- ✅ **Code Organization**: Better separation between database, API, and business logic
+
+**Migration Notes:**
+- ⚠️ **Breaking Change**: Old ~~`config.json`~~ files are no longer used
+- ⚠️ **Fresh Start**: All configurations must be redone through web interface
+- ✅ **Easier Setup**: Web-based configuration is much more user-friendly
+- ✅ **Better UX**: No more server restarts for configuration changes
+
+**Why This Update Matters:**
+- 🎯 **User Experience**: Much easier to configure and manage
+- 🔧 **Flexibility**: Create any combination of AI models and exchanges
+- 📊 **Scalability**: Support for complex multi-trader setups
+- 🔒 **Reliability**: Database ensures data persistence and consistency
+- 🚀 **Future-Proof**: Foundation for advanced features like trader templates, backtesting, etc.
 
 ### v2.0.2 (2025-10-29)
 
@@ -1291,7 +1380,7 @@ Issues and Pull Requests are welcome!
 
 ---
 
-**Last Updated**: 2025-10-29 (v2.0.3)
+**Last Updated**: 2025-10-30 (v3.0.0)
 
 **⚡ Explore the possibilities of quantitative trading with the power of AI!**
 

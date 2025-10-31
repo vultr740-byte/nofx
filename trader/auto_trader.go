@@ -63,6 +63,9 @@ type AutoTraderConfig struct {
 	MaxDailyLoss    float64       // 最大日亏损百分比（提示）
 	MaxDrawdown     float64       // 最大回撤百分比（提示）
 	StopTradingTime time.Duration // 触发风控后暂停时长
+
+	// 仓位模式
+	IsCrossMargin bool // true=全仓模式, false=逐仓模式
 }
 
 // AutoTrader 自动交易器
@@ -77,6 +80,8 @@ type AutoTrader struct {
 	decisionLogger        *logger.DecisionLogger // 决策日志记录器
 	initialBalance        float64
 	dailyPnL              float64
+	customPrompt          string // 自定义交易策略prompt
+	overrideBasePrompt    bool   // 是否覆盖基础prompt
 	lastResetTime         time.Time
 	stopUntil             time.Time
 	isRunning             bool
@@ -132,6 +137,13 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 	// 根据配置创建对应的交易器
 	var trader Trader
 	var err error
+
+	// 记录仓位模式（通用）
+	marginModeStr := "全仓"
+	if !config.IsCrossMargin {
+		marginModeStr = "逐仓"
+	}
+	log.Printf("📊 [%s] 仓位模式: %s", config.Name, marginModeStr)
 
 	switch config.Exchange {
 	case "binance":
@@ -287,7 +299,7 @@ func (at *AutoTrader) runCycle() error {
 
 	// 4. 调用AI获取完整决策
 	log.Println("🤖 正在请求AI分析并决策...")
-	decision, err := decision.GetFullDecision(ctx, at.mcpClient)
+	decision, err := decision.GetFullDecisionWithCustomPrompt(ctx, at.mcpClient, at.customPrompt, at.overrideBasePrompt)
 
 	// 即使有错误，也保存思维链、决策和输入prompt（用于debug）
 	if decision != nil {
@@ -427,6 +439,14 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		unrealizedPnl := pos["unRealizedProfit"].(float64)
 		liquidationPrice := pos["liquidationPrice"].(float64)
 
+		// 计算盈亏百分比
+		pnlPct := 0.0
+		if side == "long" {
+			pnlPct = ((markPrice - entryPrice) / entryPrice) * 100
+		} else {
+			pnlPct = ((entryPrice - markPrice) / entryPrice) * 100
+		}
+
 		// 计算占用保证金（估算）
 		leverage := 10 // 默认值，实际应该从持仓信息获取
 		if lev, ok := pos["leverage"].(float64); ok {
@@ -434,14 +454,6 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		}
 		marginUsed := (quantity * markPrice) / float64(leverage)
 		totalMarginUsed += marginUsed
-
-		// 计算盈亏百分比
-		pnlPct := 0.0
-		if side == "long" {
-			pnlPct = ((markPrice - entryPrice) / entryPrice) * float64(leverage) * 100
-		} else {
-			pnlPct = ((entryPrice - markPrice) / entryPrice) * float64(leverage) * 100
-		}
 
 		// 跟踪持仓首次出现时间
 		posKey := symbol + "_" + side
@@ -587,6 +599,12 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, act
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
 
+	// 设置仓位模式
+	if err := at.trader.SetMarginMode(decision.Symbol, at.config.IsCrossMargin); err != nil {
+		log.Printf("  ⚠️ 设置仓位模式失败: %v", err)
+		// 继续执行，不影响交易
+	}
+
 	// 开仓
 	order, err := at.trader.OpenLong(decision.Symbol, quantity, decision.Leverage)
 	if err != nil {
@@ -639,6 +657,12 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, ac
 	quantity := decision.PositionSizeUSD / marketData.CurrentPrice
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
+
+	// 设置仓位模式
+	if err := at.trader.SetMarginMode(decision.Symbol, at.config.IsCrossMargin); err != nil {
+		log.Printf("  ⚠️ 设置仓位模式失败: %v", err)
+		// 继续执行，不影响交易
+	}
 
 	// 开仓
 	order, err := at.trader.OpenShort(decision.Symbol, quantity, decision.Leverage)
@@ -733,6 +757,16 @@ func (at *AutoTrader) GetName() string {
 // GetAIModel 获取AI模型
 func (at *AutoTrader) GetAIModel() string {
 	return at.aiModel
+}
+
+// SetCustomPrompt 设置自定义交易策略prompt
+func (at *AutoTrader) SetCustomPrompt(prompt string) {
+	at.customPrompt = prompt
+}
+
+// SetOverrideBasePrompt 设置是否覆盖基础prompt
+func (at *AutoTrader) SetOverrideBasePrompt(override bool) {
+	at.overrideBasePrompt = override
 }
 
 // GetDecisionLogger 获取决策日志记录器
@@ -871,14 +905,15 @@ func (at *AutoTrader) GetPositions() ([]map[string]interface{}, error) {
 			leverage = int(lev)
 		}
 
-		pnlPct := 0.0
-		if side == "long" {
-			pnlPct = ((markPrice - entryPrice) / entryPrice) * float64(leverage) * 100
-		} else {
-			pnlPct = ((entryPrice - markPrice) / entryPrice) * float64(leverage) * 100
-		}
-
+		// 计算占用保证金
 		marginUsed := (quantity * markPrice) / float64(leverage)
+
+		// 计算盈亏百分比（基于保证金）
+		// 收益率 = 未实现盈亏 / 保证金 × 100%
+		pnlPct := 0.0
+		if marginUsed > 0 {
+			pnlPct = (unrealizedPnl / marginUsed) * 100
+		}
 
 		result = append(result, map[string]interface{}{
 			"symbol":             symbol,
