@@ -34,7 +34,7 @@ func (tm *TraderManager) LoadTradersFromDatabase(database *config.Database) erro
 	if adminModeStr != "false" { // 默认为true
 		userID = "admin"
 	}
-	
+
 	// 获取数据库中的所有交易员
 	traders, err := database.GetTraders(userID)
 	if err != nil {
@@ -48,6 +48,9 @@ func (tm *TraderManager) LoadTradersFromDatabase(database *config.Database) erro
 	maxDailyLossStr, _ := database.GetSystemConfig("max_daily_loss")
 	maxDrawdownStr, _ := database.GetSystemConfig("max_drawdown")
 	stopTradingMinutesStr, _ := database.GetSystemConfig("stop_trading_minutes")
+	// 获取杠杆配置
+	btcEthLeverageStr, _ := database.GetSystemConfig("btc_eth_leverage")
+	altcoinLeverageStr, _ := database.GetSystemConfig("altcoin_leverage")
 
 	// 解析配置
 	maxDailyLoss := 10.0 // 默认值
@@ -65,8 +68,19 @@ func (tm *TraderManager) LoadTradersFromDatabase(database *config.Database) erro
 		stopTradingMinutes = val
 	}
 
+	// 解析杠杆配置（默认5倍，适配币安子账户）
+	btcEthLeverage := 5
+	if val, err := strconv.Atoi(btcEthLeverageStr); err == nil && val > 0 {
+		btcEthLeverage = val
+	}
+
+	altcoinLeverage := 5
+	if val, err := strconv.Atoi(altcoinLeverageStr); err == nil && val > 0 {
+		altcoinLeverage = val
+	}
+
 	// 为每个交易员获取AI模型和交易所配置
-    for _, traderCfg := range traders {
+	for _, traderCfg := range traders {
 		// 获取AI模型配置
 		aiModels, err := database.GetAIModels(userID)
 		if err != nil {
@@ -118,7 +132,7 @@ func (tm *TraderManager) LoadTradersFromDatabase(database *config.Database) erro
 		}
 
 		// 添加到TraderManager
-        err = tm.addTraderFromDB(traderCfg, aiModelCfg, exchangeCfg, coinPoolURL, maxDailyLoss, maxDrawdown, stopTradingMinutes)
+		err = tm.addTraderFromDB(traderCfg, aiModelCfg, exchangeCfg, coinPoolURL, maxDailyLoss, maxDrawdown, stopTradingMinutes, btcEthLeverage, altcoinLeverage)
 		if err != nil {
 			log.Printf("❌ 添加交易员 %s 失败: %v", traderCfg.Name, err)
 			continue
@@ -130,13 +144,13 @@ func (tm *TraderManager) LoadTradersFromDatabase(database *config.Database) erro
 }
 
 // addTraderFromConfig 内部方法：从配置添加交易员（不加锁，因为调用方已加锁）
-func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModelCfg *config.AIModelConfig, exchangeCfg *config.ExchangeConfig, coinPoolURL string, maxDailyLoss, maxDrawdown float64, stopTradingMinutes int) error {
+func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModelCfg *config.AIModelConfig, exchangeCfg *config.ExchangeConfig, coinPoolURL string, maxDailyLoss, maxDrawdown float64, stopTradingMinutes int, btcEthLeverage, altcoinLeverage int) error {
 	if _, exists := tm.traders[traderCfg.ID]; exists {
 		return fmt.Errorf("trader ID '%s' 已存在", traderCfg.ID)
 	}
 
 	// 构建AutoTraderConfig
-    traderConfig := trader.AutoTraderConfig{
+	traderConfig := trader.AutoTraderConfig{
 		ID:                    traderCfg.ID,
 		Name:                  traderCfg.Name,
 		AIModel:               aiModelCfg.Provider, // 使用provider作为模型标识
@@ -155,6 +169,8 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		MaxDrawdown:           maxDrawdown,
 		StopTradingTime:       time.Duration(stopTradingMinutes) * time.Minute,
 		IsCrossMargin:         traderCfg.IsCrossMargin,
+		BTCETHLeverage:        btcEthLeverage,
+		AltcoinLeverage:       altcoinLeverage,
 	}
 
 	// 根据交易所类型设置API密钥
@@ -182,7 +198,7 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 	if err != nil {
 		return fmt.Errorf("创建trader失败: %w", err)
 	}
-	
+
 	// 设置自定义prompt（如果有）
 	if traderCfg.CustomPrompt != "" {
 		at.SetCustomPrompt(traderCfg.CustomPrompt)
@@ -230,6 +246,10 @@ func (tm *TraderManager) AddTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		MaxDrawdown:           maxDrawdown,
 		StopTradingTime:       time.Duration(stopTradingMinutes) * time.Minute,
 		IsCrossMargin:         traderCfg.IsCrossMargin,
+		// 注意：此函数未接收杠杆配置参数，使用默认值5倍
+		// 如果需要自定义杠杆，请使用 addTraderFromDB 或 loadSingleTrader
+		BTCETHLeverage:  5,
+		AltcoinLeverage: 5,
 	}
 
 	// 根据交易所类型设置API密钥
@@ -257,7 +277,7 @@ func (tm *TraderManager) AddTraderFromDB(traderCfg *config.TraderRecord, aiModel
 	if err != nil {
 		return fmt.Errorf("创建trader失败: %w", err)
 	}
-	
+
 	// 设置自定义prompt（如果有）
 	if traderCfg.CustomPrompt != "" {
 		at.SetCustomPrompt(traderCfg.CustomPrompt)
@@ -463,6 +483,9 @@ func (tm *TraderManager) LoadUserTraders(database *config.Database, userID strin
 	maxDailyLossStr, _ := database.GetSystemConfig("max_daily_loss")
 	maxDrawdownStr, _ := database.GetSystemConfig("max_drawdown")
 	stopTradingMinutesStr, _ := database.GetSystemConfig("stop_trading_minutes")
+	// 获取杠杆配置
+	btcEthLeverageStr, _ := database.GetSystemConfig("btc_eth_leverage")
+	altcoinLeverageStr, _ := database.GetSystemConfig("altcoin_leverage")
 
 	// 解析配置
 	maxDailyLoss := 10.0 // 默认值
@@ -478,6 +501,17 @@ func (tm *TraderManager) LoadUserTraders(database *config.Database, userID strin
 	stopTradingMinutes := 60 // 默认值
 	if val, err := strconv.Atoi(stopTradingMinutesStr); err == nil {
 		stopTradingMinutes = val
+	}
+
+	// 解析杠杆配置（默认5倍，适配币安子账户）
+	btcEthLeverage := 5
+	if val, err := strconv.Atoi(btcEthLeverageStr); err == nil && val > 0 {
+		btcEthLeverage = val
+	}
+
+	altcoinLeverage := 5
+	if val, err := strconv.Atoi(altcoinLeverageStr); err == nil && val > 0 {
+		altcoinLeverage = val
 	}
 
 	// 为每个交易员获取AI模型和交易所配置
@@ -539,7 +573,7 @@ func (tm *TraderManager) LoadUserTraders(database *config.Database, userID strin
 		}
 
 		// 使用现有的方法加载交易员
-		err = tm.loadSingleTrader(traderCfg, aiModelCfg, exchangeCfg, coinPoolURL, maxDailyLoss, maxDrawdown, stopTradingMinutes)
+		err = tm.loadSingleTrader(traderCfg, aiModelCfg, exchangeCfg, coinPoolURL, maxDailyLoss, maxDrawdown, stopTradingMinutes, btcEthLeverage, altcoinLeverage)
 		if err != nil {
 			log.Printf("⚠️ 加载交易员 %s 失败: %v", traderCfg.Name, err)
 		}
@@ -549,20 +583,22 @@ func (tm *TraderManager) LoadUserTraders(database *config.Database, userID strin
 }
 
 // loadSingleTrader 加载单个交易员（从现有代码提取的公共逻辑）
-func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiModelCfg *config.AIModelConfig, exchangeCfg *config.ExchangeConfig, coinPoolURL string, maxDailyLoss, maxDrawdown float64, stopTradingMinutes int) error {
+func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiModelCfg *config.AIModelConfig, exchangeCfg *config.ExchangeConfig, coinPoolURL string, maxDailyLoss, maxDrawdown float64, stopTradingMinutes int, btcEthLeverage, altcoinLeverage int) error {
 	// 构建AutoTraderConfig
 	traderConfig := trader.AutoTraderConfig{
-		ID:                    traderCfg.ID,
-		Name:                  traderCfg.Name,
-		AIModel:               aiModelCfg.Provider, // 使用provider作为模型标识
-		Exchange:              exchangeCfg.ID,      // 使用exchange ID
-		InitialBalance:        traderCfg.InitialBalance,
-		ScanInterval:          time.Duration(traderCfg.ScanIntervalMinutes) * time.Minute,
-		CoinPoolAPIURL:        coinPoolURL,
-		MaxDailyLoss:          maxDailyLoss,
-		MaxDrawdown:           maxDrawdown,
-		StopTradingTime:       time.Duration(stopTradingMinutes) * time.Minute,
-		IsCrossMargin:         traderCfg.IsCrossMargin,
+		ID:              traderCfg.ID,
+		Name:            traderCfg.Name,
+		AIModel:         aiModelCfg.Provider, // 使用provider作为模型标识
+		Exchange:        exchangeCfg.ID,      // 使用exchange ID
+		InitialBalance:  traderCfg.InitialBalance,
+		ScanInterval:    time.Duration(traderCfg.ScanIntervalMinutes) * time.Minute,
+		CoinPoolAPIURL:  coinPoolURL,
+		MaxDailyLoss:    maxDailyLoss,
+		MaxDrawdown:     maxDrawdown,
+		StopTradingTime: time.Duration(stopTradingMinutes) * time.Minute,
+		IsCrossMargin:   traderCfg.IsCrossMargin,
+		BTCETHLeverage:  btcEthLeverage,
+		AltcoinLeverage: altcoinLeverage,
 	}
 
 	// 根据交易所类型设置API密钥
@@ -590,7 +626,7 @@ func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiMode
 	if err != nil {
 		return fmt.Errorf("创建trader失败: %w", err)
 	}
-	
+
 	// 设置自定义prompt（如果有）
 	if traderCfg.CustomPrompt != "" {
 		at.SetCustomPrompt(traderCfg.CustomPrompt)
