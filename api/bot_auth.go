@@ -39,7 +39,9 @@ func BotAuthMiddleware(config BotAuthConfig) gin.HandlerFunc {
 
 		// 验证时间戳
 		timestampStr := c.GetHeader("X-Bot-Timestamp")
+		log.Printf("BotAuth: Received X-Bot-Timestamp: %s", timestampStr)
 		if timestampStr == "" {
+			log.Printf("BotAuth: Missing timestamp header")
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "Missing timestamp",
 			})
@@ -49,6 +51,7 @@ func BotAuthMiddleware(config BotAuthConfig) gin.HandlerFunc {
 
 		timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
 		if err != nil {
+			log.Printf("BotAuth: Invalid timestamp format: %s", timestampStr)
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "Invalid timestamp format",
 			})
@@ -58,7 +61,10 @@ func BotAuthMiddleware(config BotAuthConfig) gin.HandlerFunc {
 
 		// 检查时间戳是否在允许范围内（防重放攻击）
 		currentTime := time.Now().Unix()
-		if abs64(currentTime-timestamp) > config.MaxTimeDrift {
+		timeDiff := abs64(currentTime - timestamp)
+		log.Printf("BotAuth: Time difference: %d seconds (max allowed: %d)", timeDiff, config.MaxTimeDrift)
+		if timeDiff > config.MaxTimeDrift {
+			log.Printf("BotAuth: Request timestamp too old or too far in future - timeDiff: %d, timestamp: %d, current: %d", timeDiff, timestamp, currentTime)
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "Request timestamp too old or too far in the future",
 			})
@@ -68,7 +74,9 @@ func BotAuthMiddleware(config BotAuthConfig) gin.HandlerFunc {
 
 		// 验证签名
 		signature := c.GetHeader("X-Bot-Signature")
+		log.Printf("BotAuth: Received X-Bot-Signature: %s", signature)
 		if signature == "" {
+			log.Printf("BotAuth: Missing signature header")
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "Missing signature",
 			})
@@ -88,9 +96,14 @@ func BotAuthMiddleware(config BotAuthConfig) gin.HandlerFunc {
 			}
 		}
 
+		log.Printf("BotAuth: Request body: %s", body)
 		// 计算期望的签名
 		expectedSignature := generateSignature(config.ApiSecret, timestamp, body)
+		log.Printf("BotAuth: Expected signature: %s", expectedSignature)
+		log.Printf("BotAuth: Received signature: %s", signature)
+		log.Printf("BotAuth: Signature match: %t", hmac.Equal([]byte(signature), []byte(expectedSignature)))
 		if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
+			log.Printf("BotAuth: Invalid signature - received: %s, expected: %s", signature, expectedSignature)
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "Invalid signature",
 			})

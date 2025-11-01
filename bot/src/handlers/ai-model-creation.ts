@@ -5,6 +5,34 @@ import { stateManager } from '../utils/state-manager';
 export class AIModelCreationHandler {
   constructor(private apiClient: ApiClient) {}
 
+  // 开始AI模型创建流程
+  async startModelCreation(ctx: Context, userId: number): Promise<void> {
+    // 清除之前的状态
+    stateManager.clearState(userId);
+
+    await ctx.reply('🤖 **创建AI模型**\n\n' +
+      'AI模型是交易员的核心决策引擎，负责分析市场并做出交易决策。\n\n' +
+      '📝 **请输入AI模型名称：**\n\n' +
+      '💡 **命名建议：**\n' +
+      '• 使用描述性名称，如"深度分析师"、"量化大师"\n' +
+      '• 长度：2-30个字符\n' +
+      '• 可包含中文、英文、数字\n\n' +
+      '⚠️ **请输入：**',
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "❌ 取消", callback_data: "cancel_create_model" }
+            ]
+          ]
+        }
+      }
+    );
+
+    // 设置用户状态为等待模型名称输入
+    stateManager.setState(userId, { action: 'enter_model_name', createdAt: Date.now() });
+  }
+
   // 处理AI模型名称输入
   async handleModelName(ctx: Context, name: string): Promise<void> {
     const user = ctx.from;
