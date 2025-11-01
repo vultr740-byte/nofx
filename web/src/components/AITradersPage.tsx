@@ -203,7 +203,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   };
 
-  const handleSaveModelConfig = async (modelId: string, apiKey: string) => {
+  const handleSaveModelConfig = async (modelId: string, modelName: string, apiKey: string) => {
     try {
       // 检查模型是否在支持列表中
       const isSupported = supportedModels?.includes(modelId);
@@ -217,12 +217,12 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
       if (existingModel) {
         // 更新现有模型 - 使用新的API
-        await api.updateModel(modelId, { api_key: apiKey, enabled: true });
+        await api.updateModel(modelId, { name: modelName, api_key: apiKey, enabled: true });
         alert('模型配置更新成功');
       } else {
         // 创建新模型 - 使用新的API
         await api.createModel({
-          name: modelId.charAt(0).toUpperCase() + modelId.slice(1),
+          name: modelName,
           provider: modelId,
           enabled: true,
           api_key: apiKey
@@ -274,7 +274,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   };
 
-  const handleSaveExchangeConfig = async (exchangeId: string, api_key: string, secret_key?: string, testnet?: boolean, hyperliquid_wallet_addr?: string, aster_user?: string, aster_signer?: string, aster_private_key?: string) => {
+  const handleSaveExchangeConfig = async (exchangeId: string, name: string, api_key: string, secret_key?: string, testnet?: boolean, hyperliquid_wallet_addr?: string, aster_user?: string, aster_signer?: string, aster_private_key?: string) => {
     try {
       // 检查交易所是否在支持列表中
       const isSupported = supportedExchanges?.includes(exchangeId);
@@ -289,6 +289,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       if (existingExchange) {
         // 更新现有交易所 - 使用新的API
         await api.updateExchange(exchangeId, {
+          name,
           api_key,
           secret_key,
           testnet,
@@ -302,7 +303,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       } else {
         // 创建新交易所 - 使用新的API
         await api.createExchange({
-          name: exchangeId.charAt(0).toUpperCase() + exchangeId.slice(1),
+          name,
           type: exchangeId,
           enabled: true,
           api_key,
@@ -697,12 +698,21 @@ function CreateTraderModal({
               style={{ background: '#0B0E11', border: '1px solid #2B3139', color: '#EAECEF' }}
               required
             >
-              {enabledModels.map(model => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))}
+              {enabledModels.length === 0 ? (
+                <option value="">暂无可用AI模型</option>
+              ) : (
+                enabledModels.map(model => (
+                  <option key={model.id} value={model.id}>
+                    {model.name} ({model.provider})
+                  </option>
+                ))
+              )}
             </select>
+            {enabledModels.length === 0 && (
+              <p className="text-xs mt-1" style={{ color: '#F6465D' }}>
+                请先创建并配置AI模型
+              </p>
+            )}
           </div>
 
           <div>
@@ -731,12 +741,21 @@ function CreateTraderModal({
               style={{ background: '#0B0E11', border: '1px solid #2B3139', color: '#EAECEF' }}
               required
             >
-              {enabledExchanges.map(exchange => (
-                <option key={exchange.id} value={exchange.id}>
-                  {exchange.name} ({exchange.type.toUpperCase()})
-                </option>
-              ))}
+              {enabledExchanges.length === 0 ? (
+                <option value="">暂无可用交易所</option>
+              ) : (
+                enabledExchanges.map(exchange => (
+                  <option key={exchange.id} value={exchange.id}>
+                    {exchange.name} ({(exchange.type || exchange.exchange_type).toUpperCase()})
+                  </option>
+                ))
+              )}
             </select>
+            {enabledExchanges.length === 0 && (
+              <p className="text-xs mt-1" style={{ color: '#F6465D' }}>
+                请先创建并配置交易所
+              </p>
+            )}
           </div>
 
           <div>
@@ -891,12 +910,13 @@ function ModelConfigModal({
   allModels: AIModel[];
   supportedModels: string[];
   editingModelId: string | null;
-  onSave: (modelId: string, apiKey: string) => void;
+  onSave: (modelId: string, modelName: string, apiKey: string) => void;
   onDelete: (modelId: string) => void;
   onClose: () => void;
   language: any;
 }) {
   const [selectedModelId, setSelectedModelId] = useState(editingModelId || '');
+  const [modelName, setModelName] = useState('');
   const [apiKey, setApiKey] = useState('');
 
   // 获取当前编辑的模型信息
@@ -909,18 +929,19 @@ function ModelConfigModal({
       api_key: ''
     } : undefined);
 
-  // 如果是编辑现有模型，初始化API Key
+  // 如果是编辑现有模型，初始化表单数据
   useEffect(() => {
     if (editingModelId && selectedModel) {
+      setModelName(selectedModel.name || '');
       setApiKey(selectedModel.api_key || '');
     }
   }, [editingModelId, selectedModel]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedModelId || !apiKey.trim()) return;
-    
-    onSave(selectedModelId, apiKey.trim());
+    if (!selectedModelId || !modelName.trim() || !apiKey.trim()) return;
+
+    onSave(selectedModelId, modelName.trim(), apiKey.trim());
   };
 
   // 可选择的模型列表（所有支持的模型类型）
@@ -978,6 +999,24 @@ function ModelConfigModal({
               </select>
             </div>
           )}
+
+          <div>
+            <label className="block text-sm font-semibold mb-2" style={{ color: '#EAECEF' }}>
+              模型名称
+            </label>
+            <input
+              type="text"
+              value={modelName}
+              onChange={(e) => setModelName(e.target.value)}
+              placeholder={editingModelId ? "输入模型名称" : "例如: DeepSeek-激进型"}
+              className="w-full px-3 py-2 rounded"
+              style={{ background: '#0B0E11', border: '1px solid #2B3139', color: '#EAECEF' }}
+              required
+            />
+            <p className="text-xs mt-1" style={{ color: '#848E9C' }}>
+              为您的AI模型起一个易于识别的名称
+            </p>
+          </div>
 
           {selectedModel && (
             <div className="p-4 rounded" style={{ background: '#0B0E11', border: '1px solid #2B3139' }}>
@@ -1053,12 +1092,13 @@ function ExchangeConfigModal({
   allExchanges: Exchange[];
   supportedExchanges: string[];
   editingExchangeId: string | null;
-  onSave: (exchangeId: string, api_key: string, secret_key?: string, testnet?: boolean, hyperliquid_wallet_addr?: string, aster_user?: string, aster_signer?: string, aster_private_key?: string) => void;
+  onSave: (exchangeId: string, name: string, api_key: string, secret_key?: string, testnet?: boolean, hyperliquid_wallet_addr?: string, aster_user?: string, aster_signer?: string, aster_private_key?: string) => void;
   onDelete: (exchangeId: string) => void;
   onClose: () => void;
   language: any;
 }) {
   const [selectedExchangeId, setSelectedExchangeId] = useState(editingExchangeId || '');
+  const [exchangeName, setExchangeName] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [secretKey, setSecretKey] = useState('');
   const [testnet, setTestnet] = useState(false);
@@ -1089,6 +1129,7 @@ function ExchangeConfigModal({
   // 如果是编辑现有交易所，初始化表单数据
   useEffect(() => {
     if (editingExchangeId && selectedExchange) {
+      setExchangeName(selectedExchange.name || '');
       setApiKey(selectedExchange.api_key || '');
       setSecretKey(selectedExchange.secret_key || '');
       setTestnet(selectedExchange.testnet || false);
@@ -1101,8 +1142,8 @@ function ExchangeConfigModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedExchangeId) return;
-    
+    if (!selectedExchangeId || !exchangeName.trim()) return;
+
     // 根据交易所类型验证不同字段
     if (selectedExchange?.id === 'hyperliquid') {
       if (!apiKey.trim() || !hyperliquidWalletAddr.trim()) return;
@@ -1112,8 +1153,8 @@ function ExchangeConfigModal({
       // Binance 等其他交易所
       if (!apiKey.trim() || !secretKey.trim()) return;
     }
-    
-    onSave(selectedExchangeId, apiKey.trim(), secretKey.trim(), testnet, 
+
+    onSave(selectedExchangeId, exchangeName.trim(), apiKey.trim(), secretKey.trim(), testnet,
            hyperliquidWalletAddr.trim(), asterUser.trim(), asterSigner.trim(), asterPrivateKey.trim());
   };
 
@@ -1172,6 +1213,24 @@ function ExchangeConfigModal({
               </select>
             </div>
           )}
+
+          <div>
+            <label className="block text-sm font-semibold mb-2" style={{ color: '#EAECEF' }}>
+              交易所名称
+            </label>
+            <input
+              type="text"
+              value={exchangeName}
+              onChange={(e) => setExchangeName(e.target.value)}
+              placeholder={editingExchangeId ? "输入交易所名称" : "例如: Binance-主账户"}
+              className="w-full px-3 py-2 rounded"
+              style={{ background: '#0B0E11', border: '1px solid #2B3139', color: '#EAECEF' }}
+              required
+            />
+            <p className="text-xs mt-1" style={{ color: '#848E9C' }}>
+              为您的交易所配置起一个易于识别的名称
+            </p>
+          </div>
 
           {selectedExchange && (
             <div className="p-4 rounded" style={{ background: '#0B0E11', border: '1px solid #2B3139' }}>
