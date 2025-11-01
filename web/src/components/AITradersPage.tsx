@@ -82,13 +82,30 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   // 只在创建交易员时使用已启用且配置完整的
   const enabledModels = allModels?.filter(m => m.enabled && m.apiKey) || [];
   const enabledExchanges = allExchanges?.filter(e => {
-    if (!e.enabled || !e.apiKey) return false;
+    // 调试日志
+    console.log('检查交易所:', e.name, {
+      enabled: e.enabled,
+      apiKey: e.apiKey ? '已设置' : '未设置',
+      apiKeyLength: e.apiKey?.length,
+      type: e.type || e.exchange_type
+    });
+
+    if (!e.enabled || !e.apiKey || e.apiKey.trim() === '') {
+      console.log('交易所未通过基础检查:', e.name, { enabled: e.enabled, hasApiKey: !!e.apiKey, apiKeyIsEmpty: !e.apiKey || e.apiKey.trim() === '' });
+      return false;
+    }
+
     // 使用 type 字段作为具体的交易所类型（如 'hyperliquid', 'binance', 'aster'）
     const exchangeType = e.type || e.exchange_type || '';
     // Hyperliquid 只需要私钥（作为apiKey），不需要secretKey
-    if (exchangeType === 'hyperliquid') return true;
+    if (exchangeType === 'hyperliquid') {
+      console.log('Hyperliquid交易所通过检查:', e.name);
+      return true;
+    }
     // 其他交易所需要secretKey
-    return e.secretKey && e.secretKey.trim() !== '';
+    const hasSecretKey = e.secretKey && e.secretKey.trim() !== '';
+    console.log('非Hyperliquid交易所检查:', e.name, { hasSecretKey });
+    return hasSecretKey;
   }) || [];
 
   // 检查模型是否正在被运行中的交易员使用

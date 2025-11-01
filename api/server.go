@@ -378,26 +378,26 @@ type CreateExchangeRequest struct {
 	Name                    string `json:"name" binding:"required"`
 	Type                    string `json:"type" binding:"required"` // binance, hyperliquid, aster 等
 	Enabled                 bool   `json:"enabled"`
-	APIKey                  string `json:"api_key"`
-	SecretKey               string `json:"secret_key"`
+	APIKey                  string `json:"apiKey"`
+	SecretKey               string `json:"secretKey"`
 	Testnet                 bool   `json:"testnet"`
-	HyperliquidWalletAddr   string `json:"hyperliquid_wallet_addr"`
-	AsterUser               string `json:"aster_user"`
-	AsterSigner             string `json:"aster_signer"`
-	AsterPrivateKey         string `json:"aster_private_key"`
+	HyperliquidWalletAddr   string `json:"hyperliquidWalletAddr"`
+	AsterUser               string `json:"asterUser"`
+	AsterSigner             string `json:"asterSigner"`
+	AsterPrivateKey         string `json:"asterPrivateKey"`
 	Description             string `json:"description"`
 }
 
 type UpdateExchangeRequest struct {
 	Name                    string `json:"name" binding:"required"`
 	Enabled                 bool   `json:"enabled"`
-	APIKey                  string `json:"api_key"`
-	SecretKey               string `json:"secret_key"`
+	APIKey                  string `json:"apiKey"`
+	SecretKey               string `json:"secretKey"`
 	Testnet                 bool   `json:"testnet"`
-	HyperliquidWalletAddr   string `json:"hyperliquid_wallet_addr"`
-	AsterUser               string `json:"aster_user"`
-	AsterSigner             string `json:"aster_signer"`
-	AsterPrivateKey         string `json:"aster_private_key"`
+	HyperliquidWalletAddr   string `json:"hyperliquidWalletAddr"`
+	AsterUser               string `json:"asterUser"`
+	AsterSigner             string `json:"asterSigner"`
+	AsterPrivateKey         string `json:"asterPrivateKey"`
 	Description             string `json:"description"`
 }
 
@@ -431,13 +431,13 @@ type UpdateModelConfigRequest struct {
 type UpdateExchangeConfigRequest struct {
 	Exchanges map[string]struct {
 		Enabled               bool   `json:"enabled"`
-		APIKey                string `json:"api_key"`
-		SecretKey             string `json:"secret_key"`
+		APIKey                string `json:"apiKey"`
+		SecretKey             string `json:"secretKey"`
 		Testnet               bool   `json:"testnet"`
-		HyperliquidWalletAddr string `json:"hyperliquid_wallet_addr"`
-		AsterUser             string `json:"aster_user"`
-		AsterSigner           string `json:"aster_signer"`
-		AsterPrivateKey       string `json:"aster_private_key"`
+		HyperliquidWalletAddr string `json:"hyperliquidWalletAddr"`
+		AsterUser             string `json:"asterUser"`
+		AsterSigner           string `json:"asterSigner"`
+		AsterPrivateKey       string `json:"asterPrivateKey"`
 	} `json:"exchanges"`
 }
 
