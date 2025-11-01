@@ -1011,7 +1011,8 @@ func (s *Server) handleCompetition(c *gin.Context) {
 		log.Printf("⚠️ 加载用户 %s 的交易员失败: %v", userID, err)
 	}
 
-	competition, err := s.traderManager.GetCompetitionData(userID)
+	// 使用带数据库访问的方法获取竞赛数据（包含交易所信息）
+	competition, err := s.traderManager.GetCompetitionDataWithDatabase(userID, s.database)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("获取竞赛数据失败: %v", err),
@@ -1025,7 +1026,7 @@ func (s *Server) handleCompetition(c *gin.Context) {
 // handlePublicCompetition 公开竞赛总览（所有用户的所有trader）
 func (s *Server) handlePublicCompetition(c *gin.Context) {
 	// 不需要用户认证，直接获取所有用户的竞赛数据
-	competition, err := s.traderManager.GetPublicCompetitionData()
+	competition, err := s.traderManager.GetPublicCompetitionData(s.database)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("获取公开竞赛数据失败: %v", err),

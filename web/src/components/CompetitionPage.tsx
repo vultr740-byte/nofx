@@ -87,7 +87,7 @@ export function CompetitionPage() {
         </div>
         <div className="text-right">
           <div className="text-xs mb-1" style={{ color: '#848E9C' }}>领先者</div>
-          <div className="text-lg font-bold" style={{ color: '#F0B90B' }}>{leader?.trader_name}</div>
+          <div className="text-lg font-bold" style={{ color: '#F0B90B' }}>{leader?.display_name || leader?.trader_name}</div>
           <div className="text-sm font-semibold" style={{ color: (leader?.total_pnl ?? 0) >= 0 ? '#0ECB81' : '#F6465D' }}>
             {(leader?.total_pnl ?? 0) >= 0 ? '+' : ''}{leader?.total_pnl_pct?.toFixed(2) || '0.00'}%
           </div>
@@ -141,7 +141,7 @@ export function CompetitionPage() {
                         {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}
                       </div>
                       <div>
-                        <div className="font-bold text-sm" style={{ color: '#EAECEF' }}>{trader.trader_name}</div>
+                        <div className="font-bold text-sm" style={{ color: '#EAECEF' }}>{trader.display_name || trader.trader_name}</div>
                         <div className="text-xs mono font-semibold" style={{ color: traderColor }}>
                           {trader.ai_model.toUpperCase()}
                         </div>
@@ -239,7 +239,7 @@ export function CompetitionPage() {
                       className="text-base font-bold mb-2"
                       style={{ color: getTraderColor(sortedTraders, trader.trader_id) }}
                     >
-                      {trader.trader_name}
+                      {trader.display_name || trader.trader_name}
                     </div>
                     <div className="text-2xl font-bold mono mb-1" style={{ color: (trader.total_pnl ?? 0) >= 0 ? '#0ECB81' : '#F6465D' }}>
                       {(trader.total_pnl ?? 0) >= 0 ? '+' : ''}{trader.total_pnl_pct?.toFixed(2) || '0.00'}%

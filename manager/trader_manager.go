@@ -6,6 +6,7 @@ import (
 	"nofx/config"
 	"nofx/trader"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -402,7 +403,7 @@ func (tm *TraderManager) GetComparisonData() (map[string]interface{}, error) {
 }
 
 // GetPublicCompetitionData 获取公开竞赛数据（所有用户的所有交易员）
-func (tm *TraderManager) GetPublicCompetitionData() (map[string]interface{}, error) {
+func (tm *TraderManager) GetPublicCompetitionData(database *config.Database) (map[string]interface{}, error) {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
@@ -418,10 +419,48 @@ func (tm *TraderManager) GetPublicCompetitionData() (map[string]interface{}, err
 		}
 
 		status := t.GetStatus()
+
+		// 从交易员ID中提取用户ID
+		userID := ""
+		if idx := strings.LastIndex(traderID, "_"); idx > 0 {
+			userID = traderID[:idx]
+			// 再查找最后一级用户ID
+			if idx2 := strings.LastIndex(userID, "_"); idx2 > 0 {
+				userID = userID[:idx2]
+			}
+		}
+
+		// 获取交易所信息
+		exchangeType := "Unknown"
+		if userID != "" {
+			if exchanges, err := database.GetExchanges(userID); err == nil {
+				// 从交易员配置中找到对应的交易所
+				if traderConfigs, err := database.GetTraders(userID); err == nil {
+					for _, traderCfg := range traderConfigs {
+						if traderCfg.ID == traderID {
+							// 找到对应的交易所配置
+							for _, exchange := range exchanges {
+								if exchange.ID == traderCfg.ExchangeID {
+									exchangeType = exchange.Type
+									break
+								}
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+
+		// 创建显示名称：AI模型 + 交易所
+		displayName := fmt.Sprintf("%s - %s", t.GetAIModel(), exchangeType)
+
 		traders = append(traders, map[string]interface{}{
 			"trader_id":       t.GetID(),
 			"trader_name":     t.GetName(),
+			"display_name":    displayName, // 新增显示名称
 			"ai_model":        t.GetAIModel(),
+			"exchange_type":   exchangeType, // 新增交易所类型
 			"total_equity":    account["total_equity"],
 			"total_pnl":       account["total_pnl"],
 			"total_pnl_pct":   account["total_pnl_pct"],
@@ -440,6 +479,11 @@ func (tm *TraderManager) GetPublicCompetitionData() (map[string]interface{}, err
 
 // GetCompetitionData 获取竞赛数据（特定用户的所有交易员）
 func (tm *TraderManager) GetCompetitionData(userID string) (map[string]interface{}, error) {
+	return tm.GetCompetitionDataWithDatabase(userID, nil)
+}
+
+// GetCompetitionDataWithDatabase 获取竞赛数据（带数据库访问权限，用于获取交易所信息）
+func (tm *TraderManager) GetCompetitionDataWithDatabase(userID string, database *config.Database) (map[string]interface{}, error) {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
@@ -461,10 +505,38 @@ func (tm *TraderManager) GetCompetitionData(userID string) (map[string]interface
 		}
 
 		status := t.GetStatus()
+
+		// 获取交易所信息
+		exchangeType := "Unknown"
+		if database != nil {
+			if exchanges, err := database.GetExchanges(userID); err == nil {
+				// 从交易员配置中找到对应的交易所
+				if traderConfigs, err := database.GetTraders(userID); err == nil {
+					for _, traderCfg := range traderConfigs {
+						if traderCfg.ID == traderID {
+							// 找到对应的交易所配置
+							for _, exchange := range exchanges {
+								if exchange.ID == traderCfg.ExchangeID {
+									exchangeType = exchange.Type
+									break
+								}
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+
+		// 创建显示名称：AI模型 + 交易所
+		displayName := fmt.Sprintf("%s - %s", t.GetAIModel(), exchangeType)
+
 		traders = append(traders, map[string]interface{}{
 			"trader_id":       t.GetID(),
 			"trader_name":     t.GetName(),
+			"display_name":    displayName, // 新增显示名称
 			"ai_model":        t.GetAIModel(),
+			"exchange_type":   exchangeType, // 新增交易所类型
 			"total_equity":    account["total_equity"],
 			"total_pnl":       account["total_pnl"],
 			"total_pnl_pct":   account["total_pnl_pct"],

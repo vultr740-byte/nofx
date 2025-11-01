@@ -193,7 +193,9 @@ export interface UpdateExchangeConfigRequest {
 export interface CompetitionTraderData {
   trader_id: string;
   trader_name: string;
+  display_name?: string; // AI模型 + 交易所的组合显示名称
   ai_model: string;
+  exchange_type?: string; // 交易所类型
   total_equity: number;
   total_pnl: number;
   total_pnl_pct: number;
