@@ -64,6 +64,15 @@ func NewDatabase(dbPath string) (*Database, error) {
 	}
 
 	log.Printf("📋 连接到 Supabase PostgreSQL 数据库")
+
+	// 添加连接参数以强制使用 IPv4 并优化连接
+	if !strings.Contains(dbURL, "?") {
+		dbURL += "?"
+	} else {
+		dbURL += "&"
+	}
+	dbURL += "sslmode=require&connect_timeout=10&gssencmode=disable"
+
 	db, err = sql.Open("postgres", dbURL)
 	if err != nil {
 		return nil, fmt.Errorf("连接 Supabase 失败: %w", err)
