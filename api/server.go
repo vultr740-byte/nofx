@@ -187,16 +187,18 @@ type CreateTraderRequest struct {
 
 // AI模型管理相关结构体
 type CreateModelRequest struct {
-	Name     string `json:"name" binding:"required"`
-	Provider string `json:"provider" binding:"required"` // deepseek, qwen 等
-	Enabled  bool   `json:"enabled"`
-	APIKey   string `json:"api_key"`
+	Name        string `json:"name" binding:"required"`
+	Provider    string `json:"provider" binding:"required"` // deepseek, qwen 等
+	Enabled     bool   `json:"enabled"`
+	APIKey      string `json:"api_key"`
+	Description string `json:"description"`
 }
 
 type UpdateModelRequest struct {
-	Name     string `json:"name" binding:"required"`
-	Enabled  bool   `json:"enabled"`
-	APIKey   string `json:"api_key"`
+	Name        string `json:"name" binding:"required"`
+	Enabled     bool   `json:"enabled"`
+	APIKey      string `json:"api_key"`
+	Description string `json:"description"`
 }
 
 // 交易所管理相关结构体
@@ -211,6 +213,7 @@ type CreateExchangeRequest struct {
 	AsterUser               string `json:"aster_user"`
 	AsterSigner             string `json:"aster_signer"`
 	AsterPrivateKey         string `json:"aster_private_key"`
+	Description             string `json:"description"`
 }
 
 type UpdateExchangeRequest struct {
@@ -223,14 +226,16 @@ type UpdateExchangeRequest struct {
 	AsterUser               string `json:"aster_user"`
 	AsterSigner             string `json:"aster_signer"`
 	AsterPrivateKey         string `json:"aster_private_key"`
+	Description             string `json:"description"`
 }
 
 type ModelConfig struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
-	Enabled  bool   `json:"enabled"`
-	APIKey   string `json:"apiKey,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Provider    string `json:"provider"`
+	Enabled     bool   `json:"enabled"`
+	APIKey      string `json:"apiKey,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 type ExchangeConfig struct {
@@ -241,6 +246,7 @@ type ExchangeConfig struct {
 	APIKey    string `json:"apiKey,omitempty"`
 	SecretKey string `json:"secretKey,omitempty"`
 	Testnet   bool   `json:"testnet,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 type UpdateModelConfigRequest struct {
@@ -1140,7 +1146,7 @@ func (s *Server) handleCreateModel(c *gin.Context) {
 	// 生成模型ID
 	modelID := fmt.Sprintf("%s_%s_%d", req.Provider, strings.ToLower(strings.ReplaceAll(req.Name, " ", "_")), time.Now().Unix())
 
-	_, err := s.database.CreateAIModel(userID, req.Name, req.Provider, req.Enabled, req.APIKey)
+	_, err := s.database.CreateAIModelWithDescription(userID, req.Name, req.Provider, req.Enabled, req.APIKey, req.Description)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("创建AI模型失败: %v", err)})
 		return
@@ -1169,7 +1175,7 @@ func (s *Server) handleUpdateModel(c *gin.Context) {
 		return
 	}
 
-	err := s.database.UpdateAIModel(userID, modelID, req.Name, req.Enabled, req.APIKey)
+	err := s.database.UpdateAIModelWithDescription(userID, modelID, req.Name, req.Enabled, req.APIKey, req.Description)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("更新AI模型失败: %v", err)})
 		return
@@ -1214,8 +1220,8 @@ func (s *Server) handleCreateExchange(c *gin.Context) {
 	// 生成交易所ID
 	exchangeID := fmt.Sprintf("%s_%s_%d", req.Type, strings.ToLower(strings.ReplaceAll(req.Name, " ", "_")), time.Now().Unix())
 
-	_, err := s.database.CreateExchange(userID, req.Name, req.Type, req.Enabled, req.APIKey, req.SecretKey, req.Testnet,
-		req.HyperliquidWalletAddr, req.AsterUser, req.AsterSigner, req.AsterPrivateKey)
+	_, err := s.database.CreateExchangeWithDescription(userID, req.Name, req.Type, req.Enabled, req.APIKey, req.SecretKey, req.Testnet,
+		req.HyperliquidWalletAddr, req.AsterUser, req.AsterSigner, req.AsterPrivateKey, req.Description)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("创建交易所失败: %v", err)})
 		return
@@ -1244,8 +1250,8 @@ func (s *Server) handleUpdateExchange(c *gin.Context) {
 		return
 	}
 
-	err := s.database.UpdateExchange(userID, exchangeID, req.Name, req.Enabled, req.APIKey, req.SecretKey, req.Testnet,
-		req.HyperliquidWalletAddr, req.AsterUser, req.AsterSigner, req.AsterPrivateKey)
+	err := s.database.UpdateExchangeWithDescription(userID, exchangeID, req.Name, req.Enabled, req.APIKey, req.SecretKey, req.Testnet,
+		req.HyperliquidWalletAddr, req.AsterUser, req.AsterSigner, req.AsterPrivateKey, req.Description)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("更新交易所失败: %v", err)})
 		return

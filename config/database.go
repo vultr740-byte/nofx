@@ -394,25 +394,27 @@ func (d *Database) migrateExchangesTable() error {
 
 // User 用户配置
 type User struct {
-	ID          string    `json:"id"`
-	Email       string    `json:"email"`
-	PasswordHash string   `json:"-"` // 不返回到前端
-	OTPSecret   string    `json:"-"` // 不返回到前端
-	OTPVerified bool      `json:"otp_verified"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"-"` // 不返回到前端
+	OTPSecret    string    `json:"-"` // 不返回到前端
+	OTPVerified  bool      `json:"otp_verified"`
+	Admin        bool      `json:"admin"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // AIModelConfig AI模型配置
 type AIModelConfig struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	Name      string    `json:"name"`
-	Provider  string    `json:"provider"`
-	Enabled   bool      `json:"enabled"`
-	APIKey    string    `json:"apiKey"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Name        string    `json:"name"`
+	Provider    string    `json:"provider"`
+	Enabled     bool      `json:"enabled"`
+	APIKey      string    `json:"apiKey"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // ExchangeConfig 交易所配置
@@ -431,6 +433,7 @@ type ExchangeConfig struct {
 	AsterUser       string `json:"asterUser"`
 	AsterSigner     string `json:"asterSigner"`
 	AsterPrivateKey string `json:"asterPrivateKey"`
+	Description     string    `json:"description"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -504,12 +507,12 @@ func (d *Database) EnsureAdminUser() error {
 func (d *Database) GetUserByEmail(email string) (*User, error) {
 	var user User
 	query := d.convertQuery(`
-		SELECT id, email, password_hash, otp_secret, otp_verified, created_at, updated_at
+		SELECT id, email, password_hash, otp_secret, otp_verified, admin, created_at, updated_at
 		FROM users WHERE email = ?
 	`)
 	err := d.db.QueryRow(query, email).Scan(
 		&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret,
-		&user.OTPVerified, &user.CreatedAt, &user.UpdatedAt,
+		&user.OTPVerified, &user.Admin, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -521,12 +524,12 @@ func (d *Database) GetUserByEmail(email string) (*User, error) {
 func (d *Database) GetUserByID(userID string) (*User, error) {
 	var user User
 	query := d.convertQuery(`
-		SELECT id, email, password_hash, otp_secret, otp_verified, created_at, updated_at
+		SELECT id, email, password_hash, otp_secret, otp_verified, admin, created_at, updated_at
 		FROM users WHERE id = ?
 	`)
 	err := d.db.QueryRow(query, userID).Scan(
 		&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret,
-		&user.OTPVerified, &user.CreatedAt, &user.UpdatedAt,
+		&user.OTPVerified, &user.Admin, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -544,7 +547,8 @@ func (d *Database) UpdateUserOTPVerified(userID string, verified bool) error {
 // GetAIModels 获取用户的AI模型配置
 func (d *Database) GetAIModels(userID string) ([]*AIModelConfig, error) {
 	query := d.convertQuery(`
-		SELECT id, user_id, name, provider, enabled, api_key, created_at, updated_at
+		SELECT id, user_id, name, provider, enabled, api_key,
+		       COALESCE(description, '') as description, created_at, updated_at
 		FROM ai_models WHERE user_id = ? ORDER BY id
 	`)
 	rows, err := d.db.Query(query, userID)
@@ -558,8 +562,8 @@ func (d *Database) GetAIModels(userID string) ([]*AIModelConfig, error) {
 	for rows.Next() {
 		var model AIModelConfig
 		err := rows.Scan(
-			&model.ID, &model.UserID, &model.Name, &model.Provider, 
-			&model.Enabled, &model.APIKey,
+			&model.ID, &model.UserID, &model.Name, &model.Provider,
+			&model.Enabled, &model.APIKey, &model.Description,
 			&model.CreatedAt, &model.UpdatedAt,
 		)
 		if err != nil {
@@ -573,19 +577,25 @@ func (d *Database) GetAIModels(userID string) ([]*AIModelConfig, error) {
 
 // CreateAIModel 创建用户自定义AI模型
 func (d *Database) CreateAIModel(userID, name, provider string, enabled bool, apiKey string) (*AIModelConfig, error) {
+	return d.CreateAIModelWithDescription(userID, name, provider, enabled, apiKey, "")
+}
+
+// CreateAIModelWithDescription 创建用户自定义AI模型（带描述）
+func (d *Database) CreateAIModelWithDescription(userID, name, provider string, enabled bool, apiKey, description string) (*AIModelConfig, error) {
 	// 生成唯一的模型ID
 	modelID := fmt.Sprintf("%s_%d", userID, time.Now().UnixNano())
 
 	query := d.convertQuery(`
-		INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
-		RETURNING id, user_id, name, provider, enabled, api_key, created_at, updated_at
+		INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, description, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+		RETURNING id, user_id, name, provider, enabled, api_key, description, created_at, updated_at
 	`)
 
 	var model AIModelConfig
-	err := d.db.QueryRow(query, modelID, userID, name, provider, enabled, apiKey).Scan(
+	err := d.db.QueryRow(query, modelID, userID, name, provider, enabled, apiKey, description).Scan(
 		&model.ID, &model.UserID, &model.Name, &model.Provider,
-		&model.Enabled, &model.APIKey, &model.CreatedAt, &model.UpdatedAt,
+		&model.Enabled, &model.APIKey, &model.Description,
+		&model.CreatedAt, &model.UpdatedAt,
 	)
 
 	if err != nil {
@@ -597,6 +607,11 @@ func (d *Database) CreateAIModel(userID, name, provider string, enabled bool, ap
 
 // UpdateAIModel 更新用户AI模型配置
 func (d *Database) UpdateAIModel(userID, id string, name string, enabled bool, apiKey string) error {
+	return d.UpdateAIModelWithDescription(userID, id, name, enabled, apiKey, "")
+}
+
+// UpdateAIModelWithDescription 更新用户AI模型配置（带描述）
+func (d *Database) UpdateAIModelWithDescription(userID, id string, name string, enabled bool, apiKey, description string) error {
 	// 检查模型是否属于当前用户
 	var exists bool
 	query := d.convertQuery(`
@@ -613,10 +628,10 @@ func (d *Database) UpdateAIModel(userID, id string, name string, enabled bool, a
 
 	// 更新模型
 	query = d.convertQuery(`
-		UPDATE ai_models SET name = ?, enabled = ?, api_key = ?, updated_at = NOW()
+		UPDATE ai_models SET name = ?, enabled = ?, api_key = ?, description = ?, updated_at = NOW()
 		WHERE id = ? AND user_id = ?
 	`)
-	_, err = d.db.Exec(query, name, enabled, apiKey, id, userID)
+	_, err = d.db.Exec(query, name, enabled, apiKey, description, id, userID)
 	return err
 }
 
@@ -650,6 +665,7 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 		       COALESCE(aster_user, '') as aster_user,
 		       COALESCE(aster_signer, '') as aster_signer,
 		       COALESCE(aster_private_key, '') as aster_private_key,
+		       COALESCE(description, '') as description,
 		       created_at, updated_at
 		FROM exchanges WHERE user_id = ? ORDER BY id
 	`)
@@ -666,8 +682,8 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 		err := rows.Scan(
 			&exchange.ID, &exchange.UserID, &exchange.Name, &exchange.Type,
 			&exchange.Enabled, &exchange.APIKey, &exchange.SecretKey, &exchange.Testnet,
-			&exchange.HyperliquidWalletAddr, &exchange.AsterUser, 
-			&exchange.AsterSigner, &exchange.AsterPrivateKey,
+			&exchange.HyperliquidWalletAddr, &exchange.AsterUser,
+			&exchange.AsterSigner, &exchange.AsterPrivateKey, &exchange.Description,
 			&exchange.CreatedAt, &exchange.UpdatedAt,
 		)
 		if err != nil {
@@ -682,23 +698,28 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 
 // CreateExchange 创建用户自定义交易所配置
 func (d *Database) CreateExchange(userID, name, exchangeType string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) (*ExchangeConfig, error) {
+	return d.CreateExchangeWithDescription(userID, name, exchangeType, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, "")
+}
+
+// CreateExchangeWithDescription 创建用户自定义交易所配置（带描述）
+func (d *Database) CreateExchangeWithDescription(userID, name, exchangeType string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, description string) (*ExchangeConfig, error) {
 	// 生成唯一的交易所ID
 	exchangeID := fmt.Sprintf("%s_%d", userID, time.Now().UnixNano())
 
 	query := d.convertQuery(`
 		INSERT INTO exchanges (id, user_id, name, exchange_type, enabled, api_key, secret_key, testnet,
-		                      hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+		                      hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, description, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
 		RETURNING id, user_id, name, exchange_type, enabled, api_key, secret_key, testnet,
-		           hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at
+		           hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, description, created_at, updated_at
 	`)
 
 	var exchange ExchangeConfig
 	err := d.db.QueryRow(query, exchangeID, userID, name, exchangeType, enabled, apiKey, secretKey, testnet,
-		hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey).Scan(
+		hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, description).Scan(
 		&exchange.ID, &exchange.UserID, &exchange.Name, &exchange.Type, &exchange.Enabled,
 		&exchange.APIKey, &exchange.SecretKey, &exchange.Testnet,
-		&exchange.HyperliquidWalletAddr, &exchange.AsterUser, &exchange.AsterSigner, &exchange.AsterPrivateKey,
+		&exchange.HyperliquidWalletAddr, &exchange.AsterUser, &exchange.AsterSigner, &exchange.AsterPrivateKey, &exchange.Description,
 		&exchange.CreatedAt, &exchange.UpdatedAt,
 	)
 
@@ -711,6 +732,11 @@ func (d *Database) CreateExchange(userID, name, exchangeType string, enabled boo
 
 // UpdateExchange 更新用户交易所配置
 func (d *Database) UpdateExchange(userID, id string, name string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) error {
+	return d.UpdateExchangeWithDescription(userID, id, name, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, "")
+}
+
+// UpdateExchangeWithDescription 更新用户交易所配置（带描述）
+func (d *Database) UpdateExchangeWithDescription(userID, id string, name string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, description string) error {
 	// 检查交易所是否属于当前用户
 	var exists bool
 	query := d.convertQuery(`
@@ -728,11 +754,11 @@ func (d *Database) UpdateExchange(userID, id string, name string, enabled bool, 
 	// 更新交易所
 	query = d.convertQuery(`
 		UPDATE exchanges SET name = ?, enabled = ?, api_key = ?, secret_key = ?, testnet = ?,
-		                     hyperliquid_wallet_addr = ?, aster_user = ?, aster_signer = ?, aster_private_key = ?, updated_at = NOW()
+		                     hyperliquid_wallet_addr = ?, aster_user = ?, aster_signer = ?, aster_private_key = ?, description = ?, updated_at = NOW()
 		WHERE id = ? AND user_id = ?
 	`)
 	_, err = d.db.Exec(query, name, enabled, apiKey, secretKey, testnet,
-		hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, id, userID)
+		hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, description, id, userID)
 	return err
 }
 
@@ -897,12 +923,13 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 	query := `
 		SELECT
 			t.id, t.user_id, t.name, t.ai_model_id, t.exchange_id, t.description, t.enabled, t.created_at, t.updated_at,
-			a.id, a.user_id, a.name, a.provider, a.enabled, a.api_key, a.created_at, a.updated_at,
+			a.id, a.user_id, a.name, a.provider, a.enabled, a.api_key, COALESCE(a.description, '') as ai_description, a.created_at, a.updated_at,
 			e.id, e.user_id, e.name, e.exchange_type, e.enabled, e.api_key, e.secret_key, e.testnet,
 			COALESCE(e.hyperliquid_wallet_addr, '') as hyperliquid_wallet_addr,
 			COALESCE(e.aster_user, '') as aster_user,
 			COALESCE(e.aster_signer, '') as aster_signer,
 			COALESCE(e.aster_private_key, '') as aster_private_key,
+			COALESCE(e.description, '') as exchange_description,
 			e.created_at, e.updated_at
 		FROM traders t
 		JOIN ai_models a ON t.ai_model_id = a.id AND t.user_id = a.user_id
@@ -913,11 +940,11 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 	err := d.db.QueryRow(query, traderID, userID).Scan(
 		&trader.ID, &trader.UserID, &trader.Name, &trader.AIModelID, &trader.ExchangeID,
 		&trader.Description, &trader.Enabled, &trader.CreatedAt, &trader.UpdatedAt,
-		&aiModel.ID, &aiModel.UserID, &aiModel.Name, &aiModel.Provider, &aiModel.Enabled, &aiModel.APIKey,
+		&aiModel.ID, &aiModel.UserID, &aiModel.Name, &aiModel.Provider, &aiModel.Enabled, &aiModel.APIKey, &aiModel.Description,
 		&aiModel.CreatedAt, &aiModel.UpdatedAt,
 		&exchange.ID, &exchange.UserID, &exchange.Name, &exchange.Type, &exchange.Enabled,
 		&exchange.APIKey, &exchange.SecretKey, &exchange.Testnet,
-		&exchange.HyperliquidWalletAddr, &exchange.AsterUser, &exchange.AsterSigner, &exchange.AsterPrivateKey,
+		&exchange.HyperliquidWalletAddr, &exchange.AsterUser, &exchange.AsterSigner, &exchange.AsterPrivateKey, &exchange.Description,
 		&exchange.CreatedAt, &exchange.UpdatedAt,
 	)
 
