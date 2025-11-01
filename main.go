@@ -197,10 +197,26 @@ func main() {
 		log.Fatalf("❌ 加载交易员失败: %v", err)
 	}
 
-	// 获取数据库中的所有交易员配置（用于显示，使用default用户）
-	traders, err := database.GetTraders("default")
-	if err != nil {
-		log.Fatalf("❌ 获取交易员列表失败: %v", err)
+	// 检查多用户模式配置
+	multiUserModeStr, _ := database.GetSystemConfig("multi_user_mode")
+	multiUserMode := multiUserModeStr == "true"
+
+	var traders []*config.TraderRecord
+
+	if multiUserMode {
+		// 多用户模式：显示所有用户的交易员
+		var err error
+		traders, err = database.GetAllTraders()
+		if err != nil {
+			log.Fatalf("❌ 获取所有交易员列表失败: %v", err)
+		}
+	} else {
+		// 单用户模式：只显示default用户的交易员
+		var err error
+		traders, err = database.GetTraders("default")
+		if err != nil {
+			log.Fatalf("❌ 获取交易员列表失败: %v", err)
+		}
 	}
 
 	// 显示加载的交易员信息

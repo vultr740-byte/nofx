@@ -854,6 +854,59 @@ func (d *Database) CreateTrader(trader *TraderRecord) error {
 	return err
 }
 
+// GetAllTraders 获取所有用户的交易员（多用户模式）
+func (d *Database) GetAllTraders() ([]*TraderRecord, error) {
+	query := `
+		SELECT id, user_id, name, ai_model_id, exchange_id,
+		       COALESCE(description, '') as description, enabled,
+		       COALESCE(initial_balance, 1000.0) as initial_balance,
+		       COALESCE(scan_interval_minutes, 3) as scan_interval_minutes,
+		       COALESCE(is_running, FALSE) as is_running,
+		       COALESCE(custom_prompt, '') as custom_prompt,
+		       COALESCE(override_base_prompt, FALSE) as override_base_prompt,
+		       COALESCE(is_cross_margin, TRUE) as is_cross_margin,
+		       created_at, updated_at
+		FROM traders
+		ORDER BY created_at DESC
+	`
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var traders []*TraderRecord
+	for rows.Next() {
+		trader := &TraderRecord{}
+		err := rows.Scan(
+			&trader.ID,
+			&trader.UserID,
+			&trader.Name,
+			&trader.AIModelID,
+			&trader.ExchangeID,
+			&trader.Description,
+			&trader.Enabled,
+			&trader.InitialBalance,
+			&trader.ScanIntervalMinutes,
+			&trader.IsRunning,
+			&trader.CustomPrompt,
+			&trader.OverrideBasePrompt,
+			&trader.IsCrossMargin,
+			&trader.CreatedAt,
+			&trader.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		traders = append(traders, trader)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return traders, nil
+}
 
 // GetTraders 获取用户的交易员
 func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {

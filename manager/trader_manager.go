@@ -28,20 +28,36 @@ func (tm *TraderManager) LoadTradersFromDatabase(database *config.Database) erro
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
-	// 根据admin_mode确定用户ID
-	adminModeStr, _ := database.GetSystemConfig("admin_mode")
-	userID := "default"
-	if adminModeStr != "false" { // 默认为true
-		userID = "admin"
-	}
+	// 检查是否启用多用户模式
+	multiUserModeStr, _ := database.GetSystemConfig("multi_user_mode")
+	multiUserMode := multiUserModeStr == "true"
 
-	// 获取数据库中的所有交易员
-	traders, err := database.GetTraders(userID)
-	if err != nil {
-		return fmt.Errorf("获取交易员列表失败: %w", err)
-	}
+	var traders []*config.TraderRecord
+	var err error
 
-	log.Printf("📋 加载数据库中的交易员配置: %d 个 (用户: %s)", len(traders), userID)
+	if multiUserMode {
+		// 多用户模式：加载所有用户的交易员
+		log.Printf("🌐 多用户模式已启用，加载所有用户的交易员...")
+		traders, err = database.GetAllTraders()
+		if err != nil {
+			return fmt.Errorf("获取所有交易员列表失败: %w", err)
+		}
+		log.Printf("📋 加载数据库中的交易员配置: %d 个 (所有用户)", len(traders))
+	} else {
+		// 单用户模式：根据admin_mode确定用户ID
+		adminModeStr, _ := database.GetSystemConfig("admin_mode")
+		userID := "default"
+		if adminModeStr != "false" { // 默认为true
+			userID = "admin"
+		}
+
+		// 获取数据库中的指定用户交易员
+		traders, err = database.GetTraders(userID)
+		if err != nil {
+			return fmt.Errorf("获取交易员列表失败: %w", err)
+		}
+		log.Printf("📋 加载数据库中的交易员配置: %d 个 (用户: %s)", len(traders), userID)
+	}
 
 	// 获取系统配置
 	coinPoolURL, _ := database.GetSystemConfig("coin_pool_api_url")
@@ -81,8 +97,8 @@ func (tm *TraderManager) LoadTradersFromDatabase(database *config.Database) erro
 
 	// 为每个交易员获取AI模型和交易所配置
 	for _, traderCfg := range traders {
-		// 获取AI模型配置
-		aiModels, err := database.GetAIModels(userID)
+		// 使用交易员的用户ID获取AI模型配置
+		aiModels, err := database.GetAIModels(traderCfg.UserID)
 		if err != nil {
 			log.Printf("⚠️  获取AI模型配置失败: %v", err)
 			continue
@@ -107,7 +123,7 @@ func (tm *TraderManager) LoadTradersFromDatabase(database *config.Database) erro
 		}
 
 		// 获取交易所配置
-		exchanges, err := database.GetExchanges(userID)
+		exchanges, err := database.GetExchanges(traderCfg.UserID)
 		if err != nil {
 			log.Printf("⚠️  获取交易所配置失败: %v", err)
 			continue
@@ -154,7 +170,7 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		ID:                    traderCfg.ID,
 		Name:                  traderCfg.Name,
 		AIModel:               aiModelCfg.Provider, // 使用provider作为模型标识
-		Exchange:              exchangeCfg.ID,      // 使用exchange ID
+		Exchange:              exchangeCfg.Type,    // 使用exchange type而不是ID
 		BinanceAPIKey:         "",
 		BinanceSecretKey:      "",
 		HyperliquidPrivateKey: "",
@@ -231,7 +247,7 @@ func (tm *TraderManager) AddTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		ID:                    traderCfg.ID,
 		Name:                  traderCfg.Name,
 		AIModel:               aiModelCfg.Provider, // 使用provider作为模型标识
-		Exchange:              exchangeCfg.ID,      // 使用exchange ID
+		Exchange:              exchangeCfg.Type,    // 使用exchange type而不是ID
 		BinanceAPIKey:         "",
 		BinanceSecretKey:      "",
 		HyperliquidPrivateKey: "",
@@ -581,7 +597,7 @@ func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiMode
 		ID:                    traderCfg.ID,
 		Name:                  traderCfg.Name,
 		AIModel:               aiModelCfg.Provider, // 使用provider作为模型标识
-		Exchange:              exchangeCfg.ID,      // 使用exchange ID
+		Exchange:              exchangeCfg.Type,    // 使用exchange type而不是ID
 		BinanceAPIKey:         "",
 		BinanceSecretKey:      "",
 		HyperliquidPrivateKey: "",
