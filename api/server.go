@@ -110,7 +110,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/exchanges", s.handleGetExchangeConfigs)
 			// 交易所管理的完整CRUD功能
 			protected.POST("/exchanges", s.handleCreateExchange)
-			protected.PUT("/exchanges", s.handleUpdateExchangeConfigs)  // 批量更新
+			protected.PUT("/exchanges", s.handleUpdateExchangeConfigs) // 批量更新
 			protected.PUT("/exchanges/:id", s.handleUpdateExchange)
 			protected.DELETE("/exchanges/:id", s.handleDeleteExchange)
 
@@ -124,16 +124,10 @@ func (s *Server) setupRoutes() {
 			// 竞赛总览（当前用户）
 			protected.GET("/competition", s.handleCompetition)
 
-			// 指定trader的数据（使用query参数 ?trader_id=xxx）
-			protected.GET("/status", s.handleStatus)
-			protected.GET("/account", s.handleAccount)
-			protected.GET("/positions", s.handlePositions)
-			protected.GET("/decisions", s.handleDecisions)
-			protected.GET("/decisions/latest", s.handleLatestDecisions)
-			protected.GET("/statistics", s.handleStatistics)
-			protected.GET("/equity-history", s.handleEquityHistory)
-			protected.GET("/performance", s.handlePerformance)
 		}
+
+		// Bot API 路由（独立的认证系统）
+		s.setupBotRoutes()
 	}
 }
 
@@ -171,11 +165,11 @@ func (s *Server) handleDebugData(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"user_id": userID,
+		"user_id":         userID,
 		"exchanges_count": len(exchanges),
-		"models_count": len(models),
-		"exchanges": exchanges,
-		"models": models,
+		"models_count":    len(models),
+		"exchanges":       exchanges,
+		"models":          models,
 	})
 }
 
@@ -186,7 +180,7 @@ func (s *Server) handleDebugAllData(c *gin.Context) {
 
 	result := gin.H{
 		"tested_user_ids": testUserIDs,
-		"findings": gin.H{},
+		"findings":        gin.H{},
 	}
 
 	for _, userID := range testUserIDs {
@@ -201,7 +195,7 @@ func (s *Server) handleDebugAllData(c *gin.Context) {
 			result["findings"].(gin.H)[userID+"_exchanges_error"] = err.Error()
 		} else {
 			result["findings"].(gin.H)[userID+"_exchanges"] = gin.H{
-				"count": len(exchanges),
+				"count":    len(exchanges),
 				"has_data": len(exchanges) > 0,
 			}
 			if len(exchanges) > 0 {
@@ -215,7 +209,7 @@ func (s *Server) handleDebugAllData(c *gin.Context) {
 			result["findings"].(gin.H)[userID+"_models_error"] = err.Error()
 		} else {
 			result["findings"].(gin.H)[userID+"_models"] = gin.H{
-				"count": len(models),
+				"count":    len(models),
 				"has_data": len(models) > 0,
 			}
 			if len(models) > 0 {
@@ -385,30 +379,30 @@ type UpdateModelRequest struct {
 
 // 交易所管理相关结构体
 type CreateExchangeRequest struct {
-	Name                    string `json:"name" binding:"required"`
-	Type                    string `json:"type" binding:"required"` // binance, hyperliquid, aster 等
-	Enabled                 bool   `json:"enabled"`
-	APIKey                  string `json:"apiKey"`
-	SecretKey               string `json:"secretKey"`
-	Testnet                 bool   `json:"testnet"`
-	HyperliquidWalletAddr   string `json:"hyperliquidWalletAddr"`
-	AsterUser               string `json:"asterUser"`
-	AsterSigner             string `json:"asterSigner"`
-	AsterPrivateKey         string `json:"asterPrivateKey"`
-	Description             string `json:"description"`
+	Name                  string `json:"name" binding:"required"`
+	Type                  string `json:"type" binding:"required"` // binance, hyperliquid, aster 等
+	Enabled               bool   `json:"enabled"`
+	APIKey                string `json:"apiKey"`
+	SecretKey             string `json:"secretKey"`
+	Testnet               bool   `json:"testnet"`
+	HyperliquidWalletAddr string `json:"hyperliquidWalletAddr"`
+	AsterUser             string `json:"asterUser"`
+	AsterSigner           string `json:"asterSigner"`
+	AsterPrivateKey       string `json:"asterPrivateKey"`
+	Description           string `json:"description"`
 }
 
 type UpdateExchangeRequest struct {
-	Name                    string `json:"name" binding:"required"`
-	Enabled                 bool   `json:"enabled"`
-	APIKey                  string `json:"apiKey"`
-	SecretKey               string `json:"secretKey"`
-	Testnet                 bool   `json:"testnet"`
-	HyperliquidWalletAddr   string `json:"hyperliquidWalletAddr"`
-	AsterUser               string `json:"asterUser"`
-	AsterSigner             string `json:"asterSigner"`
-	AsterPrivateKey         string `json:"asterPrivateKey"`
-	Description             string `json:"description"`
+	Name                  string `json:"name" binding:"required"`
+	Enabled               bool   `json:"enabled"`
+	APIKey                string `json:"apiKey"`
+	SecretKey             string `json:"secretKey"`
+	Testnet               bool   `json:"testnet"`
+	HyperliquidWalletAddr string `json:"hyperliquidWalletAddr"`
+	AsterUser             string `json:"asterUser"`
+	AsterSigner           string `json:"asterSigner"`
+	AsterPrivateKey       string `json:"asterPrivateKey"`
+	Description           string `json:"description"`
 }
 
 type ModelConfig struct {
@@ -421,13 +415,13 @@ type ModelConfig struct {
 }
 
 type ExchangeConfig struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"` // "cex" or "dex"
-	Enabled   bool   `json:"enabled"`
-	APIKey    string `json:"apiKey,omitempty"`
-	SecretKey string `json:"secretKey,omitempty"`
-	Testnet   bool   `json:"testnet,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"` // "cex" or "dex"
+	Enabled     bool   `json:"enabled"`
+	APIKey      string `json:"apiKey,omitempty"`
+	SecretKey   string `json:"secretKey,omitempty"`
+	Testnet     bool   `json:"testnet,omitempty"`
 	Description string `json:"description,omitempty"`
 }
 
@@ -524,14 +518,8 @@ func (s *Server) handleDeleteTrader(c *gin.Context) {
 		return
 	}
 
-	// 如果交易员正在运行，先停止它
-	if trader, err := s.traderManager.GetTrader(traderID); err == nil {
-		status := trader.GetStatus()
-		if isRunning, ok := status["is_running"].(bool); ok && isRunning {
-			trader.Stop()
-			log.Printf("⏹  已停止运行中的交易员: %s", traderID)
-		}
-	}
+	// 从内存中移除交易员（会自动停止运行中的交易员）
+	s.traderManager.RemoveTrader(traderID)
 
 	log.Printf("✓ 交易员已删除: %s", traderID)
 	c.JSON(http.StatusOK, gin.H{"message": "交易员已删除"})
@@ -813,18 +801,18 @@ func (s *Server) handleStatus(c *gin.Context) {
 		// Trader存在但未运行，返回基本状态信息
 		log.Printf("✓ Trader %s 存在但未运行，返回基本状态", traderID)
 		status := map[string]interface{}{
-			"trader_id":      traderConfig.ID,
-			"trader_name":    traderConfig.Name,
-			"ai_model":       "", // 需要从AI模型配置获取
-			"is_running":     false,
-			"start_time":     "",
+			"trader_id":       traderConfig.ID,
+			"trader_name":     traderConfig.Name,
+			"ai_model":        "", // 需要从AI模型配置获取
+			"is_running":      false,
+			"start_time":      "",
 			"runtime_minutes": 0,
-			"call_count":     0,
+			"call_count":      0,
 			"initial_balance": traderConfig.InitialBalance,
-			"scan_interval":  fmt.Sprintf("%d分钟", traderConfig.ScanIntervalMinutes),
-			"stop_until":     "",
+			"scan_interval":   fmt.Sprintf("%d分钟", traderConfig.ScanIntervalMinutes),
+			"stop_until":      "",
 			"last_reset_time": "",
-			"ai_provider":    "",
+			"ai_provider":     "",
 		}
 		c.JSON(http.StatusOK, status)
 		return
@@ -847,16 +835,16 @@ func (s *Server) handleAccount(c *gin.Context) {
 	if err != nil {
 		// 如果trader不存在于内存中，返回空账户数据
 		response := map[string]interface{}{
-			"total_equity":        0.0,
-			"wallet_balance":      0.0,
-			"unrealized_profit":   0.0,
-			"available_balance":   0.0,
-			"total_pnl":           0.0,
-			"total_pnl_pct":       0.0,
-			"margin_used":         0.0,
-			"margin_used_pct":     0.0,
-			"position_count":      0,
-			"daily_pnl":           0.0,
+			"total_equity":      0.0,
+			"wallet_balance":    0.0,
+			"unrealized_profit": 0.0,
+			"available_balance": 0.0,
+			"total_pnl":         0.0,
+			"total_pnl_pct":     0.0,
+			"margin_used":       0.0,
+			"margin_used_pct":   0.0,
+			"position_count":    0,
+			"daily_pnl":         0.0,
 		}
 		c.JSON(http.StatusOK, response)
 		return
@@ -980,10 +968,10 @@ func (s *Server) handleStatistics(c *gin.Context) {
 	if err != nil {
 		// 如果trader不存在于内存中，返回空统计数据
 		response := map[string]interface{}{
-			"total_cycles":         0,
-			"successful_cycles":    0,
-			"failed_cycles":        0,
-			"total_open_positions": 0,
+			"total_cycles":          0,
+			"successful_cycles":     0,
+			"failed_cycles":         0,
+			"total_open_positions":  0,
 			"total_close_positions": 0,
 		}
 		c.JSON(http.StatusOK, response)
@@ -1668,4 +1656,215 @@ func (s *Server) Start() error {
 	log.Println()
 
 	return s.router.Run(addr)
+}
+
+// setupBotRoutes 设置Bot API路由
+func (s *Server) setupBotRoutes() {
+	botConfig := GetBotAuthConfig()
+	botGroup := s.router.Group("/api/bot")
+	botGroup.Use(BotAuthMiddleware(botConfig))
+
+	log.Printf("🤖 Bot API endpoints (with authentication):")
+	log.Printf("  • GET  /api/bot/health           - 健康检查")
+	log.Printf("  • GET  /api/bot/traders          - 获取交易员列表")
+	log.Printf("  • POST /api/bot/traders          - 创建交易员")
+	log.Printf("  • POST /api/bot/traders/:id/start - 启动交易员")
+	log.Printf("  • POST /api/bot/traders/:id/stop  - 停止交易员")
+	log.Printf("  • GET  /api/bot/traders/:id/status - 获取交易员状态")
+	log.Printf("  • GET  /api/bot/ai-models        - 获取AI模型列表")
+	log.Printf("  • POST /api/bot/ai-models        - 创建AI模型")
+	log.Printf("  • GET  /api/bot/exchanges        - 获取交易所列表")
+	log.Println()
+
+	// 健康检查
+	botGroup.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status":    "ok",
+			"timestamp": time.Now().Unix(),
+		})
+	})
+
+	// 获取交易员列表
+	botGroup.GET("/traders", func(c *gin.Context) {
+		telegramUserID := c.GetString("telegram_user_id")
+		if telegramUserID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Missing Telegram User ID",
+			})
+			return
+		}
+
+		// TODO: 实现基于Telegram User ID的trader查询
+		// 目前返回空列表，后续会实现具体的映射逻辑
+		c.JSON(http.StatusOK, gin.H{
+			"traders":          []interface{}{},
+			"count":            0,
+			"telegram_user_id": telegramUserID,
+		})
+	})
+
+	// 创建交易员
+	botGroup.POST("/traders", func(c *gin.Context) {
+		telegramUserID := c.GetString("telegram_user_id")
+		if telegramUserID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Missing Telegram User ID",
+			})
+			return
+		}
+
+		var req struct {
+			Name                string `json:"name"`
+			AIModelID           string `json:"ai_model_id"`
+			ExchangeID          string `json:"exchange_id"`
+			InitialBalance      *int   `json:"initial_balance,omitempty"`
+			ScanIntervalMinutes *int   `json:"scan_interval_minutes,omitempty"`
+			IsCrossMargin       *bool  `json:"is_cross_margin,omitempty"`
+		}
+
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		// TODO: 实现创建trader逻辑，关联到Telegram用户
+		c.JSON(http.StatusOK, gin.H{
+			"message":          "Trader creation will be implemented",
+			"telegram_user_id": telegramUserID,
+			"request":          req,
+		})
+	})
+
+	// 启动交易员
+	botGroup.POST("/traders/:id/start", func(c *gin.Context) {
+		traderID := c.Param("id")
+		telegramUserID := c.GetString("telegram_user_id")
+
+		log.Printf("Bot request to start trader %s by user %s", traderID, telegramUserID)
+
+		// TODO: 验证trader属于该Telegram用户
+		// TODO: 实现启动trader逻辑
+		c.JSON(http.StatusOK, gin.H{
+			"message":          fmt.Sprintf("Trader %s start will be implemented", traderID),
+			"telegram_user_id": telegramUserID,
+		})
+	})
+
+	// 停止交易员
+	botGroup.POST("/traders/:id/stop", func(c *gin.Context) {
+		traderID := c.Param("id")
+		telegramUserID := c.GetString("telegram_user_id")
+
+		log.Printf("Bot request to stop trader %s by user %s", traderID, telegramUserID)
+
+		// TODO: 验证trader属于该Telegram用户
+		// TODO: 实现停止trader逻辑
+		c.JSON(http.StatusOK, gin.H{
+			"message":          fmt.Sprintf("Trader %s stop will be implemented", traderID),
+			"telegram_user_id": telegramUserID,
+		})
+	})
+
+	// 获取交易员状态
+	botGroup.GET("/traders/:id/status", func(c *gin.Context) {
+		traderID := c.Param("id")
+		telegramUserID := c.GetString("telegram_user_id")
+
+		// TODO: 验证trader属于该Telegram用户
+		// TODO: 实现获取trader状态逻辑
+		c.JSON(http.StatusOK, gin.H{
+			"trader_id":        traderID,
+			"telegram_user_id": telegramUserID,
+			"status":           "Status check will be implemented",
+		})
+	})
+
+	// 获取AI模型列表
+	botGroup.GET("/ai-models", func(c *gin.Context) {
+		telegramUserID := c.GetString("telegram_user_id")
+
+		// TODO: 获取该Telegram用户的AI模型
+		c.JSON(http.StatusOK, gin.H{
+			"models":           []interface{}{},
+			"count":            0,
+			"telegram_user_id": telegramUserID,
+		})
+	})
+
+	// 创建AI模型
+	botGroup.POST("/ai-models", func(c *gin.Context) {
+		telegramUserID := c.GetString("telegram_user_id")
+		if telegramUserID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Missing Telegram User ID",
+			})
+			return
+		}
+
+		var req struct {
+			Name        string `json:"name"`
+			Provider    string `json:"provider"`
+			APIKey      string `json:"api_key,omitempty"`
+			Description string `json:"description,omitempty"`
+			Enabled     *bool  `json:"enabled,omitempty"`
+		}
+
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		// 验证必填字段
+		if req.Name == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Name is required",
+			})
+			return
+		}
+
+		if req.Provider == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Provider is required",
+			})
+			return
+		}
+
+		// 设置默认值
+		enabled := true
+		if req.Enabled != nil {
+			enabled = *req.Enabled
+		}
+
+		// 生成唯一ID
+		modelID := fmt.Sprintf("model_%s_%s_%d", req.Provider, telegramUserID, time.Now().Unix())
+
+		// TODO: 实际保存到数据库
+		// 目前返回创建成功的响应
+		c.JSON(http.StatusOK, gin.H{
+			"id":               modelID,
+			"name":             req.Name,
+			"provider":         req.Provider,
+			"api_key":          req.APIKey,
+			"description":      req.Description,
+			"enabled":          enabled,
+			"telegram_user_id": telegramUserID,
+			"created_at":       time.Now().Format(time.RFC3339),
+		})
+	})
+
+	// 获取交易所列表
+	botGroup.GET("/exchanges", func(c *gin.Context) {
+		telegramUserID := c.GetString("telegram_user_id")
+
+		// TODO: 获取该Telegram用户的交易所
+		c.JSON(http.StatusOK, gin.H{
+			"exchanges":        []interface{}{},
+			"count":            0,
+			"telegram_user_id": telegramUserID,
+		})
+	})
 }

@@ -265,12 +265,16 @@ func main() {
 		}
 	}()
 
+	// 恢复数据库中标记为运行状态的交易员
+	log.Println()
+	log.Println("🔄 检查并恢复交易员运行状态...")
+	if err := traderManager.RestoreRunningTraders(database); err != nil {
+		log.Printf("⚠️  恢复交易员运行状态失败: %v", err)
+	}
+
 	// 设置优雅退出
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	// TODO: 启动数据库中配置为运行状态的交易员
-	// traderManager.StartAll()
 
 	// 等待退出信号
 	<-sigChan

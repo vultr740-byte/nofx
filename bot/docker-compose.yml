@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  nofx-bot:
+    build: .
+    container_name: nofx-telegram-bot
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Telegram Bot Configuration
+      - BOT_TOKEN=${BOT_TOKEN}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - WEBHOOK_URL=${WEBHOOK_URL}
+      # API Configuration
+      - GO_API_BASE_URL=${GO_API_BASE_URL}
+      - BOT_API_TOKEN=${BOT_API_TOKEN}
+      - BOT_API_SECRET=${BOT_API_SECRET}
+      # Logging
+      - LOG_LEVEL=info
+    networks:
+      - nofx-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nofx-bot.rule=Host(`${BOT_DOMAIN:-bot.nofx.local}`)"
+      - "traefik.http.routers.nofx-bot.tls=true"
+      - "traefik.http.routers.nofx-bot.tls.certresolver=letsencrypt"
+      - "traefik.http.services.nofx-bot.loadbalancer.server.port=3000"
+
+networks:
+  nofx-network:
+    external: true

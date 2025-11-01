@@ -315,6 +315,23 @@ func (tm *TraderManager) GetTrader(id string) (*trader.AutoTrader, error) {
 	return t, nil
 }
 
+// RemoveTrader 从内存中移除指定ID的trader
+func (tm *TraderManager) RemoveTrader(id string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	if t, exists := tm.traders[id]; exists {
+		// 如果交易员正在运行，先停止它
+		status := t.GetStatus()
+		if isRunning, ok := status["is_running"].(bool); ok && isRunning {
+			t.Stop()
+			log.Printf("⏹  已停止运行中的交易员: %s", id)
+		}
+		delete(tm.traders, id)
+		log.Printf("✓ 交易员 %s 已从内存中移除", id)
+	}
+}
+
 // GetAllTraders 获取所有trader
 func (tm *TraderManager) GetAllTraders() map[string]*trader.AutoTrader {
 	tm.mu.RLock()
@@ -353,6 +370,87 @@ func (tm *TraderManager) StartAll() {
 			}
 		}(id, t)
 	}
+}
+
+// RestoreRunningTraders 根据数据库中的运行状态恢复交易员的运行状态
+func (tm *TraderManager) RestoreRunningTraders(database *config.Database) error {
+	// 检查是否启用多用户模式
+	multiUserModeStr, _ := database.GetSystemConfig("multi_user_mode")
+	multiUserMode := multiUserModeStr == "true"
+
+	var traders []*config.TraderRecord
+	var err error
+
+	if multiUserMode {
+		// 多用户模式：获取所有用户的交易员
+		traders, err = database.GetAllTraders()
+		if err != nil {
+			return fmt.Errorf("获取所有交易员列表失败: %w", err)
+		}
+	} else {
+		// 单用户模式：根据admin_mode确定用户ID
+		adminModeStr, _ := database.GetSystemConfig("admin_mode")
+		userID := "default"
+		if adminModeStr != "false" { // 默认为true
+			userID = "admin"
+		}
+		traders, err = database.GetTraders(userID)
+		if err != nil {
+			return fmt.Errorf("获取交易员列表失败: %w", err)
+		}
+	}
+
+	// 统计需要恢复的交易员
+	runningCount := 0
+	for _, traderCfg := range traders {
+		if traderCfg.IsRunning {
+			runningCount++
+		}
+	}
+
+	if runningCount == 0 {
+		log.Printf("📋 没有需要恢复运行状态的交易员")
+		return nil
+	}
+
+	log.Printf("🔄 开始恢复 %d 个交易员的运行状态...", runningCount)
+
+	// 恢复运行状态
+	tm.mu.RLock()
+	restoredCount := 0
+	for _, traderCfg := range traders {
+		if !traderCfg.IsRunning {
+			continue
+		}
+
+		// 检查交易员是否在内存中
+		t, exists := tm.traders[traderCfg.ID]
+		if !exists {
+			log.Printf("⚠️  交易员 %s (%s) 不在内存中，跳过恢复", traderCfg.Name, traderCfg.ID)
+			continue
+		}
+
+		// 检查交易员是否已经在运行
+		status := t.GetStatus()
+		if isRunning, ok := status["is_running"].(bool); ok && isRunning {
+			log.Printf("✓ 交易员 %s 已在运行中，跳过", traderCfg.Name)
+			continue
+		}
+
+		// 启动交易员
+		go func(traderID string, traderName string, at *trader.AutoTrader) {
+			log.Printf("▶️  恢复交易员运行状态: %s (%s)", traderName, traderID)
+			if err := at.Run(); err != nil {
+				log.Printf("❌ 交易员 %s 运行错误: %v", traderName, err)
+			}
+		}(traderCfg.ID, traderCfg.Name, t)
+
+		restoredCount++
+	}
+	tm.mu.RUnlock()
+
+	log.Printf("✓ 成功恢复 %d 个交易员的运行状态", restoredCount)
+	return nil
 }
 
 // StopAll 停止所有trader
@@ -410,8 +508,26 @@ func (tm *TraderManager) GetPublicCompetitionData(database *config.Database) (ma
 	comparison := make(map[string]interface{})
 	traders := make([]map[string]interface{}, 0)
 
+	// 获取数据库中所有用户的交易员列表（用于验证交易员是否仍然存在）
+	var validTraderIDs map[string]bool
+	if database != nil {
+		allTraders, err := database.GetAllTraders()
+		if err == nil {
+			validTraderIDs = make(map[string]bool)
+			for _, traderCfg := range allTraders {
+				validTraderIDs[traderCfg.ID] = true
+			}
+		}
+	}
+
 	// 获取所有用户的交易员
 	for traderID, t := range tm.traders {
+		// 验证交易员是否仍在数据库中（防止返回已删除的交易员）
+		if validTraderIDs != nil && !validTraderIDs[traderID] {
+			log.Printf("⚠️ 交易员 %s 不在数据库中，跳过（可能已被删除）", traderID)
+			continue
+		}
+
 		account, err := t.GetAccountInfo()
 		if err != nil {
 			log.Printf("⚠️ 获取交易员 %s 账户信息失败: %v", traderID, err)
@@ -490,11 +606,29 @@ func (tm *TraderManager) GetCompetitionDataWithDatabase(userID string, database 
 	comparison := make(map[string]interface{})
 	traders := make([]map[string]interface{}, 0)
 
+	// 获取数据库中该用户的交易员列表（用于验证交易员是否仍然存在）
+	var validTraderIDs map[string]bool
+	if database != nil {
+		traderConfigs, err := database.GetTraders(userID)
+		if err == nil {
+			validTraderIDs = make(map[string]bool)
+			for _, traderCfg := range traderConfigs {
+				validTraderIDs[traderCfg.ID] = true
+			}
+		}
+	}
+
 	// 只获取该用户的交易员
 	for traderID, t := range tm.traders {
 		// 检查trader是否属于该用户（通过ID前缀判断）
 		// 格式：userID_traderName
 		if !isUserTrader(traderID, userID) {
+			continue
+		}
+
+		// 验证交易员是否仍在数据库中（防止返回已删除的交易员）
+		if validTraderIDs != nil && !validTraderIDs[traderID] {
+			log.Printf("⚠️ 交易员 %s 不在数据库中，跳过（可能已被删除）", traderID)
 			continue
 		}
 
