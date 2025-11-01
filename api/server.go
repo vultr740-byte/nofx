@@ -530,11 +530,35 @@ func (s *Server) handleDeleteTrader(c *gin.Context) {
 // handleStartTrader 启动交易员
 func (s *Server) handleStartTrader(c *gin.Context) {
 	traderID := c.Param("id")
+	userID := c.GetString("user_id")
 
+	// 使用统一的获取trader逻辑，如果trader不在内存中，检查数据库
+	_, traderID, err := getTraderWithFallback(s.traderManager, s.database, c)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 检查交易员是否已经在运行
 	trader, err := s.traderManager.GetTrader(traderID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "交易员不存在"})
-		return
+		// 如果trader不存在于内存中，需要从数据库加载并启动
+		log.Printf("🔄 交易员 %s 不在内存中，从数据库加载并启动", traderID)
+
+		// 确保用户的交易员已加载到内存中
+		err = s.traderManager.LoadUserTraders(s.database, userID)
+		if err != nil {
+			log.Printf("❌ 加载用户交易员失败: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "加载交易员失败"})
+			return
+		}
+
+		// 再次尝试获取trader
+		trader, err = s.traderManager.GetTrader(traderID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "无法加载交易员"})
+			return
+		}
 	}
 
 	// 检查交易员是否已经在运行
@@ -553,7 +577,6 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 	}()
 
 	// 更新数据库中的运行状态
-	userID := c.GetString("user_id")
 	err = s.database.UpdateTraderStatus(userID, traderID, true)
 	if err != nil {
 		log.Printf("⚠️  更新交易员状态失败: %v", err)
@@ -566,10 +589,20 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 // handleStopTrader 停止交易员
 func (s *Server) handleStopTrader(c *gin.Context) {
 	traderID := c.Param("id")
+	userID := c.GetString("user_id")
 
+	// 使用统一的获取trader逻辑，如果trader不在内存中，检查数据库
+	_, traderID, err := getTraderWithFallback(s.traderManager, s.database, c)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 检查交易员是否在内存中运行
 	trader, err := s.traderManager.GetTrader(traderID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "交易员不存在"})
+		// 如果trader不在内存中，说明它已经停止了
+		c.JSON(http.StatusBadRequest, gin.H{"error": "交易员已停止"})
 		return
 	}
 
@@ -584,7 +617,6 @@ func (s *Server) handleStopTrader(c *gin.Context) {
 	trader.Stop()
 
 	// 更新数据库中的运行状态
-	userID := c.GetString("user_id")
 	err = s.database.UpdateTraderStatus(userID, traderID, false)
 	if err != nil {
 		log.Printf("⚠️  更新交易员状态失败: %v", err)
