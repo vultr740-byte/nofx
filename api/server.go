@@ -286,6 +286,65 @@ func (s *Server) getTraderWithFallback(userID, traderID string) (*trader.AutoTra
 	return nil, fmt.Errorf("trader存在但未运行")
 }
 
+// getTraderWithFallback 统一的获取trader逻辑，从query或context获取并返回数据库验证的traderID
+func getTraderWithFallback(traderManager *manager.TraderManager, database *config.Database, c *gin.Context) (string, string, error) {
+	userID := c.GetString("user_id")
+	traderID := c.Query("trader_id")
+
+	// 确保用户的交易员已加载到内存中
+	err := traderManager.LoadUserTraders(database, userID)
+	if err != nil {
+		log.Printf("⚠️ 加载用户 %s 的交易员失败: %v", userID, err)
+	}
+
+	if traderID == "" {
+		// 如果没有指定trader_id，返回该用户的第一个trader
+		ids := traderManager.GetTraderIDs()
+		for _, id := range ids {
+			// 找到属于该用户的第一个trader
+			if _, err := traderManager.GetTrader(id); err == nil {
+				// 验证trader属于该用户
+				if configs, dbErr := database.GetTraders(userID); dbErr == nil {
+					for _, config := range configs {
+						if config.ID == id {
+							return userID, id, nil
+						}
+					}
+				}
+			}
+		}
+		return userID, "", fmt.Errorf("该用户暂无交易员")
+	}
+
+	// 首先尝试从内存获取
+	_, err = traderManager.GetTrader(traderID)
+	if err != nil {
+		// 如果内存中找不到，检查数据库中是否存在
+		log.Printf("⚠️ Trader %s 不在内存中，检查数据库...", traderID)
+		traderConfigs, dbErr := database.GetTraders(userID)
+		if dbErr != nil {
+			return userID, "", fmt.Errorf("数据库查询失败: %v", dbErr)
+		}
+
+		// 检查数据库中是否存在该trader
+		found := false
+		for _, config := range traderConfigs {
+			if config.ID == traderID {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return userID, "", fmt.Errorf("trader ID '%s' 不存在", traderID)
+		}
+
+		log.Printf("✓ Trader %s 存在但未运行", traderID)
+	}
+
+	return userID, traderID, nil
+}
+
 // AI交易员管理相关结构体
 type CreateTraderRequest struct {
 	Name               string  `json:"name" binding:"required"`
@@ -736,7 +795,8 @@ func (s *Server) handleStatus(c *gin.Context) {
 
 // handleAccount 账户信息
 func (s *Server) handleAccount(c *gin.Context) {
-	_, traderID, err := s.getTraderFromQuery(c)
+	// 使用统一的获取trader逻辑
+	_, traderID, err := getTraderWithFallback(s.traderManager, s.database, c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -744,7 +804,20 @@ func (s *Server) handleAccount(c *gin.Context) {
 
 	trader, err := s.traderManager.GetTrader(traderID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		// 如果trader不存在于内存中，返回空账户数据
+		response := map[string]interface{}{
+			"total_equity":        0.0,
+			"wallet_balance":      0.0,
+			"unrealized_profit":   0.0,
+			"available_balance":   0.0,
+			"total_pnl":           0.0,
+			"total_pnl_pct":       0.0,
+			"margin_used":         0.0,
+			"margin_used_pct":     0.0,
+			"position_count":      0,
+			"daily_pnl":           0.0,
+		}
+		c.JSON(http.StatusOK, response)
 		return
 	}
 
@@ -769,7 +842,8 @@ func (s *Server) handleAccount(c *gin.Context) {
 
 // handlePositions 持仓列表
 func (s *Server) handlePositions(c *gin.Context) {
-	_, traderID, err := s.getTraderFromQuery(c)
+	// 使用统一的获取trader逻辑
+	_, traderID, err := getTraderWithFallback(s.traderManager, s.database, c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -777,7 +851,8 @@ func (s *Server) handlePositions(c *gin.Context) {
 
 	trader, err := s.traderManager.GetTrader(traderID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		// 如果trader不存在于内存中，返回空数组
+		c.JSON(http.StatusOK, []interface{}{})
 		return
 	}
 
@@ -820,7 +895,8 @@ func (s *Server) handleDecisions(c *gin.Context) {
 
 // handleLatestDecisions 最新决策日志（最近5条，最新的在前）
 func (s *Server) handleLatestDecisions(c *gin.Context) {
-	_, traderID, err := s.getTraderFromQuery(c)
+	// 使用统一的获取trader逻辑
+	_, traderID, err := getTraderWithFallback(s.traderManager, s.database, c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -828,7 +904,8 @@ func (s *Server) handleLatestDecisions(c *gin.Context) {
 
 	trader, err := s.traderManager.GetTrader(traderID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		// 如果trader不存在于内存中，返回空数组
+		c.JSON(http.StatusOK, []interface{}{})
 		return
 	}
 
@@ -851,7 +928,8 @@ func (s *Server) handleLatestDecisions(c *gin.Context) {
 
 // handleStatistics 统计信息
 func (s *Server) handleStatistics(c *gin.Context) {
-	_, traderID, err := s.getTraderFromQuery(c)
+	// 使用统一的获取trader逻辑
+	_, traderID, err := getTraderWithFallback(s.traderManager, s.database, c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -859,7 +937,15 @@ func (s *Server) handleStatistics(c *gin.Context) {
 
 	trader, err := s.traderManager.GetTrader(traderID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		// 如果trader不存在于内存中，返回空统计数据
+		response := map[string]interface{}{
+			"total_cycles":         0,
+			"successful_cycles":    0,
+			"failed_cycles":        0,
+			"total_open_positions": 0,
+			"total_close_positions": 0,
+		}
+		c.JSON(http.StatusOK, response)
 		return
 	}
 
@@ -988,7 +1074,8 @@ func (s *Server) handleEquityHistory(c *gin.Context) {
 
 // handlePerformance AI历史表现分析（用于展示AI学习和反思）
 func (s *Server) handlePerformance(c *gin.Context) {
-	_, traderID, err := s.getTraderFromQuery(c)
+	// 使用统一的获取trader逻辑
+	_, traderID, err := getTraderWithFallback(s.traderManager, s.database, c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -996,7 +1083,21 @@ func (s *Server) handlePerformance(c *gin.Context) {
 
 	trader, err := s.traderManager.GetTrader(traderID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		// 如果trader不存在于内存中，返回空数据
+		response := map[string]interface{}{
+			"success": false,
+			"error":   "Trader not running",
+			"data": map[string]interface{}{
+				"total_decisions":      0,
+				"successful_decisions": 0,
+				"failed_decisions":     0,
+				"success_rate":         0.0,
+				"avg_profit_per_trade": 0.0,
+				"total_profit":         0.0,
+				"profit_chart":         []interface{}{},
+			},
+		}
+		c.JSON(http.StatusOK, response)
 		return
 	}
 
