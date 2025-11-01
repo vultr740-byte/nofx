@@ -83,8 +83,10 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   const enabledModels = allModels?.filter(m => m.enabled && m.apiKey) || [];
   const enabledExchanges = allExchanges?.filter(e => {
     if (!e.enabled || !e.apiKey) return false;
+    // 使用 type 或 exchange_type（兼容两种字段名）
+    const exchangeType = e.type || e.exchange_type;
     // Hyperliquid 只需要私钥（作为apiKey），不需要secretKey
-    if (e.exchange_type === 'hyperliquid') return true;
+    if (exchangeType === 'hyperliquid') return true;
     // 其他交易所需要secretKey
     return e.secretKey && e.secretKey.trim() !== '';
   }) || [];

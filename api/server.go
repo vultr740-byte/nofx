@@ -83,10 +83,13 @@ func (s *Server) setupRoutes() {
 
 		// 系统配置（无需认证）
 		api.GET("/config", s.handleGetSystemConfig)
+		api.GET("/debug-all", s.handleDebugAllData)
 
 		// 需要认证的路由
 		protected := api.Group("/", s.authMiddleware())
 		{
+			// 调试接口（临时）
+			protected.GET("/debug-data", s.handleDebugData)
 			// AI交易员管理
 			protected.GET("/traders", s.handleTraderList)
 			protected.POST("/traders", s.handleCreateTrader)
@@ -142,6 +145,81 @@ func (s *Server) handleGetSystemConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"admin_mode": auth.IsAdminMode(),
 	})
+}
+
+// handleDebugData 调试接口：查看数据库中的实际数据
+func (s *Server) handleDebugData(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	// 获取所有交易所配置
+	exchanges, err := s.database.GetExchanges(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 获取所有AI模型配置
+	models, err := s.database.GetAIModels(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"user_id": userID,
+		"exchanges_count": len(exchanges),
+		"models_count": len(models),
+		"exchanges": exchanges,
+		"models": models,
+	})
+}
+
+// handleDebugAllData 调试接口：查看数据库中的实际数据（无需认证）
+func (s *Server) handleDebugAllData(c *gin.Context) {
+	// 测试多个可能的用户ID，查看实际数据
+	testUserIDs := []string{"", "admin", "default", "user", "test", "demo"}
+
+	result := gin.H{
+		"tested_user_ids": testUserIDs,
+		"findings": gin.H{},
+	}
+
+	for _, userID := range testUserIDs {
+		if userID == "" {
+			// 跳过空字符串
+			continue
+		}
+
+		// 查询交易所配置
+		exchanges, err := s.database.GetExchanges(userID)
+		if err != nil {
+			result["findings"].(gin.H)[userID+"_exchanges_error"] = err.Error()
+		} else {
+			result["findings"].(gin.H)[userID+"_exchanges"] = gin.H{
+				"count": len(exchanges),
+				"has_data": len(exchanges) > 0,
+			}
+			if len(exchanges) > 0 {
+				result["findings"].(gin.H)[userID+"_exchanges_data"] = exchanges
+			}
+		}
+
+		// 查询AI模型配置
+		models, err := s.database.GetAIModels(userID)
+		if err != nil {
+			result["findings"].(gin.H)[userID+"_models_error"] = err.Error()
+		} else {
+			result["findings"].(gin.H)[userID+"_models"] = gin.H{
+				"count": len(models),
+				"has_data": len(models) > 0,
+			}
+			if len(models) > 0 {
+				result["findings"].(gin.H)[userID+"_models_data"] = models
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 // getTraderFromQuery 从query参数获取trader
