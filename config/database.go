@@ -65,13 +65,30 @@ func NewDatabase(dbPath string) (*Database, error) {
 
 	log.Printf("📋 连接到 Supabase PostgreSQL 数据库")
 
-	// 添加连接参数以强制使用 IPv4 并优化连接
-	if !strings.Contains(dbURL, "?") {
-		dbURL += "?"
-	} else {
-		dbURL += "&"
+	// 解析并修改连接字符串以添加必要的参数
+	if strings.HasPrefix(dbURL, "postgresql://") {
+		// 将 postgresql:// 转换为 postgres:// 以便正确解析
+		dbURL = strings.Replace(dbURL, "postgresql://", "postgres://", 1)
 	}
-	dbURL += "sslmode=require&connect_timeout=10&gssencmode=disable"
+
+	// 添加连接参数
+	if !strings.Contains(dbURL, "?") {
+		dbURL += "?sslmode=require&connect_timeout=10&gssencmode=disable"
+	} else {
+		dbURL += "&sslmode=require&connect_timeout=10&gssencmode=disable"
+	}
+
+	// 隐藏敏感信息的连接字符串日志
+	safeURL := dbURL
+	if strings.Contains(safeURL, "@") {
+		parts := strings.Split(safeURL, "@")
+		if len(parts) >= 2 {
+			// 隐藏密码部分
+			hostPart := strings.Join(parts[1:], "@")
+			safeURL = strings.Split(parts[0], ":")[0] + ":***@***" + hostPart
+		}
+	}
+	log.Printf("🔗 使用连接字符串: %s", safeURL)
 
 	db, err = sql.Open("postgres", dbURL)
 	if err != nil {
@@ -80,7 +97,16 @@ func NewDatabase(dbPath string) (*Database, error) {
 
 	// 测试连接
 	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("Supabase 连接测试失败: %w", err)
+		// 提供更详细的错误诊断
+		if strings.Contains(err.Error(), "network is unreachable") {
+			return nil, fmt.Errorf("Supabase 连接测试失败: 网络不可达。请检查:\n1. DATABASE_URL 是否正确配置\n2. Supabase 项目是否正常运行\n3. 网络连接是否正常\n详细错误: %w", err)
+		} else if strings.Contains(err.Error(), "connection refused") {
+			return nil, fmt.Errorf("Supabase 连接测试失败: 连接被拒绝。请检查:\n1. Supabase 项目状态\n2. 连接字符串中的端口和主机\n3. 防火墙设置\n详细错误: %w", err)
+		} else if strings.Contains(err.Error(), "password authentication failed") {
+			return nil, fmt.Errorf("Supabase 连接测试失败: 密码认证失败。请检查 DATABASE_URL 中的密码是否正确\n详细错误: %w", err)
+		} else {
+			return nil, fmt.Errorf("Supabase 连接测试失败: %w", err)
+		}
 	}
 
 	log.Printf("✅ Supabase 数据库连接成功")

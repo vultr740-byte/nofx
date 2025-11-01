@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	_ "github.com/joho/godotenv/autoload"
 )
 
 // LeverageConfig 杠杆配置
