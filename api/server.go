@@ -287,10 +287,17 @@ func (s *Server) getTraderWithFallback(userID, traderID string) (*trader.AutoTra
 	return nil, fmt.Errorf("trader存在但未运行")
 }
 
-// getTraderWithFallback 统一的获取trader逻辑，从query或context获取并返回数据库验证的traderID
+// getTraderWithFallback 统一的获取trader逻辑，优先使用URL路径参数，其次使用query参数
 func getTraderWithFallback(traderManager *manager.TraderManager, database *config.Database, c *gin.Context) (string, string, error) {
 	userID := c.GetString("user_id")
-	traderID := c.Query("trader_id")
+
+	// 优先使用URL路径中的:id参数
+	traderID := c.Param("id")
+
+	// 如果路径参数为空，则使用查询参数
+	if traderID == "" {
+		traderID = c.Query("trader_id")
+	}
 
 	// 确保用户的交易员已加载到内存中
 	err := traderManager.LoadUserTraders(database, userID)
@@ -529,10 +536,9 @@ func (s *Server) handleDeleteTrader(c *gin.Context) {
 
 // handleStartTrader 启动交易员
 func (s *Server) handleStartTrader(c *gin.Context) {
-	traderID := c.Param("id")
 	userID := c.GetString("user_id")
 
-	// 使用统一的获取trader逻辑，如果trader不在内存中，检查数据库
+	// 使用统一的获取trader逻辑，优先使用URL路径参数，如果trader不在内存中，检查数据库
 	_, traderID, err := getTraderWithFallback(s.traderManager, s.database, c)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -588,10 +594,9 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 
 // handleStopTrader 停止交易员
 func (s *Server) handleStopTrader(c *gin.Context) {
-	traderID := c.Param("id")
 	userID := c.GetString("user_id")
 
-	// 使用统一的获取trader逻辑，如果trader不在内存中，检查数据库
+	// 使用统一的获取trader逻辑，优先使用URL路径参数，如果trader不在内存中，检查数据库
 	_, traderID, err := getTraderWithFallback(s.traderManager, s.database, c)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
