@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -107,6 +108,10 @@ func (s *Server) setupRoutes() {
 			protected.POST("/exchanges", s.handleCreateExchange)
 			protected.PUT("/exchanges/:id", s.handleUpdateExchange)
 			protected.DELETE("/exchanges/:id", s.handleDeleteExchange)
+
+			// 获取支持的类型列表（用于前端下拉选择）- 公开访问
+			s.router.GET("/api/models/supported-types", s.handleGetSupportedModelTypes)
+			s.router.GET("/api/exchanges/supported-types", s.handleGetSupportedExchangeTypes)
 
 			// 竞赛总览
 			protected.GET("/competition", s.handleCompetition)
@@ -1269,6 +1274,48 @@ func (s *Server) handleDeleteExchange(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
 
+// handleGetSupportedModelTypes 获取支持的AI模型类型列表
+func (s *Server) handleGetSupportedModelTypes(c *gin.Context) {
+	types, err := s.database.GetSystemConfig("model_types")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取支持的模型类型失败"})
+		return
+	}
+
+	// 解析JSON字符串
+	var modelTypes []string
+	if err := json.Unmarshal([]byte(types), &modelTypes); err != nil {
+		// 如果解析失败，返回默认值
+		modelTypes = []string{"deepseek", "qwen", "claude", "gpt4"}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"supported_types": modelTypes,
+		"count":           len(modelTypes),
+	})
+}
+
+// handleGetSupportedExchangeTypes 获取支持的交易所类型列表
+func (s *Server) handleGetSupportedExchangeTypes(c *gin.Context) {
+	types, err := s.database.GetSystemConfig("exchange_types")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取支持的交易所类型失败"})
+		return
+	}
+
+	// 解析JSON字符串
+	var exchangeTypes []string
+	if err := json.Unmarshal([]byte(types), &exchangeTypes); err != nil {
+		// 如果解析失败，返回默认值
+		exchangeTypes = []string{"binance", "hyperliquid", "aster", "okx", "dydx"}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"supported_types": exchangeTypes,
+		"count":           len(exchangeTypes),
+	})
+}
+
 // Start 启动服务器
 func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", s.port)
@@ -1281,9 +1328,15 @@ func (s *Server) Start() error {
 	log.Printf("  • POST /api/traders/:id/start - 启动AI交易员")
 	log.Printf("  • POST /api/traders/:id/stop  - 停止AI交易员")
 	log.Printf("  • GET  /api/models           - 获取AI模型配置")
-	log.Printf("  • PUT  /api/models           - 更新AI模型配置")
+	log.Printf("  • POST /api/models           - 创建新的AI模型")
+	log.Printf("  • PUT  /api/models/:id       - 更新AI模型配置")
+	log.Printf("  • DELETE /api/models/:id     - 删除AI模型")
+	log.Printf("  • GET  /api/models/supported-types - 获取支持的AI模型类型")
 	log.Printf("  • GET  /api/exchanges        - 获取交易所配置")
-	log.Printf("  • PUT  /api/exchanges        - 更新交易所配置")
+	log.Printf("  • POST /api/exchanges        - 创建新的交易所")
+	log.Printf("  • PUT  /api/exchanges/:id     - 更新交易所配置")
+	log.Printf("  • DELETE /api/exchanges/:id   - 删除交易所")
+	log.Printf("  • GET  /api/exchanges/supported-types - 获取支持的交易所类型")
 	log.Printf("  • GET  /api/status?trader_id=xxx     - 指定trader的系统状态")
 	log.Printf("  • GET  /api/account?trader_id=xxx    - 指定trader的账户信息")
 	log.Printf("  • GET  /api/positions?trader_id=xxx  - 指定trader的持仓列表")
