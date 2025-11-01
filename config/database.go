@@ -606,33 +606,43 @@ func (d *Database) GetAIModels(userID string) ([]*AIModelConfig, error) {
 	return models, nil
 }
 
-// UpdateAIModel 更新AI模型配置，如果不存在则创建用户特定配置
+// UpdateAIModel 更新AI模型配置，只允许更新用户自己的模型
 func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey string) error {
-	// 首先尝试更新现有的用户配置
+	// 检查模型是否属于当前用户
+	var exists bool
 	query := d.convertQuery(`
-		UPDATE ai_models SET enabled = ?, api_key = ? WHERE id = ? AND user_id = ?
+		SELECT EXISTS(SELECT 1 FROM ai_models WHERE id = ? AND user_id = ?)
 	`)
-	result, err := d.db.Exec(query, enabled, apiKey, id, userID)
+	err := d.db.QueryRow(query, id, userID).Scan(&exists)
 	if err != nil {
-		return err
+		return fmt.Errorf("检查模型所有权失败: %w", err)
 	}
-	
-	// 检查是否有行被更新
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	
-	// 如果没有行被更新，说明用户没有这个模型的配置，需要创建
-	if rowsAffected == 0 {
-		// 获取模型的基本信息
-		var name, provider string
-		query := d.convertQuery(`
-			SELECT name, provider FROM ai_models WHERE provider = ? LIMIT 1
+
+	if !exists {
+		// 模型不属于当前用户，尝试创建用户特定版本
+		// 但使用用户特定的ID来避免冲突
+		userModelID := fmt.Sprintf("%s_%s", userID, id)
+
+		// 检查用户特定模型是否已存在
+		query = d.convertQuery(`
+			SELECT EXISTS(SELECT 1 FROM ai_models WHERE id = ? AND user_id = ?)
 		`)
-		err = d.db.QueryRow(query, id).Scan(&name, &provider)
+		err = d.db.QueryRow(query, userModelID, userID).Scan(&exists)
 		if err != nil {
-			// 如果找不到基本信息，使用默认值
+			return fmt.Errorf("检查用户模型失败: %w", err)
+		}
+
+		if exists {
+			// 更新现有的用户特定模型
+			query = d.convertQuery(`
+				UPDATE ai_models SET enabled = ?, api_key = ?, updated_at = NOW()
+				WHERE id = ? AND user_id = ?
+			`)
+			_, err = d.db.Exec(query, enabled, apiKey, userModelID, userID)
+			return err
+		} else {
+			// 创建新的用户特定模型
+			var name, provider string
 			if id == "deepseek" {
 				name = "DeepSeek AI"
 				provider = "deepseek"
@@ -643,19 +653,23 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey string)
 				name = id + " AI"
 				provider = id
 			}
+
+			query = d.convertQuery(`
+				INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+			`)
+			_, err = d.db.Exec(query, userModelID, userID, name, provider, enabled, apiKey)
+			return err
 		}
-		
-		// 创建用户特定的配置
-		userModelID := fmt.Sprintf("%s_%s", userID, id)
+	} else {
+		// 模型属于当前用户，直接更新
 		query = d.convertQuery(`
-			INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+			UPDATE ai_models SET enabled = ?, api_key = ?, updated_at = NOW()
+			WHERE id = ? AND user_id = ?
 		`)
-		_, err = d.db.Exec(query, userModelID, userID, name, provider, enabled, apiKey)
+		_, err = d.db.Exec(query, enabled, apiKey, id, userID)
 		return err
 	}
-	
-	return nil
 }
 
 // GetExchanges 获取用户的交易所配置
