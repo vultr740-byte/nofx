@@ -149,7 +149,7 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		return fmt.Errorf("trader ID '%s' 已存在", traderCfg.ID)
 	}
 
-	// 构建AutoTraderConfig
+	// 构建AutoTraderConfig - 使用 trader 配置中的字段
 	traderConfig := trader.AutoTraderConfig{
 		ID:                    traderCfg.ID,
 		Name:                  traderCfg.Name,
@@ -226,7 +226,7 @@ func (tm *TraderManager) AddTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		return fmt.Errorf("trader ID '%s' 已存在", traderCfg.ID)
 	}
 
-	// 构建AutoTraderConfig
+	// 构建AutoTraderConfig - 使用 trader 配置中的字段
 	traderConfig := trader.AutoTraderConfig{
 		ID:                    traderCfg.ID,
 		Name:                  traderCfg.Name,
@@ -278,16 +278,8 @@ func (tm *TraderManager) AddTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		return fmt.Errorf("创建trader失败: %w", err)
 	}
 
-	// 设置自定义prompt（如果有）
-	if traderCfg.CustomPrompt != "" {
-		at.SetCustomPrompt(traderCfg.CustomPrompt)
-		at.SetOverrideBasePrompt(traderCfg.OverrideBasePrompt)
-		if traderCfg.OverrideBasePrompt {
-			log.Printf("✓ 已设置自定义交易策略prompt (覆盖基础prompt)")
-		} else {
-			log.Printf("✓ 已设置自定义交易策略prompt (补充基础prompt)")
-		}
-	}
+	// 新版本中自定义prompt功能暂时移除，后续可通过API扩展
+	log.Printf("✓ 使用默认交易策略prompt")
 
 	tm.traders[traderCfg.ID] = at
 	log.Printf("✓ Trader '%s' (%s + %s) 已添加", traderCfg.Name, aiModelCfg.Provider, exchangeCfg.ID)
@@ -584,7 +576,7 @@ func (tm *TraderManager) LoadUserTraders(database *config.Database, userID strin
 
 // loadSingleTrader 加载单个交易员（从现有代码提取的公共逻辑）
 func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiModelCfg *config.AIModelConfig, exchangeCfg *config.ExchangeConfig, coinPoolURL string, maxDailyLoss, maxDrawdown float64, stopTradingMinutes int, btcEthLeverage, altcoinLeverage int) error {
-	// 构建AutoTraderConfig
+	// 构建AutoTraderConfig - 使用 trader 配置中的字段
 	traderConfig := trader.AutoTraderConfig{
 		ID:                    traderCfg.ID,
 		Name:                  traderCfg.Name,
@@ -633,16 +625,8 @@ func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiMode
 		return fmt.Errorf("创建trader失败: %w", err)
 	}
 
-	// 设置自定义prompt（如果有）
-	if traderCfg.CustomPrompt != "" {
-		at.SetCustomPrompt(traderCfg.CustomPrompt)
-		at.SetOverrideBasePrompt(traderCfg.OverrideBasePrompt)
-		if traderCfg.OverrideBasePrompt {
-			log.Printf("✓ 已设置自定义交易策略prompt (覆盖基础prompt)")
-		} else {
-			log.Printf("✓ 已设置自定义交易策略prompt (补充基础prompt)")
-		}
-	}
+	// 新版本中自定义prompt功能暂时移除，后续可通过API扩展
+	log.Printf("✓ 使用默认交易策略prompt")
 
 	tm.traders[traderCfg.ID] = at
 	log.Printf("✓ Trader '%s' (%s + %s) 已为用户加载到内存", traderCfg.Name, aiModelCfg.Provider, exchangeCfg.ID)
