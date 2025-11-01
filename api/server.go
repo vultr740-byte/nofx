@@ -8,6 +8,7 @@ import (
 	"nofx/auth"
 	"nofx/config"
 	"nofx/manager"
+	"nofx/trader"
 	"strings"
 	"time"
 
@@ -223,7 +224,7 @@ func (s *Server) handleDebugAllData(c *gin.Context) {
 }
 
 // getTraderFromQuery 从query参数获取trader
-func (s *Server) getTraderFromQuery(c *gin.Context) (*manager.TraderManager, string, error) {
+func (s *Server) getTraderFromQuery(c *gin.Context) (string, string, error) {
 	userID := c.GetString("user_id")
 	traderID := c.Query("trader_id")
 
@@ -237,7 +238,7 @@ func (s *Server) getTraderFromQuery(c *gin.Context) (*manager.TraderManager, str
 		// 如果没有指定trader_id，返回该用户的第一个trader
 		ids := s.traderManager.GetTraderIDs()
 		if len(ids) == 0 {
-			return nil, "", fmt.Errorf("没有可用的trader")
+			return "", "", fmt.Errorf("没有可用的trader")
 		}
 
 		// 获取用户的交易员列表，优先返回用户自己的交易员
@@ -249,7 +250,40 @@ func (s *Server) getTraderFromQuery(c *gin.Context) (*manager.TraderManager, str
 		}
 	}
 
-	return s.traderManager, traderID, nil
+	return userID, traderID, nil
+}
+
+// getTraderWithFallback 尝试从内存获取trader，如果不存在则从数据库验证
+func (s *Server) getTraderWithFallback(userID, traderID string) (*trader.AutoTrader, error) {
+	// 首先尝试从内存获取
+	trader, err := s.traderManager.GetTrader(traderID)
+	if err == nil {
+		return trader, nil
+	}
+
+	// 如果内存中找不到，检查数据库中是否存在
+	log.Printf("⚠️ Trader %s 不在内存中，检查数据库...", traderID)
+	traderConfigs, dbErr := s.database.GetTraders(userID)
+	if dbErr != nil {
+		return nil, fmt.Errorf("数据库查询失败: %v", dbErr)
+	}
+
+	// 检查数据库中是否存在该trader
+	found := false
+	for _, config := range traderConfigs {
+		if config.ID == traderID {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return nil, fmt.Errorf("trader ID '%s' 不存在", traderID)
+	}
+
+	// Trader存在但未运行
+	log.Printf("✓ Trader %s 存在但未运行", traderID)
+	return nil, fmt.Errorf("trader存在但未运行")
 }
 
 // AI交易员管理相关结构体
@@ -644,7 +678,7 @@ func (s *Server) handleTraderList(c *gin.Context) {
 
 // handleStatus 系统状态
 func (s *Server) handleStatus(c *gin.Context) {
-	_, traderID, err := s.getTraderFromQuery(c)
+	userID, traderID, err := s.getTraderFromQuery(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -652,7 +686,47 @@ func (s *Server) handleStatus(c *gin.Context) {
 
 	trader, err := s.traderManager.GetTrader(traderID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		// 如果内存中找不到trader，检查数据库中是否存在
+		log.Printf("⚠️ Trader %s 不在内存中，检查数据库...", traderID)
+		traderConfigs, dbErr := s.database.GetTraders(userID)
+		if dbErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("数据库查询失败: %v", dbErr)})
+			return
+		}
+
+		// 检查数据库中是否存在该trader
+		found := false
+		var traderConfig *config.TraderRecord
+		for _, config := range traderConfigs {
+			if config.ID == traderID {
+				found = true
+				traderConfig = config
+				break
+			}
+		}
+
+		if !found {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("trader ID '%s' 不存在", traderID)})
+			return
+		}
+
+		// Trader存在但未运行，返回基本状态信息
+		log.Printf("✓ Trader %s 存在但未运行，返回基本状态", traderID)
+		status := map[string]interface{}{
+			"trader_id":      traderConfig.ID,
+			"trader_name":    traderConfig.Name,
+			"ai_model":       "", // 需要从AI模型配置获取
+			"is_running":     false,
+			"start_time":     "",
+			"runtime_minutes": 0,
+			"call_count":     0,
+			"initial_balance": traderConfig.InitialBalance,
+			"scan_interval":  fmt.Sprintf("%d分钟", traderConfig.ScanIntervalMinutes),
+			"stop_until":     "",
+			"last_reset_time": "",
+			"ai_provider":    "",
+		}
+		c.JSON(http.StatusOK, status)
 		return
 	}
 
@@ -823,15 +897,20 @@ func (s *Server) handleCompetition(c *gin.Context) {
 
 // handleEquityHistory 收益率历史数据
 func (s *Server) handleEquityHistory(c *gin.Context) {
-	_, traderID, err := s.getTraderFromQuery(c)
+	userID, traderID, err := s.getTraderFromQuery(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	trader, err := s.traderManager.GetTrader(traderID)
+	trader, err := s.getTraderWithFallback(userID, traderID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		if strings.Contains(err.Error(), "不存在") {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		} else {
+			// Trader存在但未运行，返回空的历史数据
+			c.JSON(http.StatusOK, []gin.H{})
+		}
 		return
 	}
 
