@@ -246,27 +246,12 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
   const handleDeleteExchangeConfig = async (exchangeId: string) => {
     if (!confirm('确定要删除此交易所配置吗？')) return;
-    
+
     try {
-      const updatedExchanges = allExchanges?.map(e => 
-        e.id === exchangeId ? { ...e, apiKey: '', secretKey: '', enabled: false } : e
-      ) || [];
-      
-      const request = {
-        exchanges: Object.fromEntries(
-          updatedExchanges.map(exchange => [
-            exchange.id,
-            {
-              enabled: exchange.enabled,
-              api_key: exchange.apiKey || '',
-              secret_key: exchange.secretKey || '',
-              testnet: exchange.testnet || false
-            }
-          ])
-        )
-      };
-      
-      await api.updateExchangeConfigs(request);
+      await api.deleteExchange(exchangeId);
+
+      // 从本地状态中移除该交易所
+      const updatedExchanges = allExchanges?.filter(e => e.id !== exchangeId) || [];
       setAllExchanges(updatedExchanges);
       setShowExchangeModal(false);
       setEditingExchange(null);
