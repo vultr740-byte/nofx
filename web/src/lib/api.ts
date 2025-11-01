@@ -8,6 +8,10 @@ import type {
   AIModel,
   Exchange,
   CreateTraderRequest,
+  CreateModelRequest,
+  CreateExchangeRequest,
+  UpdateModelRequest,
+  UpdateExchangeRequest,
   UpdateModelConfigRequest,
   UpdateExchangeConfigRequest,
   CompetitionData,
@@ -35,6 +39,73 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 export const api = {
+  // 认证相关接口
+  async register(email: string, password: string) {
+    const res = await fetch(`${API_BASE}/register`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) throw new Error('注册失败');
+    return res.json();
+  },
+
+  async login(email: string, password: string) {
+    const res = await fetch(`${API_BASE}/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) throw new Error('登录失败');
+    const data = await res.json();
+
+    // 存储token
+    if (data.token) {
+      localStorage.setItem('auth_token', data.token);
+    }
+
+    return data;
+  },
+
+  async verifyOTP(token: string, otpCode: string) {
+    const res = await fetch(`${API_BASE}/verify-otp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ token, otp_code: otpCode }),
+    });
+    if (!res.ok) throw new Error('OTP验证失败');
+    const data = await res.json();
+
+    // 存储最终token
+    if (data.token) {
+      localStorage.setItem('auth_token', data.token);
+    }
+
+    return data;
+  },
+
+  async completeRegistration(token: string) {
+    const res = await fetch(`${API_BASE}/complete-registration`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ token }),
+    });
+    if (!res.ok) throw new Error('完成注册失败');
+    return res.json();
+  },
+
+  logout() {
+    localStorage.removeItem('auth_token');
+  },
+
   // AI交易员管理接口
   async getTraders(): Promise<TraderInfo[]> {
     const res = await fetch(`${API_BASE}/traders`, {
@@ -97,10 +168,41 @@ export const api = {
   },
 
   // 获取系统支持的AI模型列表（无需认证）
-  async getSupportedModels(): Promise<AIModel[]> {
-    const res = await fetch(`${API_BASE}/supported-models`);
+  async getSupportedModels(): Promise<string[]> {
+    const res = await fetch(`${API_BASE}/models/supported-types`);
     if (!res.ok) throw new Error('获取支持的模型失败');
+    const data = await res.json();
+    return data.supported_types || [];
+  },
+
+  // 创建新的AI模型
+  async createModel(request: CreateModelRequest): Promise<AIModel> {
+    const res = await fetch(`${API_BASE}/models`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+    if (!res.ok) throw new Error('创建AI模型失败');
     return res.json();
+  },
+
+  // 更新AI模型
+  async updateModel(modelId: string, request: UpdateModelRequest): Promise<void> {
+    const res = await fetch(`${API_BASE}/models/${modelId}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+    if (!res.ok) throw new Error('更新AI模型失败');
+  },
+
+  // 删除AI模型
+  async deleteModel(modelId: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/models/${modelId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error('删除AI模型失败');
   },
 
   async updateModelConfigs(request: UpdateModelConfigRequest): Promise<void> {
@@ -122,10 +224,41 @@ export const api = {
   },
 
   // 获取系统支持的交易所列表（无需认证）
-  async getSupportedExchanges(): Promise<Exchange[]> {
-    const res = await fetch(`${API_BASE}/supported-exchanges`);
+  async getSupportedExchanges(): Promise<string[]> {
+    const res = await fetch(`${API_BASE}/exchanges/supported-types`);
     if (!res.ok) throw new Error('获取支持的交易所失败');
+    const data = await res.json();
+    return data.supported_types || [];
+  },
+
+  // 创建新的交易所
+  async createExchange(request: CreateExchangeRequest): Promise<Exchange> {
+    const res = await fetch(`${API_BASE}/exchanges`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+    if (!res.ok) throw new Error('创建交易所失败');
     return res.json();
+  },
+
+  // 更新交易所
+  async updateExchange(exchangeId: string, request: UpdateExchangeRequest): Promise<void> {
+    const res = await fetch(`${API_BASE}/exchanges/${exchangeId}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+    if (!res.ok) throw new Error('更新交易所失败');
+  },
+
+  // 删除交易所
+  async deleteExchange(exchangeId: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/exchanges/${exchangeId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error('删除交易所失败');
   },
 
   async updateExchangeConfigs(request: UpdateExchangeConfigRequest): Promise<void> {

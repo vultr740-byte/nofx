@@ -40,8 +40,8 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   const [editingExchange, setEditingExchange] = useState<string | null>(null);
   const [allModels, setAllModels] = useState<AIModel[]>([]);
   const [allExchanges, setAllExchanges] = useState<Exchange[]>([]);
-  const [supportedModels, setSupportedModels] = useState<AIModel[]>([]);
-  const [supportedExchanges, setSupportedExchanges] = useState<Exchange[]>([]);
+  const [supportedModels, setSupportedModels] = useState<string[]>([]);
+  const [supportedExchanges, setSupportedExchanges] = useState<string[]>([]);
 
   const { data: traders, mutate: mutateTraders } = useSWR<TraderInfo[]>(
     'traders',
@@ -80,13 +80,13 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   const configuredExchanges = allExchanges || [];
   
   // 只在创建交易员时使用已启用且配置完整的
-  const enabledModels = allModels?.filter(m => m.enabled && m.apiKey) || [];
+  const enabledModels = allModels?.filter(m => m.enabled && m.api_key) || [];
   const enabledExchanges = allExchanges?.filter(e => {
-    if (!e.enabled || !e.apiKey) return false;
+    if (!e.enabled || !e.api_key) return false;
     // Hyperliquid 只需要私钥（作为apiKey），不需要secretKey
-    if (e.id === 'hyperliquid') return true;
+    if (e.exchange_type === 'hyperliquid') return true;
     // 其他交易所需要secretKey
-    return e.secretKey && e.secretKey.trim() !== '';
+    return e.secret_key && e.secret_key.trim() !== '';
   }) || [];
 
   // 检查模型是否正在被运行中的交易员使用
@@ -103,13 +103,13 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     try {
       const model = allModels?.find(m => m.id === modelId);
       const exchange = allExchanges?.find(e => e.id === exchangeId);
-      
-      if (!model?.enabled) {
+
+      if (!model?.enabled || !model?.api_key) {
         alert(t('modelNotConfigured', language));
         return;
       }
-      
-      if (!exchange?.enabled) {
+
+      if (!exchange?.enabled || !exchange?.api_key) {
         alert(t('exchangeNotConfigured', language));
         return;
       }
@@ -187,7 +187,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
             model.id,
             {
               enabled: model.enabled,
-              api_key: model.apiKey || ''
+              api_key: model.api_key || ''
             }
           ])
         )
@@ -205,46 +205,35 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
   const handleSaveModelConfig = async (modelId: string, apiKey: string) => {
     try {
-      // 找到要配置的模型（从supportedModels中）
-      const modelToUpdate = supportedModels?.find(m => m.id === modelId);
-      if (!modelToUpdate) {
-        alert('模型不存在');
+      // 检查模型是否在支持列表中
+      const isSupported = supportedModels?.includes(modelId);
+      if (!isSupported) {
+        alert('不支持的模型类型');
         return;
       }
 
       // 创建或更新用户的模型配置
       const existingModel = allModels?.find(m => m.id === modelId);
-      let updatedModels;
-      
+
       if (existingModel) {
-        // 更新现有配置
-        updatedModels = allModels?.map(m => 
-          m.id === modelId ? { ...m, apiKey, enabled: true } : m
-        ) || [];
+        // 更新现有模型 - 使用新的API
+        await api.updateModel(modelId, { api_key: apiKey, enabled: true });
+        alert('模型配置更新成功');
       } else {
-        // 添加新配置
-        const newModel = { ...modelToUpdate, apiKey, enabled: true };
-        updatedModels = [...(allModels || []), newModel];
+        // 创建新模型 - 使用新的API
+        await api.createModel({
+          name: modelId.charAt(0).toUpperCase() + modelId.slice(1),
+          provider: modelId,
+          enabled: true,
+          api_key: apiKey
+        });
+        alert('模型配置创建成功');
       }
-      
-      const request = {
-        models: Object.fromEntries(
-          updatedModels.map(model => [
-            model.id,
-            {
-              enabled: model.enabled,
-              api_key: model.apiKey || ''
-            }
-          ])
-        )
-      };
-      
-      await api.updateModelConfigs(request);
-      
+
       // 重新获取用户配置以确保数据同步
       const refreshedModels = await api.getModelConfigs();
       setAllModels(refreshedModels);
-      
+
       setShowModelModal(false);
       setEditingModel(null);
     } catch (error) {
@@ -267,8 +256,8 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
             exchange.id,
             {
               enabled: exchange.enabled,
-              api_key: exchange.apiKey || '',
-              secret_key: exchange.secretKey || '',
+              api_key: exchange.api_key || '',
+              secret_key: exchange.secret_key || '',
               testnet: exchange.testnet || false
             }
           ])
@@ -285,54 +274,52 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   };
 
-  const handleSaveExchangeConfig = async (exchangeId: string, apiKey: string, secretKey?: string, testnet?: boolean, hyperliquidWalletAddr?: string, asterUser?: string, asterSigner?: string, asterPrivateKey?: string) => {
+  const handleSaveExchangeConfig = async (exchangeId: string, api_key: string, secret_key?: string, testnet?: boolean, hyperliquid_wallet_addr?: string, aster_user?: string, aster_signer?: string, aster_private_key?: string) => {
     try {
-      // 找到要配置的交易所（从supportedExchanges中）
-      const exchangeToUpdate = supportedExchanges?.find(e => e.id === exchangeId);
-      if (!exchangeToUpdate) {
-        alert('交易所不存在');
+      // 检查交易所是否在支持列表中
+      const isSupported = supportedExchanges?.includes(exchangeId);
+      if (!isSupported) {
+        alert('不支持的交易所类型');
         return;
       }
 
       // 创建或更新用户的交易所配置
       const existingExchange = allExchanges?.find(e => e.id === exchangeId);
-      let updatedExchanges;
-      
+
       if (existingExchange) {
-        // 更新现有配置
-        updatedExchanges = allExchanges?.map(e => 
-          e.id === exchangeId ? { ...e, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, enabled: true } : e
-        ) || [];
+        // 更新现有交易所 - 使用新的API
+        await api.updateExchange(exchangeId, {
+          api_key,
+          secret_key,
+          testnet,
+          hyperliquid_wallet_addr,
+          aster_user,
+          aster_signer,
+          aster_private_key,
+          enabled: true
+        });
+        alert('交易所配置更新成功');
       } else {
-        // 添加新配置
-        const newExchange = { ...exchangeToUpdate, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, enabled: true };
-        updatedExchanges = [...(allExchanges || []), newExchange];
+        // 创建新交易所 - 使用新的API
+        await api.createExchange({
+          name: exchangeId.charAt(0).toUpperCase() + exchangeId.slice(1),
+          type: exchangeId,
+          enabled: true,
+          api_key,
+          secret_key,
+          testnet,
+          hyperliquid_wallet_addr,
+          aster_user,
+          aster_signer,
+          aster_private_key
+        });
+        alert('交易所配置创建成功');
       }
-      
-      const request = {
-        exchanges: Object.fromEntries(
-          updatedExchanges.map(exchange => [
-            exchange.id,
-            {
-              enabled: exchange.enabled,
-              api_key: exchange.apiKey || '',
-              secret_key: exchange.secretKey || '',
-              testnet: exchange.testnet || false,
-              hyperliquid_wallet_addr: exchange.hyperliquidWalletAddr || '',
-              aster_user: exchange.asterUser || '',
-              aster_signer: exchange.asterSigner || '',
-              aster_private_key: exchange.asterPrivateKey || ''
-            }
-          ])
-        )
-      };
-      
-      await api.updateExchangeConfigs(request);
-      
+
       // 重新获取用户配置以确保数据同步
       const refreshedExchanges = await api.getExchangeConfigs();
       setAllExchanges(refreshedExchanges);
-      
+
       setShowExchangeModal(false);
       setEditingExchange(null);
     } catch (error) {
@@ -455,7 +442,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                       </div>
                     </div>
                   </div>
-                  <div className={`w-3 h-3 rounded-full ${model.enabled && model.apiKey ? 'bg-green-400' : 'bg-gray-500'}`} />
+                  <div className={`w-3 h-3 rounded-full ${model.enabled && model.api_key ? 'bg-green-400' : 'bg-gray-500'}`} />
                 </div>
               );
             })}
@@ -496,7 +483,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                       </div>
                     </div>
                   </div>
-                  <div className={`w-3 h-3 rounded-full ${exchange.enabled && exchange.apiKey ? 'bg-green-400' : 'bg-gray-500'}`} />
+                  <div className={`w-3 h-3 rounded-full ${exchange.enabled && exchange.api_key ? 'bg-green-400' : 'bg-gray-500'}`} />
                 </div>
               );
             })}
@@ -624,7 +611,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       {/* Model Configuration Modal */}
       {showModelModal && (
         <ModelConfigModal
-          allModels={supportedModels}
+          allModels={allModels}
           editingModelId={editingModel}
           onSave={handleSaveModelConfig}
           onDelete={handleDeleteModelConfig}
@@ -639,7 +626,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       {/* Exchange Configuration Modal */}
       {showExchangeModal && (
         <ExchangeConfigModal
-          allExchanges={supportedExchanges}
+          allExchanges={allExchanges}
           editingExchangeId={editingExchange}
           onSave={handleSaveExchangeConfig}
           onDelete={handleDeleteExchangeConfig}
@@ -914,7 +901,7 @@ function ModelConfigModal({
   // 如果是编辑现有模型，初始化API Key
   useEffect(() => {
     if (editingModelId && selectedModel) {
-      setApiKey(selectedModel.apiKey || '');
+      setApiKey(selectedModel.api_key || '');
     }
   }, [editingModelId, selectedModel]);
 
@@ -1047,7 +1034,7 @@ function ExchangeConfigModal({
 }: {
   allExchanges: Exchange[];
   editingExchangeId: string | null;
-  onSave: (exchangeId: string, apiKey: string, secretKey?: string, testnet?: boolean, hyperliquidWalletAddr?: string, asterUser?: string, asterSigner?: string, asterPrivateKey?: string) => void;
+  onSave: (exchangeId: string, api_key: string, secret_key?: string, testnet?: boolean, hyperliquid_wallet_addr?: string, aster_user?: string, aster_signer?: string, aster_private_key?: string) => void;
   onDelete: (exchangeId: string) => void;
   onClose: () => void;
   language: any;
@@ -1069,13 +1056,13 @@ function ExchangeConfigModal({
   // 如果是编辑现有交易所，初始化表单数据
   useEffect(() => {
     if (editingExchangeId && selectedExchange) {
-      setApiKey(selectedExchange.apiKey || '');
-      setSecretKey(selectedExchange.secretKey || '');
+      setApiKey(selectedExchange.api_key || '');
+      setSecretKey(selectedExchange.secret_key || '');
       setTestnet(selectedExchange.testnet || false);
-      setHyperliquidWalletAddr(selectedExchange.hyperliquidWalletAddr || '');
-      setAsterUser(selectedExchange.asterUser || '');
-      setAsterSigner(selectedExchange.asterSigner || '');
-      setAsterPrivateKey(selectedExchange.asterPrivateKey || '');
+      setHyperliquidWalletAddr(selectedExchange.hyperliquid_wallet_addr || '');
+      setAsterUser(selectedExchange.aster_user || '');
+      setAsterSigner(selectedExchange.aster_signer || '');
+      setAsterPrivateKey(selectedExchange.aster_private_key || '');
     }
   }, [editingExchangeId, selectedExchange]);
 
