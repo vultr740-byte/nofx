@@ -133,8 +133,8 @@ export interface AIModel {
 export interface Exchange {
   id: string;
   name: string;
-  type: 'cex' | 'dex';
-  exchange_type: string;
+  type: string;  // 具体的交易所类型，如 'hyperliquid', 'binance', 'aster' 等
+  exchange_type?: string;
   enabled: boolean;
   apiKey?: string;        // 修改为与Go JSON序列化一致的字段名
   secretKey?: string;      // 修改为与Go JSON序列化一致的字段名

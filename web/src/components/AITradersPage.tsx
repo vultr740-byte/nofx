@@ -83,9 +83,8 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   const enabledModels = allModels?.filter(m => m.enabled && m.apiKey) || [];
   const enabledExchanges = allExchanges?.filter(e => {
     if (!e.enabled || !e.apiKey) return false;
-    // 使用 exchange_type 字段（exchange_type 是具体的交易所类型，如 'hyperliquid', 'binance', 'aster'）
-    // type 字段只是 'cex' 或 'dex'，不是具体的交易所类型
-    const exchangeType = e.exchange_type || '';
+    // 使用 type 字段作为具体的交易所类型（如 'hyperliquid', 'binance', 'aster'）
+    const exchangeType = e.type || e.exchange_type || '';
     // Hyperliquid 只需要私钥（作为apiKey），不需要secretKey
     if (exchangeType === 'hyperliquid') return true;
     // 其他交易所需要secretKey
@@ -749,7 +748,7 @@ function CreateTraderModal({
               ) : (
                 enabledExchanges.map(exchange => (
                   <option key={exchange.id} value={exchange.id}>
-                    {exchange.name} ({(exchange.type || exchange.exchange_type).toUpperCase()})
+                    {exchange.name} ({(exchange.type || exchange.exchange_type || 'UNKNOWN').toUpperCase()})
                   </option>
                 ))
               )}
