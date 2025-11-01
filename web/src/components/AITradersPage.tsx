@@ -612,6 +612,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       {showModelModal && (
         <ModelConfigModal
           allModels={allModels}
+          supportedModels={supportedModels}
           editingModelId={editingModel}
           onSave={handleSaveModelConfig}
           onDelete={handleDeleteModelConfig}
@@ -627,6 +628,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       {showExchangeModal && (
         <ExchangeConfigModal
           allExchanges={allExchanges}
+          supportedExchanges={supportedExchanges}
           editingExchangeId={editingExchange}
           onSave={handleSaveExchangeConfig}
           onDelete={handleDeleteExchangeConfig}
@@ -879,6 +881,7 @@ function CreateTraderModal({
 // Model Configuration Modal Component  
 function ModelConfigModal({
   allModels,
+  supportedModels,
   editingModelId,
   onSave,
   onDelete,
@@ -886,6 +889,7 @@ function ModelConfigModal({
   language
 }: {
   allModels: AIModel[];
+  supportedModels: string[];
   editingModelId: string | null;
   onSave: (modelId: string, apiKey: string) => void;
   onDelete: (modelId: string) => void;
@@ -896,7 +900,14 @@ function ModelConfigModal({
   const [apiKey, setApiKey] = useState('');
 
   // 获取当前编辑的模型信息
-  const selectedModel = allModels?.find(m => m.id === selectedModelId);
+  const selectedModel = allModels?.find(m => m.id === selectedModelId) ||
+    // 如果是创建新模型，构造一个临时对象
+    (!editingModelId && selectedModelId ? {
+      id: selectedModelId,
+      name: selectedModelId.charAt(0).toUpperCase() + selectedModelId.slice(1),
+      provider: selectedModelId,
+      api_key: ''
+    } : undefined);
 
   // 如果是编辑现有模型，初始化API Key
   useEffect(() => {
@@ -912,8 +923,14 @@ function ModelConfigModal({
     onSave(selectedModelId, apiKey.trim());
   };
 
-  // 可选择的模型列表（所有支持的模型）
-  const availableModels = allModels || [];
+  // 可选择的模型列表（所有支持的模型类型）
+  // 对于创建新模型，显示支持的模型类型；对于编辑，显示用户已有的模型
+  const availableModels = editingModelId ? (allModels || []) :
+    (supportedModels?.map(modelType => ({
+      id: modelType,
+      name: modelType.charAt(0).toUpperCase() + modelType.slice(1),
+      provider: modelType
+    })) || []);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -1026,6 +1043,7 @@ function ModelConfigModal({
 // Exchange Configuration Modal Component
 function ExchangeConfigModal({
   allExchanges,
+  supportedExchanges,
   editingExchangeId,
   onSave,
   onDelete,
@@ -1033,6 +1051,7 @@ function ExchangeConfigModal({
   language
 }: {
   allExchanges: Exchange[];
+  supportedExchanges: string[];
   editingExchangeId: string | null;
   onSave: (exchangeId: string, api_key: string, secret_key?: string, testnet?: boolean, hyperliquid_wallet_addr?: string, aster_user?: string, aster_signer?: string, aster_private_key?: string) => void;
   onDelete: (exchangeId: string) => void;
@@ -1051,7 +1070,21 @@ function ExchangeConfigModal({
   const [asterPrivateKey, setAsterPrivateKey] = useState('');
 
   // 获取当前编辑的交易所信息
-  const selectedExchange = allExchanges?.find(e => e.id === selectedExchangeId);
+  const selectedExchange = allExchanges?.find(e => e.id === selectedExchangeId) ||
+    // 如果是创建新交易所，构造一个临时对象
+    (!editingExchangeId && selectedExchangeId ? {
+      id: selectedExchangeId,
+      name: selectedExchangeId.charAt(0).toUpperCase() + selectedExchangeId.slice(1),
+      type: selectedExchangeId,
+      exchange_type: selectedExchangeId,
+      api_key: '',
+      secret_key: '',
+      testnet: false,
+      hyperliquid_wallet_addr: '',
+      aster_user: '',
+      aster_signer: '',
+      aster_private_key: ''
+    } : undefined);
 
   // 如果是编辑现有交易所，初始化表单数据
   useEffect(() => {
@@ -1084,8 +1117,14 @@ function ExchangeConfigModal({
            hyperliquidWalletAddr.trim(), asterUser.trim(), asterSigner.trim(), asterPrivateKey.trim());
   };
 
-  // 可选择的交易所列表（所有支持的交易所）
-  const availableExchanges = allExchanges || [];
+  // 可选择的交易所列表（所有支持的交易所类型）
+  // 对于创建新交易所，显示支持的交易所类型；对于编辑，显示用户已有的交易所
+  const availableExchanges = editingExchangeId ? (allExchanges || []) :
+    (supportedExchanges?.map(exchangeType => ({
+      id: exchangeType,
+      name: exchangeType.charAt(0).toUpperCase() + exchangeType.slice(1),
+      type: exchangeType
+    })) || []);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -1127,7 +1166,7 @@ function ExchangeConfigModal({
                 <option value="">请选择交易所</option>
                 {availableExchanges.map(exchange => (
                   <option key={exchange.id} value={exchange.id}>
-                    {exchange.name} ({exchange.type.toUpperCase()})
+                    {exchange.name} ({(exchange.type || exchange.id).toUpperCase()})
                   </option>
                 ))}
               </select>
