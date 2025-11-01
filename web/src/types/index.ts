@@ -212,7 +212,7 @@ export interface CreateModelRequest {
   name: string;
   provider: string;
   enabled?: boolean;
-  api_key?: string;
+  apiKey?: string;
   description?: string;
 }
 
@@ -221,13 +221,13 @@ export interface CreateExchangeRequest {
   name: string;
   type: string;
   enabled?: boolean;
-  api_key?: string;
-  secret_key?: string;
+  apiKey?: string;
+  secretKey?: string;
   testnet?: boolean;
-  hyperliquid_wallet_addr?: string;
-  aster_user?: string;
-  aster_signer?: string;
-  aster_private_key?: string;
+  hyperliquidWalletAddr?: string;
+  asterUser?: string;
+  asterSigner?: string;
+  asterPrivateKey?: string;
   description?: string;
 }
 
@@ -236,7 +236,7 @@ export interface UpdateModelRequest {
   name?: string;
   provider?: string;
   enabled?: boolean;
-  api_key?: string;
+  apiKey?: string;
   description?: string;
 }
 
@@ -245,12 +245,12 @@ export interface UpdateExchangeRequest {
   name?: string;
   type?: string;
   enabled?: boolean;
-  api_key?: string;
-  secret_key?: string;
+  apiKey?: string;
+  secretKey?: string;
   testnet?: boolean;
-  hyperliquid_wallet_addr?: string;
-  aster_user?: string;
-  aster_signer?: string;
-  aster_private_key?: string;
+  hyperliquidWalletAddr?: string;
+  asterUser?: string;
+  asterSigner?: string;
+  asterPrivateKey?: string;
   description?: string;
 }

@@ -217,7 +217,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
       if (existingModel) {
         // 更新现有模型 - 使用新的API
-        await api.updateModel(modelId, { name: modelName, api_key: apiKey, enabled: true });
+        await api.updateModel(modelId, { name: modelName, apiKey, enabled: true });
         alert('模型配置更新成功');
       } else {
         // 创建新模型 - 使用新的API
@@ -225,7 +225,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
           name: modelName,
           provider: modelId,
           enabled: true,
-          api_key: apiKey
+          apiKey
         });
         alert('模型配置创建成功');
       }
@@ -274,7 +274,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   };
 
-  const handleSaveExchangeConfig = async (exchangeId: string, name: string, api_key: string, secret_key?: string, testnet?: boolean, hyperliquid_wallet_addr?: string, aster_user?: string, aster_signer?: string, aster_private_key?: string) => {
+  const handleSaveExchangeConfig = async (exchangeId: string, name: string, apiKey: string, secretKey?: string, testnet?: boolean, hyperliquidWalletAddr?: string, asterUser?: string, asterSigner?: string, asterPrivateKey?: string) => {
     try {
       // 检查交易所是否在支持列表中
       const isSupported = supportedExchanges?.includes(exchangeId);
@@ -290,13 +290,13 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
         // 更新现有交易所 - 使用新的API
         await api.updateExchange(exchangeId, {
           name,
-          api_key,
-          secret_key,
+          apiKey,
+          secretKey,
           testnet,
-          hyperliquid_wallet_addr,
-          aster_user,
-          aster_signer,
-          aster_private_key,
+          hyperliquidWalletAddr,
+          asterUser,
+          asterSigner,
+          asterPrivateKey,
           enabled: true
         });
         alert('交易所配置更新成功');
@@ -306,13 +306,13 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
           name,
           type: exchangeId,
           enabled: true,
-          api_key,
-          secret_key,
+          apiKey,
+          secretKey,
           testnet,
-          hyperliquid_wallet_addr,
-          aster_user,
-          aster_signer,
-          aster_private_key
+          hyperliquidWalletAddr,
+          asterUser,
+          asterSigner,
+          asterPrivateKey
         });
         alert('交易所配置创建成功');
       }
