@@ -11,8 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-	_ "github.com/lib/pq"  // PostgreSQL 驱动
+		_ "github.com/lib/pq"  // PostgreSQL 驱动
 	// _ "github.com/mattn/go-sqlite3"  // 不再使用 SQLite
 )
 
@@ -829,83 +828,6 @@ func (d *Database) CreateTrader(trader *TraderRecord) error {
 	return err
 }
 
-// CreateTraderWithDescription 创建交易员 - 支持自由组合和描述
-func (d *Database) CreateTraderWithDescription(userID, name, aiModelID, exchangeID, description string) (*TraderRecord, error) {
-	// 验证 AI 模型是否属于当前用户且已启用
-	var modelCount int
-	err := d.db.QueryRow(`
-		SELECT COUNT(*) FROM ai_models
-		WHERE id = $1 AND user_id = $2 AND enabled = TRUE
-	`, aiModelID, userID).Scan(&modelCount)
-	if err != nil {
-		return nil, fmt.Errorf("验证 AI 模型失败: %w", err)
-	}
-	if modelCount == 0 {
-		return nil, fmt.Errorf("AI 模型不存在或未启用")
-	}
-
-	// 验证交易所是否属于当前用户且已启用
-	var exchangeCount int
-	err = d.db.QueryRow(`
-		SELECT COUNT(*) FROM exchanges
-		WHERE id = $1 AND user_id = $2 AND enabled = TRUE
-	`, exchangeID, userID).Scan(&exchangeCount)
-	if err != nil {
-		return nil, fmt.Errorf("验证交易所失败: %w", err)
-	}
-	if exchangeCount == 0 {
-		return nil, fmt.Errorf("交易所不存在或未启用")
-	}
-
-	// 检查用户是否已达到最大交易员数量限制
-	var traderCount int
-	err = d.db.QueryRow(`
-		SELECT COUNT(*) FROM traders WHERE user_id = $1
-	`, userID).Scan(&traderCount)
-	if err != nil {
-		return nil, fmt.Errorf("检查交易员数量失败: %w", err)
-	}
-
-	// 获取最大交易员数量限制
-	var maxTradersStr string
-	err = d.db.QueryRow(`
-		SELECT value FROM system_config WHERE key = 'max_traders_per_user'
-	`).Scan(&maxTradersStr)
-	if err != nil {
-		maxTradersStr = "10" // 默认值
-	}
-
-	maxTraders := 10
-	if val, err := strconv.Atoi(maxTradersStr); err == nil {
-		maxTraders = val
-	}
-
-	if traderCount >= maxTraders {
-		return nil, fmt.Errorf("已达到最大交易员数量限制 (%d)", maxTraders)
-	}
-
-	// 创建交易员
-	traderID := uuid.New().String()
-	now := time.Now()
-
-	query := `
-		INSERT INTO traders (id, user_id, name, ai_model_id, exchange_id, description, enabled, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, user_id, name, ai_model_id, exchange_id, description, enabled, created_at, updated_at
-	`
-
-	var trader TraderRecord
-	err = d.db.QueryRow(query, traderID, userID, name, aiModelID, exchangeID, description, false, now, now).Scan(
-		&trader.ID, &trader.UserID, &trader.Name, &trader.AIModelID, &trader.ExchangeID,
-		&trader.Description, &trader.Enabled, &trader.CreatedAt, &trader.UpdatedAt,
-	)
-
-	if err != nil {
-		return nil, fmt.Errorf("创建交易员失败: %w", err)
-	}
-
-	return &trader, nil
-}
 
 // GetTraders 获取用户的交易员
 func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
