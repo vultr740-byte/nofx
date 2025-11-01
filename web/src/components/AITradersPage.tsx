@@ -80,13 +80,13 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   const configuredExchanges = allExchanges || [];
   
   // 只在创建交易员时使用已启用且配置完整的
-  const enabledModels = allModels?.filter(m => m.enabled && m.api_key) || [];
+  const enabledModels = allModels?.filter(m => m.enabled && m.apiKey) || [];
   const enabledExchanges = allExchanges?.filter(e => {
-    if (!e.enabled || !e.api_key) return false;
+    if (!e.enabled || !e.apiKey) return false;
     // Hyperliquid 只需要私钥（作为apiKey），不需要secretKey
     if (e.exchange_type === 'hyperliquid') return true;
     // 其他交易所需要secretKey
-    return e.secret_key && e.secret_key.trim() !== '';
+    return e.secretKey && e.secretKey.trim() !== '';
   }) || [];
 
   // 检查模型是否正在被运行中的交易员使用
@@ -104,12 +104,12 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       const model = allModels?.find(m => m.id === modelId);
       const exchange = allExchanges?.find(e => e.id === exchangeId);
 
-      if (!model?.enabled || !model?.api_key) {
+      if (!model?.enabled || !model?.apiKey) {
         alert(t('modelNotConfigured', language));
         return;
       }
 
-      if (!exchange?.enabled || !exchange?.api_key) {
+      if (!exchange?.enabled || !exchange?.apiKey) {
         alert(t('exchangeNotConfigured', language));
         return;
       }
@@ -187,7 +187,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
             model.id,
             {
               enabled: model.enabled,
-              api_key: model.api_key || ''
+              api_key: model.apiKey || ''
             }
           ])
         )
@@ -256,8 +256,8 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
             exchange.id,
             {
               enabled: exchange.enabled,
-              api_key: exchange.api_key || '',
-              secret_key: exchange.secret_key || '',
+              api_key: exchange.apiKey || '',
+              secret_key: exchange.secretKey || '',
               testnet: exchange.testnet || false
             }
           ])
@@ -443,7 +443,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                       </div>
                     </div>
                   </div>
-                  <div className={`w-3 h-3 rounded-full ${model.enabled && model.api_key ? 'bg-green-400' : 'bg-gray-500'}`} />
+                  <div className={`w-3 h-3 rounded-full ${model.enabled && model.apiKey ? 'bg-green-400' : 'bg-gray-500'}`} />
                 </div>
               );
             })}
@@ -484,7 +484,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                       </div>
                     </div>
                   </div>
-                  <div className={`w-3 h-3 rounded-full ${exchange.enabled && exchange.api_key ? 'bg-green-400' : 'bg-gray-500'}`} />
+                  <div className={`w-3 h-3 rounded-full ${exchange.enabled && exchange.apiKey ? 'bg-green-400' : 'bg-gray-500'}`} />
                 </div>
               );
             })}
@@ -926,14 +926,14 @@ function ModelConfigModal({
       id: selectedModelId,
       name: selectedModelId.charAt(0).toUpperCase() + selectedModelId.slice(1),
       provider: selectedModelId,
-      api_key: ''
+      apiKey: ''
     } : undefined);
 
   // 如果是编辑现有模型，初始化表单数据
   useEffect(() => {
     if (editingModelId && selectedModel) {
       setModelName(selectedModel.name || '');
-      setApiKey(selectedModel.api_key || '');
+      setApiKey(selectedModel.apiKey || '');
     }
   }, [editingModelId, selectedModel]);
 
@@ -1117,26 +1117,26 @@ function ExchangeConfigModal({
       name: selectedExchangeId.charAt(0).toUpperCase() + selectedExchangeId.slice(1),
       type: selectedExchangeId,
       exchange_type: selectedExchangeId,
-      api_key: '',
-      secret_key: '',
+      apiKey: '',
+      secretKey: '',
       testnet: false,
-      hyperliquid_wallet_addr: '',
-      aster_user: '',
-      aster_signer: '',
-      aster_private_key: ''
+      hyperliquidWalletAddr: '',
+      asterUser: '',
+      asterSigner: '',
+      asterPrivateKey: ''
     } : undefined);
 
   // 如果是编辑现有交易所，初始化表单数据
   useEffect(() => {
     if (editingExchangeId && selectedExchange) {
       setExchangeName(selectedExchange.name || '');
-      setApiKey(selectedExchange.api_key || '');
-      setSecretKey(selectedExchange.secret_key || '');
+      setApiKey(selectedExchange.apiKey || '');
+      setSecretKey(selectedExchange.secretKey || '');
       setTestnet(selectedExchange.testnet || false);
-      setHyperliquidWalletAddr(selectedExchange.hyperliquid_wallet_addr || '');
-      setAsterUser(selectedExchange.aster_user || '');
-      setAsterSigner(selectedExchange.aster_signer || '');
-      setAsterPrivateKey(selectedExchange.aster_private_key || '');
+      setHyperliquidWalletAddr(selectedExchange.hyperliquidWalletAddr || '');
+      setAsterUser(selectedExchange.asterUser || '');
+      setAsterSigner(selectedExchange.asterSigner || '');
+      setAsterPrivateKey(selectedExchange.asterPrivateKey || '');
     }
   }, [editingExchangeId, selectedExchange]);
 

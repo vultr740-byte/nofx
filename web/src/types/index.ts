@@ -123,7 +123,7 @@ export interface AIModel {
   name: string;
   provider: string;
   enabled: boolean;
-  api_key?: string;
+  apiKey?: string;  // 修改为与Go JSON序列化一致的字段名
   description?: string;
   user_id?: string;
   created_at?: string;
@@ -136,15 +136,15 @@ export interface Exchange {
   type: 'cex' | 'dex';
   exchange_type: string;
   enabled: boolean;
-  api_key?: string;
-  secret_key?: string;
+  apiKey?: string;        // 修改为与Go JSON序列化一致的字段名
+  secretKey?: string;      // 修改为与Go JSON序列化一致的字段名
   testnet?: boolean;
   // Hyperliquid 特定字段
-  hyperliquid_wallet_addr?: string;
+  hyperliquidWalletAddr?: string;
   // Aster DEX 特定字段
-  aster_user?: string;
-  aster_signer?: string;
-  aster_private_key?: string;
+  asterUser?: string;
+  asterSigner?: string;
+  asterPrivateKey?: string;
   description?: string;
   user_id?: string;
   created_at?: string;
