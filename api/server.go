@@ -110,6 +110,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/exchanges", s.handleGetExchangeConfigs)
 			// 交易所管理的完整CRUD功能
 			protected.POST("/exchanges", s.handleCreateExchange)
+			protected.PUT("/exchanges", s.handleUpdateExchangeConfigs)  // 批量更新
 			protected.PUT("/exchanges/:id", s.handleUpdateExchange)
 			protected.DELETE("/exchanges/:id", s.handleDeleteExchange)
 
