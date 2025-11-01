@@ -27,7 +27,9 @@ func BotAuthMiddleware(config BotAuthConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 验证Bot Token
 		botToken := c.GetHeader("X-Bot-Token")
+		log.Printf("BotAuth: Received X-Bot-Token: %s, Expected: %s", botToken, config.BotToken)
 		if botToken != config.BotToken {
+			log.Printf("BotAuth: Invalid bot token - received: %s, expected: %s", botToken, config.BotToken)
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "Invalid bot token",
 			})
