@@ -6,7 +6,6 @@ import (
 	"encoding/base32"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"strings"
 	"time"
@@ -72,51 +71,11 @@ func NewDatabase(dbPath string) (*Database, error) {
 		dbURL = strings.Replace(dbURL, "postgresql://", "postgres://", 1)
 	}
 
-	// 尝试解析主机名并获取 IPv4 地址
-	hostParts := strings.Split(dbURL, "@")
-	if len(hostParts) >= 2 {
-		hostPortPath := strings.SplitN(hostParts[1], "/", 2)
-		hostPort := hostPortPath[0]
-
-		// 提取主机名（去掉端口）
-		host := strings.Split(hostPort, ":")[0]
-		port := "5432"
-		if strings.Contains(hostPort, ":") {
-			port = strings.Split(hostPort, ":")[1]
-		}
-
-		// 尝试 DNS 解析获取 IPv4 地址
-		ips, err := net.LookupIP(host)
-		if err == nil {
-			var ipv4Addr string
-			for _, ip := range ips {
-				if ip.To4() != nil {
-					ipv4Addr = ip.String()
-					log.Printf("🌐 找到 IPv4 地址: %s", ipv4Addr)
-					break
-				}
-			}
-
-			// 如果找到 IPv4 地址，替换连接字符串中的主机名
-			if ipv4Addr != "" {
-				// 构建新的连接字符串，使用 IPv4 地址
-				beforeHost := strings.Split(dbURL, "@")[0] + "@"
-				afterHost := ""
-				if len(hostPortPath) > 1 {
-					afterHost = "/" + hostPortPath[1]
-				}
-				dbURL = beforeHost + ipv4Addr + ":" + port + afterHost
-			}
-		} else {
-			log.Printf("⚠️ DNS 解析失败，使用原始主机名: %v", err)
-		}
-	}
-
 	// 添加连接参数
 	if !strings.Contains(dbURL, "?") {
-		dbURL += "?sslmode=require&connect_timeout=10&gssencmode=disable"
+		dbURL += "?sslmode=require&connect_timeout=30"
 	} else {
-		dbURL += "&sslmode=require&connect_timeout=10&gssencmode=disable"
+		dbURL += "&sslmode=require&connect_timeout=30"
 	}
 
 	// 隐藏敏感信息的连接字符串日志
