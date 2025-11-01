@@ -401,6 +401,43 @@ func (tm *TraderManager) GetComparisonData() (map[string]interface{}, error) {
 	return comparison, nil
 }
 
+// GetPublicCompetitionData 获取公开竞赛数据（所有用户的所有交易员）
+func (tm *TraderManager) GetPublicCompetitionData() (map[string]interface{}, error) {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
+	comparison := make(map[string]interface{})
+	traders := make([]map[string]interface{}, 0)
+
+	// 获取所有用户的交易员
+	for traderID, t := range tm.traders {
+		account, err := t.GetAccountInfo()
+		if err != nil {
+			log.Printf("⚠️ 获取交易员 %s 账户信息失败: %v", traderID, err)
+			continue
+		}
+
+		status := t.GetStatus()
+		traders = append(traders, map[string]interface{}{
+			"trader_id":       t.GetID(),
+			"trader_name":     t.GetName(),
+			"ai_model":        t.GetAIModel(),
+			"total_equity":    account["total_equity"],
+			"total_pnl":       account["total_pnl"],
+			"total_pnl_pct":   account["total_pnl_pct"],
+			"position_count":  account["position_count"],
+			"margin_used_pct": account["margin_used_pct"],
+			"is_running":      status["is_running"],
+		})
+	}
+
+	comparison["traders"] = traders
+	comparison["count"] = len(traders)
+	comparison["timestamp"] = time.Now().Unix()
+
+	return comparison, nil
+}
+
 // GetCompetitionData 获取竞赛数据（特定用户的所有交易员）
 func (tm *TraderManager) GetCompetitionData(userID string) (map[string]interface{}, error) {
 	tm.mu.RLock()

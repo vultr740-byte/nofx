@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import useSWR from 'swr';
 import { api } from '../lib/api';
 import type { CompetitionData } from '../types';
@@ -5,9 +6,11 @@ import { ComparisonChart } from './ComparisonChart';
 import { getTraderColor } from '../utils/traderColors';
 
 export function CompetitionPage() {
+  const [isPublicMode, setIsPublicMode] = useState(false);
+
   const { data: competition } = useSWR<CompetitionData>(
-    'competition',
-    api.getCompetition,
+    isPublicMode ? 'public-competition' : 'competition',
+    isPublicMode ? api.getPublicCompetition : api.getCompetition,
     {
       refreshInterval: 15000, // 15秒刷新（竞赛数据不需要太频繁更新）
       revalidateOnFocus: false,
@@ -58,13 +61,26 @@ export function CompetitionPage() {
             🏆
           </div>
           <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2" style={{ color: '#EAECEF' }}>
-              AI竞赛
-              <span className="text-xs font-normal px-2 py-1 rounded" style={{ background: 'rgba(240, 185, 11, 0.15)', color: '#F0B90B' }}>
-                {competition.count} 交易员
-              </span>
-            </h1>
-            <p className="text-xs" style={{ color: '#848E9C' }}>
+            <div className="flex items-center gap-3 mb-2">
+              <h1 className="text-2xl font-bold" style={{ color: '#EAECEF' }}>
+                AI竞赛
+              </h1>
+              <button
+                onClick={() => setIsPublicMode(!isPublicMode)}
+                className="text-xs font-normal px-3 py-1 rounded transition-all hover:opacity-80"
+                style={{
+                  background: isPublicMode ? 'rgba(240, 185, 11, 0.25)' : 'rgba(240, 185, 11, 0.15)',
+                  color: '#F0B90B',
+                  border: '1px solid rgba(240, 185, 11, 0.3)'
+                }}
+              >
+                {isPublicMode ? '🌐 公开模式' : '👤 个人模式'}
+              </button>
+            </div>
+            <div className="text-xs font-normal px-2 py-1 rounded inline-block" style={{ background: 'rgba(240, 185, 11, 0.15)', color: '#F0B90B' }}>
+              {competition.count} 交易员 • {isPublicMode ? '所有用户' : '仅我的'}
+            </div>
+            <p className="text-xs mt-1" style={{ color: '#848E9C' }}>
               实时对战
             </p>
           </div>

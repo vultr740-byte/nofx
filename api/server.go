@@ -118,7 +118,10 @@ func (s *Server) setupRoutes() {
 			s.router.GET("/api/models/supported-types", s.handleGetSupportedModelTypes)
 			s.router.GET("/api/exchanges/supported-types", s.handleGetSupportedExchangeTypes)
 
-			// 竞赛总览
+			// 公开竞赛总览（所有用户）
+			s.router.GET("/api/competition/public", s.handlePublicCompetition)
+
+			// 竞赛总览（当前用户）
 			protected.GET("/competition", s.handleCompetition)
 
 			// 指定trader的数据（使用query参数 ?trader_id=xxx）
@@ -1012,6 +1015,20 @@ func (s *Server) handleCompetition(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("获取竞赛数据失败: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, competition)
+}
+
+// handlePublicCompetition 公开竞赛总览（所有用户的所有trader）
+func (s *Server) handlePublicCompetition(c *gin.Context) {
+	// 不需要用户认证，直接获取所有用户的竞赛数据
+	competition, err := s.traderManager.GetPublicCompetitionData()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("获取公开竞赛数据失败: %v", err),
 		})
 		return
 	}

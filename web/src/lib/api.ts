@@ -380,4 +380,11 @@ export const api = {
     if (!res.ok) throw new Error('获取竞赛数据失败');
     return res.json();
   },
+
+  // 获取公开竞赛数据（所有用户）
+  async getPublicCompetition(): Promise<CompetitionData> {
+    const res = await fetch(`${API_BASE}/competition/public`);
+    if (!res.ok) throw new Error('获取公开竞赛数据失败');
+    return res.json();
+  },
 };
