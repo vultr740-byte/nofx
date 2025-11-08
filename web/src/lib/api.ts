@@ -14,7 +14,8 @@ import type {
 } from '../types'
 import { CryptoService } from './crypto'
 
-const API_BASE = import.meta.env.VITE_API_URL || '/api'
+// 导出 API_BASE，让其他文件也能使用
+export const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 // Helper function to get auth headers
 function getAuthHeaders(): Record<string, string> {

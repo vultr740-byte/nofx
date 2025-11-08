@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import type { AIModel, Exchange, CreateTraderRequest } from '../types'
 import { useLanguage } from '../contexts/LanguageContext'
 import { t } from '../i18n/translations'
+import { API_BASE } from '../lib/api'
 
 // 提取下划线后面的名称部分
 function getShortName(fullName: string): string {
@@ -113,7 +114,7 @@ export function TraderConfigModal({
   useEffect(() => {
     const fetchConfig = async () => {
       try {
-        const response = await fetch('/api/config')
+        const response = await fetch(`${API_BASE}/config`)
         const config = await response.json()
         if (config.default_coins) {
           setAvailableCoins(config.default_coins)
@@ -139,7 +140,7 @@ export function TraderConfigModal({
   useEffect(() => {
     const fetchPromptTemplates = async () => {
       try {
-        const response = await fetch('/api/prompt-templates')
+        const response = await fetch(`${API_BASE}/prompt-templates`)
         const data = await response.json()
         if (data.templates) {
           setPromptTemplates(data.templates)

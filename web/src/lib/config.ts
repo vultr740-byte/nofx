@@ -1,3 +1,5 @@
+import { API_BASE } from './api'
+
 export interface SystemConfig {
   beta_mode: boolean
 }
@@ -12,7 +14,7 @@ export function getSystemConfig(): Promise<SystemConfig> {
   if (configPromise) {
     return configPromise
   }
-  configPromise = fetch('/api/config')
+  configPromise = fetch(`${API_BASE}/config`)
     .then((res) => res.json())
     .then((data: SystemConfig) => {
       cachedConfig = data
