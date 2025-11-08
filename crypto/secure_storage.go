@@ -4,7 +4,11 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"time"
+
+	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // SecureStorage 安全存儲層（自動加密/解密數據庫中的敏感字段）
@@ -171,6 +175,38 @@ func (ss *SecureStorage) LoadDecryptedAIModelConfig(userID, modelID string) (str
 
 // initAuditLog 初始化審計日誌表
 func (ss *SecureStorage) initAuditLog() error {
+	// 检查是否使用 PostgreSQL
+	if ss.usePostgreSQL() {
+		_, err := ss.db.Exec(`
+			CREATE TABLE IF NOT EXISTS audit_logs (
+				id TEXT PRIMARY KEY DEFAULT uuid_generate_v4(),
+				user_id TEXT NOT NULL,
+				action TEXT NOT NULL,
+				resource TEXT NOT NULL,
+				details TEXT,
+				ip_address TEXT,
+				user_agent TEXT,
+				timestamp TIMESTAMPTZ DEFAULT NOW()
+			)
+		`)
+		if err != nil {
+			return err
+		}
+
+		// 创建索引
+		indexQueries := []string{
+			`CREATE INDEX IF NOT EXISTS idx_audit_logs_user_time ON audit_logs(user_id, timestamp)`,
+			`CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action)`,
+		}
+		for _, query := range indexQueries {
+			if _, err := ss.db.Exec(query); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// SQLite 版本
 	_, err := ss.db.Exec(`
 		CREATE TABLE IF NOT EXISTS audit_logs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -180,20 +216,47 @@ func (ss *SecureStorage) initAuditLog() error {
 			details TEXT,
 			ip_address TEXT,
 			user_agent TEXT,
-			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-			INDEX idx_user_time (user_id, timestamp),
-			INDEX idx_action (action)
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// 创建索引
+	indexQueries := []string{
+		`CREATE INDEX IF NOT EXISTS idx_user_time ON audit_logs(user_id, timestamp)`,
+		`CREATE INDEX IF NOT EXISTS idx_action ON audit_logs(action)`,
+	}
+	for _, query := range indexQueries {
+		if _, err := ss.db.Exec(query); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// usePostgreSQL 检查是否使用 PostgreSQL
+func (ss *SecureStorage) usePostgreSQL() bool {
+	// 通过检查环境变量判断
+	return os.Getenv("SUPABASE_URL") != ""
 }
 
 // logAudit 記錄審計日誌
 func (ss *SecureStorage) logAudit(userID, action, resource, details string) {
-	_, err := ss.db.Exec(`
-		INSERT INTO audit_logs (user_id, action, resource, details)
-		VALUES (?, ?, ?, ?)
-	`, userID, action, resource, details)
+	var err error
+	if ss.usePostgreSQL() {
+		_, err = ss.db.Exec(`
+			INSERT INTO audit_logs (user_id, action, resource, details)
+			VALUES ($1, $2, $3, $4)
+		`, userID, action, resource, details)
+	} else {
+		_, err = ss.db.Exec(`
+			INSERT INTO audit_logs (user_id, action, resource, details)
+			VALUES (?, ?, ?, ?)
+		`, userID, action, resource, details)
+	}
 
 	if err != nil {
 		log.Printf("⚠️ 審計日誌記錄失敗: %v", err)

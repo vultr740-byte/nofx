@@ -15,6 +15,7 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // DatabaseInterface 定义了数据库实现需要提供的方法集合
@@ -56,16 +57,47 @@ type DatabaseInterface interface {
 type Database struct {
 	db           *sql.DB
 	cryptoService *crypto.CryptoService
+	usePostgreSQL bool // 是否使用 PostgreSQL (Supabase)
 }
 
 // NewDatabase 创建配置数据库
 func NewDatabase(dbPath string) (*Database, error) {
+	// 检查是否使用 Supabase
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	if supabaseURL != "" {
+		// 使用 Supabase
+		log.Printf("🔄 使用 Supabase 数据库")
+		db, err := sql.Open("pgx", supabaseURL)
+		if err != nil {
+			return nil, fmt.Errorf("连接 Supabase 失败: %w", err)
+		}
+
+		// 测试连接
+		if err := db.Ping(); err != nil {
+			return nil, fmt.Errorf("Supabase 连接测试失败: %w", err)
+		}
+
+		database := &Database{db: db, usePostgreSQL: true}
+		if err := database.createTables(); err != nil {
+			return nil, fmt.Errorf("创建表失败: %w", err)
+		}
+
+		if err := database.initDefaultData(); err != nil {
+			return nil, fmt.Errorf("初始化默认数据失败: %w", err)
+		}
+
+		log.Printf("✓ Supabase 数据库连接成功")
+		return database, nil
+	}
+
+	// 使用 SQLite（原有逻辑）
+	log.Printf("🔄 使用 SQLite 数据库: %s", dbPath)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
 
-	database := &Database{db: db}
+	database := &Database{db: db, usePostgreSQL: false}
 	if err := database.createTables(); err != nil {
 		return nil, fmt.Errorf("创建表失败: %w", err)
 	}
@@ -74,11 +106,190 @@ func NewDatabase(dbPath string) (*Database, error) {
 		return nil, fmt.Errorf("初始化默认数据失败: %w", err)
 	}
 
+	log.Printf("✓ SQLite 数据库连接成功")
 	return database, nil
 }
 
 // createTables 创建数据库表
 func (d *Database) createTables() error {
+	// 选择合适的 SQL 语法
+	if d.usePostgreSQL {
+		return d.createPostgreSQLTables()
+	}
+	return d.createSQLiteTables()
+}
+
+// createPostgreSQLTables 创建 PostgreSQL 表
+func (d *Database) createPostgreSQLTables() error {
+	queries := []string{
+		// 启用 UUID 扩展
+		`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
+
+		// 用户表
+		`CREATE TABLE IF NOT EXISTS users (
+			id TEXT PRIMARY KEY DEFAULT uuid_generate_v4(),
+			email TEXT UNIQUE NOT NULL,
+			password_hash TEXT NOT NULL,
+			otp_secret TEXT,
+			otp_verified BOOLEAN DEFAULT FALSE,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		// AI模型配置表
+		`CREATE TABLE IF NOT EXISTS ai_models (
+			id TEXT PRIMARY KEY DEFAULT uuid_generate_v4(),
+			user_id TEXT NOT NULL DEFAULT 'default',
+			name TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			enabled BOOLEAN DEFAULT FALSE,
+			api_key TEXT DEFAULT '',
+			custom_api_url TEXT DEFAULT '',
+			custom_model_name TEXT DEFAULT '',
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW(),
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
+
+		// 交易所配置表
+		`CREATE TABLE IF NOT EXISTS exchanges (
+			id TEXT PRIMARY KEY DEFAULT uuid_generate_v4(),
+			user_id TEXT NOT NULL DEFAULT 'default',
+			name TEXT NOT NULL,
+			type TEXT NOT NULL,
+			enabled BOOLEAN DEFAULT FALSE,
+			api_key TEXT DEFAULT '',
+			secret_key TEXT DEFAULT '',
+			testnet BOOLEAN DEFAULT FALSE,
+			hyperliquid_wallet_addr TEXT DEFAULT '',
+			aster_user TEXT DEFAULT '',
+			aster_signer TEXT DEFAULT '',
+			aster_private_key TEXT DEFAULT '',
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW(),
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
+
+		// 用户信号源配置表
+		`CREATE TABLE IF NOT EXISTS user_signal_sources (
+			id TEXT PRIMARY KEY DEFAULT uuid_generate_v4(),
+			user_id TEXT NOT NULL,
+			coin_pool_url TEXT DEFAULT '',
+			oi_top_url TEXT DEFAULT '',
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW(),
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+			UNIQUE(user_id)
+		)`,
+
+		// 交易员配置表
+		`CREATE TABLE IF NOT EXISTS traders (
+			id TEXT PRIMARY KEY DEFAULT uuid_generate_v4(),
+			user_id TEXT NOT NULL DEFAULT 'default',
+			name TEXT NOT NULL,
+			ai_model_id TEXT NOT NULL,
+			exchange_id TEXT NOT NULL,
+			initial_balance DECIMAL(20,8) NOT NULL,
+			scan_interval_minutes INTEGER DEFAULT 3,
+			is_running BOOLEAN DEFAULT FALSE,
+			btc_eth_leverage INTEGER DEFAULT 5,
+			altcoin_leverage INTEGER DEFAULT 5,
+			trading_symbols TEXT DEFAULT '',
+			use_coin_pool BOOLEAN DEFAULT FALSE,
+			use_oi_top BOOLEAN DEFAULT FALSE,
+			custom_prompt TEXT DEFAULT '',
+			override_base_prompt BOOLEAN DEFAULT FALSE,
+			is_cross_margin BOOLEAN DEFAULT TRUE,
+			use_default_coins BOOLEAN DEFAULT TRUE,
+			custom_coins TEXT DEFAULT '',
+			system_prompt_template TEXT DEFAULT 'default',
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW(),
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+			FOREIGN KEY (ai_model_id) REFERENCES ai_models(id),
+			FOREIGN KEY (exchange_id) REFERENCES exchanges(id)
+		)`,
+
+		// 系统配置表
+		`CREATE TABLE IF NOT EXISTS system_config (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		// 内测码表
+		`CREATE TABLE IF NOT EXISTS beta_codes (
+			code TEXT PRIMARY KEY,
+			used BOOLEAN DEFAULT FALSE,
+			used_by TEXT DEFAULT '',
+			used_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		// 审计日志表
+		`CREATE TABLE IF NOT EXISTS audit_logs (
+			id TEXT PRIMARY KEY DEFAULT uuid_generate_v4(),
+			user_id TEXT NOT NULL,
+			action TEXT NOT NULL,
+			resource TEXT NOT NULL,
+			details TEXT,
+			ip_address TEXT,
+			user_agent TEXT,
+			timestamp TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		// 创建更新时间触发器函数
+		`CREATE OR REPLACE FUNCTION update_updated_at_column()
+		RETURNS TRIGGER AS $$
+		BEGIN
+			NEW.updated_at = NOW();
+			RETURN NEW;
+		END;
+		$$ language 'plpgsql'`,
+
+		// 为需要的表创建触发器（忽略已存在的错误）
+		`DROP TRIGGER IF EXISTS update_users_updated_at ON users`,
+		`CREATE TRIGGER update_users_updated_at
+		BEFORE UPDATE ON users
+		FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+
+		`DROP TRIGGER IF EXISTS update_ai_models_updated_at ON ai_models`,
+		`CREATE TRIGGER update_ai_models_updated_at
+		BEFORE UPDATE ON ai_models
+		FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+
+		`DROP TRIGGER IF EXISTS update_exchanges_updated_at ON exchanges`,
+		`CREATE TRIGGER update_exchanges_updated_at
+		BEFORE UPDATE ON exchanges
+		FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+
+		`DROP TRIGGER IF EXISTS update_traders_updated_at ON traders`,
+		`CREATE TRIGGER update_traders_updated_at
+		BEFORE UPDATE ON traders
+		FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+
+		`DROP TRIGGER IF EXISTS update_user_signal_sources_updated_at ON user_signal_sources`,
+		`CREATE TRIGGER update_user_signal_sources_updated_at
+		BEFORE UPDATE ON user_signal_sources
+		FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+
+		`DROP TRIGGER IF EXISTS update_system_config_updated_at ON system_config`,
+		`CREATE TRIGGER update_system_config_updated_at
+		BEFORE UPDATE ON system_config
+		FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+	}
+
+	for _, query := range queries {
+		if _, err := d.db.Exec(query); err != nil {
+			return fmt.Errorf("执行PostgreSQL SQL失败 [%s]: %w", query, err)
+		}
+	}
+
+	return nil
+}
+
+// createSQLiteTables 创建 SQLite 表（原有逻辑）
+func (d *Database) createSQLiteTables() error {
 	queries := []string{
 		// AI模型配置表
 		`CREATE TABLE IF NOT EXISTS ai_models (
@@ -88,6 +299,8 @@ func (d *Database) createTables() error {
 			provider TEXT NOT NULL,
 			enabled BOOLEAN DEFAULT 0,
 			api_key TEXT DEFAULT '',
+			custom_api_url TEXT DEFAULT '',
+			custom_model_name TEXT DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -98,14 +311,12 @@ func (d *Database) createTables() error {
 			id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL DEFAULT 'default',
 			name TEXT NOT NULL,
-			type TEXT NOT NULL, -- 'cex' or 'dex'
+			type TEXT NOT NULL,
 			enabled BOOLEAN DEFAULT 0,
 			api_key TEXT DEFAULT '',
 			secret_key TEXT DEFAULT '',
 			testnet BOOLEAN DEFAULT 0,
-			-- Hyperliquid 特定字段
 			hyperliquid_wallet_addr TEXT DEFAULT '',
-			-- Aster 特定字段
 			aster_user TEXT DEFAULT '',
 			aster_signer TEXT DEFAULT '',
 			aster_private_key TEXT DEFAULT '',
@@ -141,6 +352,12 @@ func (d *Database) createTables() error {
 			trading_symbols TEXT DEFAULT '',
 			use_coin_pool BOOLEAN DEFAULT 0,
 			use_oi_top BOOLEAN DEFAULT 0,
+			custom_prompt TEXT DEFAULT '',
+			override_base_prompt BOOLEAN DEFAULT 0,
+			is_cross_margin BOOLEAN DEFAULT 1,
+			use_default_coins BOOLEAN DEFAULT 1,
+			custom_coins TEXT DEFAULT '',
+			system_prompt_template TEXT DEFAULT 'default',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -215,7 +432,7 @@ func (d *Database) createTables() error {
 
 	for _, query := range queries {
 		if _, err := d.db.Exec(query); err != nil {
-			return fmt.Errorf("执行SQL失败 [%s]: %w", query, err)
+			return fmt.Errorf("执行SQLite SQL失败 [%s]: %w", query, err)
 		}
 	}
 
@@ -256,6 +473,18 @@ func (d *Database) createTables() error {
 
 // initDefaultData 初始化默认数据
 func (d *Database) initDefaultData() error {
+	// 先创建默认用户（PostgreSQL 需要）
+	if d.usePostgreSQL {
+		_, err := d.db.Exec(`
+			INSERT INTO users (id, email, password_hash, otp_verified)
+			VALUES ('default', 'default@example.com', 'default_hash', FALSE)
+			ON CONFLICT (id) DO NOTHING
+		`)
+		if err != nil {
+			return fmt.Errorf("创建默认用户失败: %w", err)
+		}
+	}
+
 	// 初始化AI模型（使用default用户）
 	aiModels := []struct {
 		id, name, provider string
@@ -265,10 +494,19 @@ func (d *Database) initDefaultData() error {
 	}
 
 	for _, model := range aiModels {
-		_, err := d.db.Exec(`
-			INSERT OR IGNORE INTO ai_models (id, user_id, name, provider, enabled) 
-			VALUES (?, 'default', ?, ?, 0)
-		`, model.id, model.name, model.provider)
+		var err error
+		if d.usePostgreSQL {
+			_, err = d.db.Exec(`
+				INSERT INTO ai_models (id, user_id, name, provider, enabled)
+				VALUES ($1, 'default', $2, $3, FALSE)
+				ON CONFLICT (id) DO NOTHING
+			`, model.id, model.name, model.provider)
+		} else {
+			_, err = d.db.Exec(`
+				INSERT OR IGNORE INTO ai_models (id, user_id, name, provider, enabled)
+				VALUES (?, 'default', ?, ?, 0)
+			`, model.id, model.name, model.provider)
+		}
 		if err != nil {
 			return fmt.Errorf("初始化AI模型失败: %w", err)
 		}
@@ -284,10 +522,19 @@ func (d *Database) initDefaultData() error {
 	}
 
 	for _, exchange := range exchanges {
-		_, err := d.db.Exec(`
-			INSERT OR IGNORE INTO exchanges (id, user_id, name, type, enabled) 
-			VALUES (?, 'default', ?, ?, 0)
-		`, exchange.id, exchange.name, exchange.typ)
+		var err error
+		if d.usePostgreSQL {
+			_, err = d.db.Exec(`
+				INSERT INTO exchanges (id, user_id, name, type, enabled)
+				VALUES ($1, 'default', $2, $3, FALSE)
+				ON CONFLICT (id) DO NOTHING
+			`, exchange.id, exchange.name, exchange.typ)
+		} else {
+			_, err = d.db.Exec(`
+				INSERT OR IGNORE INTO exchanges (id, user_id, name, type, enabled)
+				VALUES (?, 'default', ?, ?, 0)
+			`, exchange.id, exchange.name, exchange.typ)
+		}
 		if err != nil {
 			return fmt.Errorf("初始化交易所失败: %w", err)
 		}
@@ -308,10 +555,19 @@ func (d *Database) initDefaultData() error {
 	}
 
 	for key, value := range systemConfigs {
-		_, err := d.db.Exec(`
-			INSERT OR IGNORE INTO system_config (key, value) 
-			VALUES (?, ?)
-		`, key, value)
+		var err error
+		if d.usePostgreSQL {
+			_, err = d.db.Exec(`
+				INSERT INTO system_config (key, value)
+				VALUES ($1, $2)
+				ON CONFLICT (key) DO NOTHING
+			`, key, value)
+		} else {
+			_, err = d.db.Exec(`
+				INSERT OR IGNORE INTO system_config (key, value)
+				VALUES (?, ?)
+			`, key, value)
+		}
 		if err != nil {
 			return fmt.Errorf("初始化系统配置失败: %w", err)
 		}
