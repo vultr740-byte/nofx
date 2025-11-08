@@ -29,7 +29,7 @@ type DatabaseInterface interface {
 	GetAIModels(userID string) ([]*AIModelConfig, error)
 	UpdateAIModel(userID, id string, enabled bool, apiKey, customAPIURL, customModelName string) error
 	GetExchanges(userID string) ([]*ExchangeConfig, error)
-	UpdateExchange(userID, id string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) error
+	UpdateExchange(userID, id string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, customExchangeName string) error
 	CreateAIModel(userID, id, name, provider string, enabled bool, apiKey, customAPIURL string) error
 	CreateExchange(userID, id, name, typ string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) error
 	CreateTrader(trader *TraderRecord) error
@@ -165,6 +165,7 @@ func (d *Database) createPostgreSQLTables() error {
 			aster_user TEXT DEFAULT '',
 			aster_signer TEXT DEFAULT '',
 			aster_private_key TEXT DEFAULT '',
+			custom_exchange_name TEXT DEFAULT '',
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW(),
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -320,6 +321,7 @@ func (d *Database) createSQLiteTables() error {
 			aster_user TEXT DEFAULT '',
 			aster_signer TEXT DEFAULT '',
 			aster_private_key TEXT DEFAULT '',
+			custom_exchange_name TEXT DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -442,6 +444,7 @@ func (d *Database) createSQLiteTables() error {
 		`ALTER TABLE exchanges ADD COLUMN aster_user TEXT DEFAULT ''`,
 		`ALTER TABLE exchanges ADD COLUMN aster_signer TEXT DEFAULT ''`,
 		`ALTER TABLE exchanges ADD COLUMN aster_private_key TEXT DEFAULT ''`,
+		`ALTER TABLE exchanges ADD COLUMN custom_exchange_name TEXT DEFAULT ''`,       // 自定义交易所名称
 		`ALTER TABLE traders ADD COLUMN custom_prompt TEXT DEFAULT ''`,
 		`ALTER TABLE traders ADD COLUMN override_base_prompt BOOLEAN DEFAULT 0`,
 		`ALTER TABLE traders ADD COLUMN is_cross_margin BOOLEAN DEFAULT 1`,             // 默认为全仓模式
@@ -700,6 +703,7 @@ type ExchangeConfig struct {
 	AsterUser       string    `json:"asterUser"`
 	AsterSigner     string    `json:"asterSigner"`
 	AsterPrivateKey string    `json:"asterPrivateKey"`
+	CustomExchangeName string  `json:"customExchangeName"` // 用户自定义交易所名称
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -1073,6 +1077,7 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 		       COALESCE(aster_user, '') as aster_user,
 		       COALESCE(aster_signer, '') as aster_signer,
 		       COALESCE(aster_private_key, '') as aster_private_key,
+		       COALESCE(custom_exchange_name, '') as custom_exchange_name,
 		       created_at, updated_at
 		FROM exchanges WHERE user_id = $1 ORDER BY id
 	`, userID)
@@ -1090,7 +1095,7 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 			&exchange.Enabled, &exchange.APIKey, &exchange.SecretKey, &exchange.Testnet,
 			&exchange.HyperliquidWalletAddr, &exchange.AsterUser,
 			&exchange.AsterSigner, &exchange.AsterPrivateKey,
-			&exchange.CreatedAt, &exchange.UpdatedAt,
+			&exchange.CustomExchangeName, &exchange.CreatedAt, &exchange.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -1108,7 +1113,7 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 }
 
 // UpdateExchange 更新交易所配置，如果不存在则创建用户特定配置
-func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) error {
+func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, customExchangeName string) error {
 	log.Printf("🔧 UpdateExchange: userID=%s, id=%s, enabled=%v", userID, id, enabled)
 
 	// 加密敏感字段
@@ -1140,8 +1145,8 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 		// 使用 ON CONFLICT 进行 upsert，这样可以处理主键冲突
 		result, err = d.db.Exec(`
 			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet,
-			                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+			                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, custom_exchange_name, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
 			ON CONFLICT (id) DO UPDATE SET
 				user_id = EXCLUDED.user_id,
 				name = EXCLUDED.name,
@@ -1154,15 +1159,16 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 				aster_user = EXCLUDED.aster_user,
 				aster_signer = EXCLUDED.aster_signer,
 				aster_private_key = EXCLUDED.aster_private_key,
+				custom_exchange_name = EXCLUDED.custom_exchange_name,
 				updated_at = NOW()
-		`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey)
+		`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, customExchangeName)
 	} else {
 		// SQLite 保持原有逻辑
 		result, err = d.db.Exec(`
 			UPDATE exchanges SET enabled = ?, api_key = ?, secret_key = ?, testnet = ?,
-			       hyperliquid_wallet_addr = ?, aster_user = ?, aster_signer = ?, aster_private_key = ?, updated_at = datetime('now')
+			       hyperliquid_wallet_addr = ?, aster_user = ?, aster_signer = ?, aster_private_key = ?, custom_exchange_name = ?, updated_at = datetime('now')
 			WHERE id = ? AND user_id = ?
-		`, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, id, userID)
+		`, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, customExchangeName, id, userID)
 	}
 	if err != nil {
 		log.Printf("❌ UpdateExchange: 操作失败: %v", err)
@@ -1208,9 +1214,9 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 
 		_, err = d.db.Exec(`
 			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet,
-			                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-		`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey)
+			                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, custom_exchange_name, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, customExchangeName)
 
 		if err != nil {
 			log.Printf("❌ UpdateExchange: 创建记录失败: %v", err)

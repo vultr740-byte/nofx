@@ -397,19 +397,21 @@ type SafeModelConfig struct {
 }
 
 type ExchangeConfig struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"` // "cex" or "dex"
-	Enabled   bool   `json:"enabled"`
-	APIKey    string `json:"apiKey,omitempty"`
-	SecretKey string `json:"secretKey,omitempty"`
-	Testnet   bool   `json:"testnet,omitempty"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	CustomName       string `json:"customName,omitempty"`
+	Type             string `json:"type"` // "cex" or "dex"
+	Enabled          bool   `json:"enabled"`
+	APIKey           string `json:"apiKey,omitempty"`
+	SecretKey        string `json:"secretKey,omitempty"`
+	Testnet          bool   `json:"testnet,omitempty"`
 }
 
 // SafeExchangeConfig 安全的交易所配置结构（不包含敏感信息）
 type SafeExchangeConfig struct {
 	ID                    string `json:"id"`
 	Name                  string `json:"name"`
+	CustomName            string `json:"customName,omitempty"`
 	Type                  string `json:"type"` // "cex" or "dex"
 	Enabled               bool   `json:"enabled"`
 	Testnet               bool   `json:"testnet,omitempty"`
@@ -437,6 +439,7 @@ type UpdateExchangeConfigRequest struct {
 		AsterUser             string `json:"aster_user"`
 		AsterSigner           string `json:"aster_signer"`
 		AsterPrivateKey       string `json:"aster_private_key"`
+		CustomExchangeName    string `json:"custom_exchange_name"`
 	} `json:"exchanges"`
 }
 
@@ -1099,6 +1102,7 @@ func (s *Server) handleGetExchangeConfigs(c *gin.Context) {
 		safeExchanges[i] = SafeExchangeConfig{
 			ID:                    exchange.ID,
 			Name:                  exchange.Name,
+			CustomName:            exchange.CustomExchangeName,
 			Type:                  exchange.Type,
 			Enabled:               exchange.Enabled,
 			Testnet:               exchange.Testnet,
@@ -1160,7 +1164,7 @@ func (s *Server) handleUpdateExchangeConfigs(c *gin.Context) {
 
 	// 更新每个交易所的配置
 	for exchangeID, exchangeData := range req.Exchanges {
-		err := s.database.UpdateExchange(userID, exchangeID, exchangeData.Enabled, exchangeData.APIKey, exchangeData.SecretKey, exchangeData.Testnet, exchangeData.HyperliquidWalletAddr, exchangeData.AsterUser, exchangeData.AsterSigner, exchangeData.AsterPrivateKey)
+		err := s.database.UpdateExchange(userID, exchangeID, exchangeData.Enabled, exchangeData.APIKey, exchangeData.SecretKey, exchangeData.Testnet, exchangeData.HyperliquidWalletAddr, exchangeData.AsterUser, exchangeData.AsterSigner, exchangeData.AsterPrivateKey, exchangeData.CustomExchangeName)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("更新交易所 %s 失败: %v", exchangeID, err)})
 			return
@@ -1980,6 +1984,7 @@ func (s *Server) handleGetSupportedExchanges(c *gin.Context) {
 		safeExchanges[i] = SafeExchangeConfig{
 			ID:                    exchange.ID,
 			Name:                  exchange.Name,
+			CustomName:            exchange.CustomExchangeName,
 			Type:                  exchange.Type,
 			Enabled:               exchange.Enabled,
 			Testnet:               exchange.Testnet,

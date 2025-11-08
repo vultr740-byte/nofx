@@ -109,6 +109,7 @@ export interface AIModel {
 export interface Exchange {
   id: string
   name: string
+  customName?: string
   type: 'cex' | 'dex'
   enabled: boolean
   apiKey?: string

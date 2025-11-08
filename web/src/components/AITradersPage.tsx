@@ -50,6 +50,16 @@ function getShortName(fullName: string): string {
   return parts.length > 1 ? parts[parts.length - 1] : fullName
 }
 
+// 获取交易所显示名称，优先使用自定义名称
+function getExchangeDisplayName(exchange: any): string {
+  // 如果有自定义名称且不为空，使用自定义名称
+  if (exchange.customName && exchange.customName.trim() !== '') {
+    return exchange.customName.trim()
+  }
+  // 否则使用默认名称的简短形式
+  return getShortName(exchange.name)
+}
+
 interface AITradersPageProps {
   onTraderSelect?: (traderId: string) => void
 }
@@ -534,6 +544,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
               aster_user: exchange.asterUser || '',
               aster_signer: exchange.asterSigner || '',
               aster_private_key: exchange.asterPrivateKey || '',
+              custom_exchange_name: exchange.customName || '',
             },
           ])
         ),
@@ -560,7 +571,8 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     hyperliquidWalletAddr?: string,
     asterUser?: string,
     asterSigner?: string,
-    asterPrivateKey?: string
+    asterPrivateKey?: string,
+    customExchangeName?: string
   ) => {
     try {
       // 找到要配置的交易所（从supportedExchanges中）
@@ -590,6 +602,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                   asterUser,
                   asterSigner,
                   asterPrivateKey,
+                  customName: customExchangeName || '',
                   enabled: true,
                 }
               : e
@@ -605,6 +618,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
           asterUser,
           asterSigner,
           asterPrivateKey,
+          customName: customExchangeName || '',
           enabled: true,
         }
         updatedExchanges = [...(allExchanges || []), newExchange]
@@ -623,6 +637,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
               aster_user: exchange.asterUser || '',
               aster_signer: exchange.asterSigner || '',
               aster_private_key: exchange.asterPrivateKey || '',
+              custom_exchange_name: exchange.customName || '',
             },
           ])
         ),
@@ -929,7 +944,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                         className="font-semibold text-sm md:text-base truncate"
                         style={{ color: '#EAECEF' }}
                       >
-                        {getShortName(exchange.name)}
+                        {getExchangeDisplayName(exchange)}
                       </div>
                       <div className="text-xs" style={{ color: '#848E9C' }}>
                         {exchange.type.toUpperCase()} •{' '}
@@ -1673,7 +1688,8 @@ function ExchangeConfigModal({
     hyperliquidWalletAddr?: string,
     asterUser?: string,
     asterSigner?: string,
-    asterPrivateKey?: string
+    asterPrivateKey?: string,
+    customExchangeName?: string
   ) => Promise<void>
   onDelete: (exchangeId: string) => void
   onClose: () => void
@@ -1686,6 +1702,7 @@ function ExchangeConfigModal({
   const [secretKey, setSecretKey] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [testnet, setTestnet] = useState(false)
+  const [customExchangeName, setCustomExchangeName] = useState('')
   const [showGuide, setShowGuide] = useState(false)
   const [serverIP, setServerIP] = useState<{
     public_ip: string
@@ -1722,6 +1739,7 @@ function ExchangeConfigModal({
       setSecretKey(selectedExchange.secretKey || '')
       setPassphrase('') // Don't load existing passphrase for security
       setTestnet(selectedExchange.testnet || false)
+      setCustomExchangeName(selectedExchange.customName || '')
 
       // Aster 字段
       setAsterUser(selectedExchange.asterUser || '')
@@ -1732,6 +1750,14 @@ function ExchangeConfigModal({
       setHyperliquidWalletAddr(selectedExchange.hyperliquidWalletAddr || '')
     }
   }, [editingExchangeId, selectedExchange])
+
+  // 重置表单数据当选择的交易所改变时
+  useEffect(() => {
+    if (!editingExchangeId) {
+      // 如果不是编辑模式，重置自定义名称
+      setCustomExchangeName('')
+    }
+  }, [selectedExchangeId, editingExchangeId])
 
   // 加载服务器IP（当选择binance时）
   useEffect(() => {
@@ -1803,7 +1829,7 @@ function ExchangeConfigModal({
     // 根据交易所类型验证不同字段
     if (selectedExchange?.id === 'binance') {
       if (!apiKey.trim() || !secretKey.trim()) return
-      await onSave(selectedExchangeId, apiKey.trim(), secretKey.trim(), testnet)
+      await onSave(selectedExchangeId, apiKey.trim(), secretKey.trim(), testnet, undefined, undefined, undefined, undefined, customExchangeName.trim())
     } else if (selectedExchange?.id === 'hyperliquid') {
       if (!apiKey.trim() || !hyperliquidWalletAddr.trim()) return // 验证私钥和钱包地址
       await onSave(
@@ -1811,7 +1837,11 @@ function ExchangeConfigModal({
         apiKey.trim(),
         '',
         testnet,
-        hyperliquidWalletAddr.trim()
+        hyperliquidWalletAddr.trim(),
+        undefined,
+        undefined,
+        undefined,
+        customExchangeName.trim()
       )
     } else if (selectedExchange?.id === 'aster') {
       if (!asterUser.trim() || !asterSigner.trim() || !asterPrivateKey.trim())
@@ -1824,15 +1854,16 @@ function ExchangeConfigModal({
         undefined,
         asterUser.trim(),
         asterSigner.trim(),
-        asterPrivateKey.trim()
+        asterPrivateKey.trim(),
+        customExchangeName.trim()
       )
     } else if (selectedExchange?.id === 'okx') {
       if (!apiKey.trim() || !secretKey.trim() || !passphrase.trim()) return
-      await onSave(selectedExchangeId, apiKey.trim(), secretKey.trim(), testnet)
+      await onSave(selectedExchangeId, apiKey.trim(), secretKey.trim(), testnet, undefined, undefined, undefined, undefined, customExchangeName.trim())
     } else {
       // 默认情况（其他CEX交易所）
       if (!apiKey.trim() || !secretKey.trim()) return
-      await onSave(selectedExchangeId, apiKey.trim(), secretKey.trim(), testnet)
+      await onSave(selectedExchangeId, apiKey.trim(), secretKey.trim(), testnet, undefined, undefined, undefined, undefined, customExchangeName.trim())
     }
   }
 
@@ -1906,11 +1937,36 @@ function ExchangeConfigModal({
                 <option value="">{t('pleaseSelectExchange', language)}</option>
                 {availableExchanges.map((exchange) => (
                   <option key={exchange.id} value={exchange.id}>
-                    {getShortName(exchange.name)} ({exchange.type.toUpperCase()}
+                    {getExchangeDisplayName(exchange)} ({exchange.type.toUpperCase()}
                     )
                   </option>
                 ))}
               </select>
+
+              {/* Custom Exchange Name Input */}
+              <div className="mt-3">
+                <label
+                  className="block text-sm font-semibold mb-2"
+                  style={{ color: '#EAECEF' }}
+                >
+                  {t('customExchangeName', language)} ({t('optional', language)})
+                </label>
+                <input
+                  type="text"
+                  value={customExchangeName}
+                  onChange={(e) => setCustomExchangeName(e.target.value)}
+                  placeholder={t('enterCustomExchangeName', language)}
+                  className="w-full px-3 py-2 rounded"
+                  style={{
+                    background: '#0B0E11',
+                    border: '1px solid #2B3139',
+                    color: '#EAECEF',
+                  }}
+                />
+                <div className="text-xs mt-1" style={{ color: '#848E9C' }}>
+                  {t('customExchangeNameDescription', language)}
+                </div>
+              </div>
             </div>
           )}
 

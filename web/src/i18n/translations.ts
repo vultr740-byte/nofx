@@ -207,6 +207,13 @@ export const translations = {
     asterUsdtWarning:
       'Important: Aster only tracks USDT balance. Please ensure you use USDT as margin currency to avoid P&L calculation errors caused by price fluctuations of other assets (BNB, ETH, etc.)',
 
+    // Custom Exchange Name
+    customExchangeName: 'Custom Exchange Name',
+    optional: 'Optional',
+    enterCustomExchangeName: 'Enter custom exchange name',
+    customExchangeNameDescription:
+      'Give your exchange a custom name for easy identification. This will be displayed instead of the default exchange name.',
+
     // Exchange names
     hyperliquidExchangeName: 'Hyperliquid',
     asterExchangeName: 'Aster DEX',
@@ -955,6 +962,13 @@ export const translations = {
       'API 钱包私钥 - 从 https://www.asterdex.com/zh-CN/api-wallet 获取（仅在本地用于签名，不会被传输）',
     asterUsdtWarning:
       '重要提示：Aster 仅统计 USDT 余额。请确保您使用 USDT 作为保证金币种，避免其他资产（BNB、ETH等）的价格波动导致盈亏统计错误',
+
+    // Custom Exchange Name
+    customExchangeName: '自定义交易所名称',
+    optional: '可选',
+    enterCustomExchangeName: '输入自定义交易所名称',
+    customExchangeNameDescription:
+      '为您的交易所设置一个自定义名称以便于识别。该名称将显示在默认交易所名称的位置。',
 
     // Exchange names
     hyperliquidExchangeName: 'Hyperliquid',
