@@ -554,12 +554,12 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 		var tempTrader trader.Trader
 		var createErr error
 
-		switch req.ExchangeID {
+		switch exchangeCfg.Type {
 		case "binance":
 			tempTrader = trader.NewFuturesTrader(exchangeCfg.APIKey, exchangeCfg.SecretKey)
 		case "hyperliquid":
 			tempTrader, createErr = trader.NewHyperliquidTrader(
-				exchangeCfg.APIKey, // private key
+				exchangeCfg.SecretKey, // private key (修复: 使用secret_key字段)
 				exchangeCfg.HyperliquidWalletAddr,
 				exchangeCfg.Testnet,
 			)
@@ -570,7 +570,7 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 				exchangeCfg.AsterPrivateKey,
 			)
 		default:
-			log.Printf("⚠️ 不支持的交易所类型: %s，使用用户输入的初始资金", req.ExchangeID)
+			log.Printf("⚠️ 不支持的交易所类型: %s，使用用户输入的初始资金", exchangeCfg.Type)
 		}
 
 		if createErr != nil {
