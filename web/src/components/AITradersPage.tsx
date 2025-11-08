@@ -61,8 +61,36 @@ function getExchangeDisplayName(exchange: any): string {
   if (exchange.customName && exchange.customName.trim() !== '') {
     return exchange.customName.trim()
   }
-  // 否则使用默认名称的简短形式
-  return getShortName(exchange.name)
+  // 如果有 exchange_type 字段，使用其来确定显示名称
+  if (exchange.exchangeType && exchange.exchangeType.trim() !== '') {
+    const exchangeType = exchange.exchangeType.toLowerCase()
+    switch (exchangeType) {
+      case 'binance':
+        return 'Binance Futures'
+      case 'hyperliquid':
+        return 'Hyperliquid'
+      case 'aster':
+        return 'Aster DEX'
+      default:
+        return exchange.name || exchangeType
+    }
+  }
+  // 降级到使用 name 字段
+  return exchange.name
+}
+
+// 获取交易所类型（用于后端 API）
+function getExchangeType(exchange: any): string {
+  // 优先使用 exchange_type 字段
+  if (exchange.exchangeType && exchange.exchangeType.trim() !== '') {
+    return exchange.exchangeType.toLowerCase()
+  }
+  // 从 name 字段推断
+  const name = (exchange.name || '').toLowerCase()
+  if (name.includes('binance')) return 'binance'
+  if (name.includes('hyperliquid')) return 'hyperliquid'
+  if (name.includes('aster')) return 'aster'
+  return 'unknown'
 }
 
 interface AITradersPageProps {
@@ -632,7 +660,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       const request = {
         exchanges: Object.fromEntries(
           updatedExchanges.map((exchange) => [
-            exchange.id,
+            getExchangeType(exchange), // 使用交易所类型而不是ID
             {
               enabled: exchange.enabled,
               api_key: exchange.apiKey || '',
@@ -1878,7 +1906,7 @@ function ExchangeConfigModal({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div
-        className="bg-gray-800 rounded-lg w-full max-w-lg relative flex flex-col"
+        className="bg-gray-800 rounded-lg w-full max-w-2xl relative flex flex-col"
         style={{ background: '#1E2329', maxHeight: '90vh' }}
       >
         <div className="flex items-center justify-between mb-4">
@@ -1920,7 +1948,7 @@ function ExchangeConfigModal({
         </div>
 
         {/* Scrollable content area */}
-        <div className="flex-1 overflow-y-auto px-1" style={{ maxHeight: 'calc(90vh - 180px)' }}>
+        <div className="flex-1 overflow-y-auto px-6" style={{ maxHeight: 'calc(90vh - 180px)' }}>
           <form id="exchange-form" onSubmit={handleSubmit} className="space-y-4">
           {!editingExchangeId && (
             <div>
