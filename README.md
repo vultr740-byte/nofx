@@ -414,7 +414,7 @@ go mod download
 **Frontend:**
 ```bash
 cd web
-npm install
+pnpm install
 cd ..
 ```
 
@@ -493,7 +493,7 @@ Open a **NEW terminal window**, then:
 
 ```bash
 cd web
-npm run dev
+pnpm run dev
 ```
 
 #### **Step 3: Access the Web Interface**
@@ -873,7 +873,7 @@ Open a **NEW terminal window** (keep the first one running!), then:
 
 ```bash
 cd web
-npm run dev
+pnpm run dev
 ```
 
 **What you should see:**
