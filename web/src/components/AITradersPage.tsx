@@ -1867,8 +1867,8 @@ function ExchangeConfigModal({
       if (!apiKey.trim() || !hyperliquidWalletAddr.trim()) return // 验证私钥和钱包地址
       await onSave(
         selectedExchangeId,
-        apiKey.trim(),
-        '',
+        '', // Hyperliquid 不使用 API Key
+        apiKey.trim(), // 私钥应该存储在 secretKey 字段
         testnet,
         hyperliquidWalletAddr.trim(),
         undefined,
