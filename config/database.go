@@ -1119,14 +1119,45 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 	var result sql.Result
 	var err error
 
-	// 首先尝试更新现有的用户配置
-	if d.usePostgreSQL {
-		result, err = d.db.Exec(`
-			UPDATE exchanges SET enabled = $1, api_key = $2, secret_key = $3, testnet = $4,
-			       hyperliquid_wallet_addr = $5, aster_user = $6, aster_signer = $7, aster_private_key = $8, updated_at = NOW()
-			WHERE id = $9 AND user_id = $10
-		`, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, id, userID)
+	// 首先确定交易所的基本信息
+	var name, typ string
+	if id == "binance" {
+		name = "Binance Futures"
+		typ = "cex"
+	} else if id == "hyperliquid" {
+		name = "Hyperliquid"
+		typ = "dex"
+	} else if id == "aster" {
+		name = "Aster DEX"
+		typ = "dex"
 	} else {
+		name = id + " Exchange"
+		typ = "cex"
+	}
+
+	// 对于 PostgreSQL，使用 UPSERT 方式处理主键冲突
+	if d.usePostgreSQL {
+		// 使用 ON CONFLICT 进行 upsert，这样可以处理主键冲突
+		result, err = d.db.Exec(`
+			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet,
+			                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+			ON CONFLICT (id) DO UPDATE SET
+				user_id = EXCLUDED.user_id,
+				name = EXCLUDED.name,
+				type = EXCLUDED.type,
+				enabled = EXCLUDED.enabled,
+				api_key = EXCLUDED.api_key,
+				secret_key = EXCLUDED.secret_key,
+				testnet = EXCLUDED.testnet,
+				hyperliquid_wallet_addr = EXCLUDED.hyperliquid_wallet_addr,
+				aster_user = EXCLUDED.aster_user,
+				aster_signer = EXCLUDED.aster_signer,
+				aster_private_key = EXCLUDED.aster_private_key,
+				updated_at = NOW()
+		`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey)
+	} else {
+		// SQLite 保持原有逻辑
 		result, err = d.db.Exec(`
 			UPDATE exchanges SET enabled = ?, api_key = ?, secret_key = ?, testnet = ?,
 			       hyperliquid_wallet_addr = ?, aster_user = ?, aster_signer = ?, aster_private_key = ?, updated_at = datetime('now')
@@ -1134,11 +1165,17 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 		`, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, id, userID)
 	}
 	if err != nil {
-		log.Printf("❌ UpdateExchange: 更新失败: %v", err)
+		log.Printf("❌ UpdateExchange: 操作失败: %v", err)
 		return err
 	}
 
-	// 检查是否有行被更新
+	// PostgreSQL 使用 UPSERT，总是成功（插入或更新）
+	if d.usePostgreSQL {
+		log.Printf("✅ UpdateExchange: UPSERT 操作成功 (ID=%s, User=%s)", id, userID)
+		return nil
+	}
+
+	// SQLite 逻辑：检查是否有行被更新
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		log.Printf("❌ UpdateExchange: 获取影响行数失败: %v", err)
@@ -1169,20 +1206,11 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 
 		log.Printf("🆕 UpdateExchange: 创建新记录 ID=%s, name=%s, type=%s", id, name, typ)
 
-		// 创建用户特定的配置，使用原始的交易所ID
-		if d.usePostgreSQL {
-			_, err = d.db.Exec(`
-				INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet,
-				                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
-			`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey)
-		} else {
-			_, err = d.db.Exec(`
-				INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet,
-				                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-			`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey)
-		}
+		_, err = d.db.Exec(`
+			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet,
+			                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey)
 
 		if err != nil {
 			log.Printf("❌ UpdateExchange: 创建记录失败: %v", err)
