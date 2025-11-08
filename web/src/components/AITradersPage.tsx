@@ -61,9 +61,9 @@ function getExchangeDisplayName(exchange: any): string {
   if (exchange.customName && exchange.customName.trim() !== '') {
     return exchange.customName.trim()
   }
-  // 如果有 exchange_type 字段，使用其来确定显示名称
-  if (exchange.exchangeType && exchange.exchangeType.trim() !== '') {
-    const exchangeType = exchange.exchangeType.toLowerCase()
+  // 如果有 type 字段，使用其来确定显示名称
+  if (exchange.type && exchange.type.trim() !== '') {
+    const exchangeType = exchange.type.toLowerCase()
     switch (exchangeType) {
       case 'binance':
         return 'Binance Futures'
@@ -81,9 +81,9 @@ function getExchangeDisplayName(exchange: any): string {
 
 // 获取交易所类型（用于后端 API）
 function getExchangeType(exchange: any): string {
-  // 优先使用 exchange_type 字段
-  if (exchange.exchangeType && exchange.exchangeType.trim() !== '') {
-    return exchange.exchangeType.toLowerCase()
+  // 使用 type 字段
+  if (exchange.type && exchange.type.trim() !== '') {
+    return exchange.type.toLowerCase()
   }
   // 从 name 字段推断
   const name = (exchange.name || '').toLowerCase()
@@ -1906,8 +1906,12 @@ function ExchangeConfigModal({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div
-        className="bg-gray-800 rounded-lg w-full max-w-2xl relative flex flex-col"
-        style={{ background: '#1E2329', maxHeight: '90vh' }}
+        className="bg-gray-800 rounded-lg w-full max-w-lg relative flex flex-col"
+        style={{
+          background: '#1E2329',
+          maxHeight: '90vh',
+          padding: '24px'
+        }}
       >
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-xl font-bold" style={{ color: '#EAECEF' }}>
@@ -1948,7 +1952,7 @@ function ExchangeConfigModal({
         </div>
 
         {/* Scrollable content area */}
-        <div className="flex-1 overflow-y-auto px-6" style={{ maxHeight: 'calc(90vh - 180px)' }}>
+        <div className="flex-1 overflow-y-auto" style={{ maxHeight: 'calc(90vh - 200px)' }}>
           <form id="exchange-form" onSubmit={handleSubmit} className="space-y-4">
           {!editingExchangeId && (
             <div>
@@ -2565,7 +2569,7 @@ function ExchangeConfigModal({
         </div>
 
         {/* Fixed button area - always visible */}
-        <div className="flex gap-3 mt-4 flex-shrink-0">
+        <div className="flex gap-3 mt-6 flex-shrink-0">
           <button
             type="button"
             onClick={onClose}

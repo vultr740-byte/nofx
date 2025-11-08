@@ -704,7 +704,6 @@ type ExchangeConfig struct {
 	AsterSigner     string    `json:"asterSigner"`
 	AsterPrivateKey string    `json:"asterPrivateKey"`
 	CustomExchangeName string  `json:"customExchangeName"` // 用户自定义交易所名称
-	ExchangeType     string    `json:"exchangeType"`        // 交易所类型：'binance', 'hyperliquid', 'aster' 等
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -1079,7 +1078,6 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 		       COALESCE(aster_signer, '') as aster_signer,
 		       COALESCE(aster_private_key, '') as aster_private_key,
 		       COALESCE(custom_exchange_name, '') as custom_exchange_name,
-		       COALESCE(exchange_type, '') as exchange_type,
 		       created_at, updated_at
 		FROM exchanges WHERE user_id = $1 ORDER BY id
 	`
@@ -1097,7 +1095,6 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 			       COALESCE(aster_signer, '') as aster_signer,
 			       COALESCE(aster_private_key, '') as aster_private_key,
 			       COALESCE(custom_exchange_name, '') as custom_exchange_name,
-			       COALESCE(exchange_type, '') as exchange_type,
 			       created_at, updated_at
 			FROM exchanges WHERE user_id = ? ORDER BY id
 		`
@@ -1117,7 +1114,7 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 			&exchange.Enabled, &exchange.APIKey, &exchange.SecretKey, &exchange.Testnet,
 			&exchange.HyperliquidWalletAddr, &exchange.AsterUser,
 			&exchange.AsterSigner, &exchange.AsterPrivateKey,
-			&exchange.CustomExchangeName, &exchange.ExchangeType,
+			&exchange.CustomExchangeName,
 			&exchange.CreatedAt, &exchange.UpdatedAt,
 		)
 		if err != nil {
@@ -1145,29 +1142,25 @@ func (d *Database) UpdateExchange(userID, exchangeType string, enabled bool, api
 	encryptedAsterPrivateKey := d.encryptSensitiveData(asterPrivateKey)
 
 	// 确定交易所的基本信息
-	var name, typ string
+	var name string
 	if exchangeType == "binance" {
 		name = "Binance Futures"
-		typ = "cex"
 	} else if exchangeType == "hyperliquid" {
 		name = "Hyperliquid"
-		typ = "dex"
 	} else if exchangeType == "aster" {
 		name = "Aster DEX"
-		typ = "dex"
 	} else {
 		name = exchangeType + " Exchange"
-		typ = "cex"
 	}
 
 	// 为用户创建新的交易所记录，使用 UUID 作为主键
 	if d.usePostgreSQL {
 		// PostgreSQL: 插入新记录
 		_, err := d.db.Exec(`
-			INSERT INTO exchanges (user_id, name, type, exchange_type, enabled, api_key, secret_key, testnet,
+			INSERT INTO exchanges (user_id, name, type, enabled, api_key, secret_key, testnet,
 			                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, custom_exchange_name, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
-		`, userID, name, typ, exchangeType, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, customExchangeName)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+		`, userID, name, exchangeType, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, customExchangeName)
 		if err != nil {
 			log.Printf("❌ UpdateExchange: 插入失败: %v", err)
 			return err
@@ -1177,10 +1170,10 @@ func (d *Database) UpdateExchange(userID, exchangeType string, enabled bool, api
 	} else {
 		// SQLite: 插入新记录
 		_, err := d.db.Exec(`
-			INSERT INTO exchanges (user_id, name, type, exchange_type, enabled, api_key, secret_key, testnet,
+			INSERT INTO exchanges (user_id, name, type, enabled, api_key, secret_key, testnet,
 			                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, custom_exchange_name, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-		`, userID, name, typ, exchangeType, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, customExchangeName)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		`, userID, name, exchangeType, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, customExchangeName)
 		if err != nil {
 			log.Printf("❌ UpdateExchange: 插入失败: %v", err)
 			return err
