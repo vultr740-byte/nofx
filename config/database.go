@@ -944,34 +944,62 @@ func (d *Database) GetAIModels(userID string) ([]*AIModelConfig, error) {
 func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, customAPIURL, customModelName string) error {
 	// 先尝试精确匹配 ID（新版逻辑，支持多个相同 provider 的模型）
 	var existingID string
-	err := d.db.QueryRow(`
-		SELECT id FROM ai_models WHERE user_id = ? AND id = ? LIMIT 1
-	`, userID, id).Scan(&existingID)
+	var err error
+
+	if d.usePostgreSQL {
+		err = d.db.QueryRow(`
+			SELECT id FROM ai_models WHERE user_id = $1 AND id = $2 LIMIT 1
+		`, userID, id).Scan(&existingID)
+	} else {
+		err = d.db.QueryRow(`
+			SELECT id FROM ai_models WHERE user_id = ? AND id = ? LIMIT 1
+		`, userID, id).Scan(&existingID)
+	}
 
 	if err == nil {
 		// 找到了现有配置（精确匹配 ID），更新它
 		encryptedAPIKey := d.encryptSensitiveData(apiKey)
-		_, err = d.db.Exec(`
-			UPDATE ai_models SET enabled = ?, api_key = ?, custom_api_url = ?, custom_model_name = ?, updated_at = datetime('now')
-			WHERE id = ? AND user_id = ?
-		`, enabled, encryptedAPIKey, customAPIURL, customModelName, existingID, userID)
+		if d.usePostgreSQL {
+			_, err = d.db.Exec(`
+				UPDATE ai_models SET enabled = $1, api_key = $2, custom_api_url = $3, custom_model_name = $4, updated_at = NOW()
+				WHERE id = $5 AND user_id = $6
+			`, enabled, encryptedAPIKey, customAPIURL, customModelName, existingID, userID)
+		} else {
+			_, err = d.db.Exec(`
+				UPDATE ai_models SET enabled = ?, api_key = ?, custom_api_url = ?, custom_model_name = ?, updated_at = datetime('now')
+				WHERE id = ? AND user_id = ?
+			`, enabled, encryptedAPIKey, customAPIURL, customModelName, existingID, userID)
+		}
 		return err
 	}
 
 	// ID 不存在，尝试兼容旧逻辑：将 id 作为 provider 查找
 	provider := id
-	err = d.db.QueryRow(`
-		SELECT id FROM ai_models WHERE user_id = ? AND provider = ? LIMIT 1
-	`, userID, provider).Scan(&existingID)
+	if d.usePostgreSQL {
+		err = d.db.QueryRow(`
+			SELECT id FROM ai_models WHERE user_id = $1 AND provider = $2 LIMIT 1
+		`, userID, provider).Scan(&existingID)
+	} else {
+		err = d.db.QueryRow(`
+			SELECT id FROM ai_models WHERE user_id = ? AND provider = ? LIMIT 1
+		`, userID, provider).Scan(&existingID)
+	}
 
 	if err == nil {
 		// 找到了现有配置（通过 provider 匹配，兼容旧版），更新它
 		log.Printf("⚠️  使用旧版 provider 匹配更新模型: %s -> %s", provider, existingID)
 		encryptedAPIKey := d.encryptSensitiveData(apiKey)
-		_, err = d.db.Exec(`
-			UPDATE ai_models SET enabled = ?, api_key = ?, custom_api_url = ?, custom_model_name = ?, updated_at = datetime('now')
-			WHERE id = ? AND user_id = ?
-		`, enabled, encryptedAPIKey, customAPIURL, customModelName, existingID, userID)
+		if d.usePostgreSQL {
+			_, err = d.db.Exec(`
+				UPDATE ai_models SET enabled = $1, api_key = $2, custom_api_url = $3, custom_model_name = $4, updated_at = NOW()
+				WHERE id = $5 AND user_id = $6
+			`, enabled, encryptedAPIKey, customAPIURL, customModelName, existingID, userID)
+		} else {
+			_, err = d.db.Exec(`
+				UPDATE ai_models SET enabled = ?, api_key = ?, custom_api_url = ?, custom_model_name = ?, updated_at = datetime('now')
+				WHERE id = ? AND user_id = ?
+			`, enabled, encryptedAPIKey, customAPIURL, customModelName, existingID, userID)
+		}
 		return err
 	}
 
@@ -992,9 +1020,15 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 
 	// 获取模型的基本信息
 	var name string
-	err = d.db.QueryRow(`
-		SELECT name FROM ai_models WHERE provider = ? LIMIT 1
-	`, provider).Scan(&name)
+	if d.usePostgreSQL {
+		err = d.db.QueryRow(`
+			SELECT name FROM ai_models WHERE provider = $1 LIMIT 1
+		`, provider).Scan(&name)
+	} else {
+		err = d.db.QueryRow(`
+			SELECT name FROM ai_models WHERE provider = ? LIMIT 1
+		`, provider).Scan(&name)
+	}
 	if err != nil {
 		// 如果找不到基本信息，使用默认值
 		if provider == "deepseek" {
@@ -1016,10 +1050,17 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 
 	log.Printf("✓ 创建新的 AI 模型配置: ID=%s, Provider=%s, Name=%s", newModelID, provider, name)
 	encryptedAPIKey := d.encryptSensitiveData(apiKey)
-	_, err = d.db.Exec(`
-		INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url, custom_model_name, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-	`, newModelID, userID, name, provider, enabled, encryptedAPIKey, customAPIURL, customModelName)
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`
+			INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url, custom_model_name, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+		`, newModelID, userID, name, provider, enabled, encryptedAPIKey, customAPIURL, customModelName)
+	} else {
+		_, err = d.db.Exec(`
+			INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url, custom_model_name, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		`, newModelID, userID, name, provider, enabled, encryptedAPIKey, customAPIURL, customModelName)
+	}
 
 	return err
 }
