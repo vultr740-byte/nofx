@@ -820,13 +820,24 @@ func (d *Database) GetUserByEmail(email string) (*User, error) {
 // GetUserByID 通过ID获取用户
 func (d *Database) GetUserByID(userID string) (*User, error) {
 	var user User
-	err := d.db.QueryRow(`
-		SELECT id, email, password_hash, otp_secret, otp_verified, created_at, updated_at
-		FROM users WHERE id = ?
-	`, userID).Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret,
-		&user.OTPVerified, &user.CreatedAt, &user.UpdatedAt,
-	)
+	var err error
+	if d.usePostgreSQL {
+		err = d.db.QueryRow(`
+			SELECT id, email, password_hash, otp_secret, otp_verified, created_at, updated_at
+			FROM users WHERE id = $1
+		`, userID).Scan(
+			&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret,
+			&user.OTPVerified, &user.CreatedAt, &user.UpdatedAt,
+		)
+	} else {
+		err = d.db.QueryRow(`
+			SELECT id, email, password_hash, otp_secret, otp_verified, created_at, updated_at
+			FROM users WHERE id = ?
+		`, userID).Scan(
+			&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret,
+			&user.OTPVerified, &user.CreatedAt, &user.UpdatedAt,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
