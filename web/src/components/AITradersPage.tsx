@@ -1873,8 +1873,8 @@ function ExchangeConfigModal({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div
-        className="bg-gray-800 rounded-lg p-6 w-full max-w-lg relative"
-        style={{ background: '#1E2329' }}
+        className="bg-gray-800 rounded-lg w-full max-w-lg relative flex flex-col"
+        style={{ background: '#1E2329', maxHeight: '90vh' }}
       >
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-xl font-bold" style={{ color: '#EAECEF' }}>
@@ -1914,7 +1914,9 @@ function ExchangeConfigModal({
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Scrollable content area */}
+        <div className="flex-1 overflow-y-auto px-1" style={{ maxHeight: 'calc(90vh - 180px)' }}>
+          <form id="exchange-form" onSubmit={handleSubmit} className="space-y-4">
           {!editingExchangeId && (
             <div>
               <label
@@ -1942,31 +1944,6 @@ function ExchangeConfigModal({
                   </option>
                 ))}
               </select>
-
-              {/* Custom Exchange Name Input */}
-              <div className="mt-3">
-                <label
-                  className="block text-sm font-semibold mb-2"
-                  style={{ color: '#EAECEF' }}
-                >
-                  {t('customExchangeName', language)} ({t('optional', language)})
-                </label>
-                <input
-                  type="text"
-                  value={customExchangeName}
-                  onChange={(e) => setCustomExchangeName(e.target.value)}
-                  placeholder={t('enterCustomExchangeName', language)}
-                  className="w-full px-3 py-2 rounded"
-                  style={{
-                    background: '#0B0E11',
-                    border: '1px solid #2B3139',
-                    color: '#EAECEF',
-                  }}
-                />
-                <div className="text-xs mt-1" style={{ color: '#848E9C' }}>
-                  {t('customExchangeNameDescription', language)}
-                </div>
-              </div>
             </div>
           )}
 
@@ -1991,6 +1968,33 @@ function ExchangeConfigModal({
                     {selectedExchange.id}
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Custom Exchange Name Input - Show only after selecting an exchange */}
+          {selectedExchange && (
+            <div className="mt-3">
+              <label
+                className="block text-sm font-semibold mb-2"
+                style={{ color: '#EAECEF' }}
+              >
+                {t('customExchangeName', language)} ({t('optional', language)})
+              </label>
+              <input
+                type="text"
+                value={customExchangeName}
+                onChange={(e) => setCustomExchangeName(e.target.value)}
+                placeholder={t('enterCustomExchangeName', language)}
+                className="w-full px-3 py-2 rounded"
+                style={{
+                  background: '#0B0E11',
+                  border: '1px solid #2B3139',
+                  color: '#EAECEF',
+                }}
+              />
+              <div className="text-xs mt-1" style={{ color: '#848E9C' }}>
+                {t('customExchangeNameDescription', language)}
               </div>
             </div>
           )}
@@ -2524,45 +2528,49 @@ function ExchangeConfigModal({
             </>
           )}
 
-          <div className="flex gap-3 mt-6">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 rounded text-sm font-semibold"
-              style={{ background: '#2B3139', color: '#848E9C' }}
-            >
-              {t('cancel', language)}
-            </button>
-            <button
-              type="submit"
-              disabled={
-                !selectedExchange ||
-                (selectedExchange.id === 'binance' &&
-                  (!apiKey.trim() || !secretKey.trim())) ||
-                (selectedExchange.id === 'okx' &&
-                  (!apiKey.trim() ||
-                    !secretKey.trim() ||
-                    !passphrase.trim())) ||
-                (selectedExchange.id === 'hyperliquid' &&
-                  (!apiKey.trim() || !hyperliquidWalletAddr.trim())) || // 验证私钥和钱包地址
-                (selectedExchange.id === 'aster' &&
-                  (!asterUser.trim() ||
-                    !asterSigner.trim() ||
-                    !asterPrivateKey.trim())) ||
-                (selectedExchange.type === 'cex' &&
-                  selectedExchange.id !== 'hyperliquid' &&
-                  selectedExchange.id !== 'aster' &&
-                  selectedExchange.id !== 'binance' &&
-                  selectedExchange.id !== 'okx' &&
-                  (!apiKey.trim() || !secretKey.trim()))
-              }
-              className="flex-1 px-4 py-2 rounded text-sm font-semibold disabled:opacity-50"
-              style={{ background: '#F0B90B', color: '#000' }}
-            >
-              {t('saveConfig', language)}
-            </button>
-          </div>
-        </form>
+                  </form>
+        </div>
+
+        {/* Fixed button area - always visible */}
+        <div className="flex gap-3 mt-4 flex-shrink-0 px-6 pb-6">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 px-4 py-2 rounded text-sm font-semibold"
+            style={{ background: '#2B3139', color: '#848E9C' }}
+          >
+            {t('cancel', language)}
+          </button>
+          <button
+            type="submit"
+            form="exchange-form" // Link to the form
+            disabled={
+              !selectedExchange ||
+              (selectedExchange.id === 'binance' &&
+                (!apiKey.trim() || !secretKey.trim())) ||
+              (selectedExchange.id === 'okx' &&
+                (!apiKey.trim() ||
+                  !secretKey.trim() ||
+                  !passphrase.trim())) ||
+              (selectedExchange.id === 'hyperliquid' &&
+                (!apiKey.trim() || !hyperliquidWalletAddr.trim())) || // 验证私钥和钱包地址
+              (selectedExchange.id === 'aster' &&
+                (!asterUser.trim() ||
+                  !asterSigner.trim() ||
+                  !asterPrivateKey.trim())) ||
+              (selectedExchange.type === 'cex' &&
+                selectedExchange.id !== 'hyperliquid' &&
+                selectedExchange.id !== 'aster' &&
+                selectedExchange.id !== 'binance' &&
+                selectedExchange.id !== 'okx' &&
+                (!apiKey.trim() || !secretKey.trim()))
+            }
+            className="flex-1 px-4 py-2 rounded text-sm font-semibold disabled:opacity-50"
+            style={{ background: '#F0B90B', color: '#000' }}
+          >
+            {t('saveConfig', language)}
+          </button>
+        </div>
       </div>
 
       {/* Binance Setup Guide Modal */}
