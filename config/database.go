@@ -749,10 +749,18 @@ func GenerateOTPSecret() (string, error) {
 
 // CreateUser 创建用户
 func (d *Database) CreateUser(user *User) error {
-	_, err := d.db.Exec(`
-		INSERT INTO users (id, email, password_hash, otp_secret, otp_verified)
-		VALUES (?, ?, ?, ?, ?)
-	`, user.ID, user.Email, user.PasswordHash, user.OTPSecret, user.OTPVerified)
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`
+			INSERT INTO users (id, email, password_hash, otp_secret, otp_verified)
+			VALUES ($1, $2, $3, $4, $5)
+		`, user.ID, user.Email, user.PasswordHash, user.OTPSecret, user.OTPVerified)
+	} else {
+		_, err = d.db.Exec(`
+			INSERT INTO users (id, email, password_hash, otp_secret, otp_verified)
+			VALUES (?, ?, ?, ?, ?)
+		`, user.ID, user.Email, user.PasswordHash, user.OTPSecret, user.OTPVerified)
+	}
 	return err
 }
 
@@ -785,13 +793,24 @@ func (d *Database) EnsureAdminUser() error {
 // GetUserByEmail 通过邮箱获取用户
 func (d *Database) GetUserByEmail(email string) (*User, error) {
 	var user User
-	err := d.db.QueryRow(`
-		SELECT id, email, password_hash, otp_secret, otp_verified, created_at, updated_at
-		FROM users WHERE email = ?
-	`, email).Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret,
-		&user.OTPVerified, &user.CreatedAt, &user.UpdatedAt,
-	)
+	var err error
+	if d.usePostgreSQL {
+		err = d.db.QueryRow(`
+			SELECT id, email, password_hash, otp_secret, otp_verified, created_at, updated_at
+			FROM users WHERE email = $1
+		`, email).Scan(
+			&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret,
+			&user.OTPVerified, &user.CreatedAt, &user.UpdatedAt,
+		)
+	} else {
+		err = d.db.QueryRow(`
+			SELECT id, email, password_hash, otp_secret, otp_verified, created_at, updated_at
+			FROM users WHERE email = ?
+		`, email).Scan(
+			&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret,
+			&user.OTPVerified, &user.CreatedAt, &user.UpdatedAt,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
