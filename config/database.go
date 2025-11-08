@@ -1116,12 +1116,23 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 	encryptedSecretKey := d.encryptSensitiveData(secretKey)
 	encryptedAsterPrivateKey := d.encryptSensitiveData(asterPrivateKey)
 
+	var result sql.Result
+	var err error
+
 	// 首先尝试更新现有的用户配置
-	result, err := d.db.Exec(`
-		UPDATE exchanges SET enabled = ?, api_key = ?, secret_key = ?, testnet = ?, 
-		       hyperliquid_wallet_addr = ?, aster_user = ?, aster_signer = ?, aster_private_key = ?, updated_at = datetime('now')
-		WHERE id = ? AND user_id = ?
-	`, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, id, userID)
+	if d.usePostgreSQL {
+		result, err = d.db.Exec(`
+			UPDATE exchanges SET enabled = $1, api_key = $2, secret_key = $3, testnet = $4,
+			       hyperliquid_wallet_addr = $5, aster_user = $6, aster_signer = $7, aster_private_key = $8, updated_at = NOW()
+			WHERE id = $9 AND user_id = $10
+		`, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, id, userID)
+	} else {
+		result, err = d.db.Exec(`
+			UPDATE exchanges SET enabled = ?, api_key = ?, secret_key = ?, testnet = ?,
+			       hyperliquid_wallet_addr = ?, aster_user = ?, aster_signer = ?, aster_private_key = ?, updated_at = datetime('now')
+			WHERE id = ? AND user_id = ?
+		`, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, id, userID)
+	}
 	if err != nil {
 		log.Printf("❌ UpdateExchange: 更新失败: %v", err)
 		return err
@@ -1159,11 +1170,19 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 		log.Printf("🆕 UpdateExchange: 创建新记录 ID=%s, name=%s, type=%s", id, name, typ)
 
 		// 创建用户特定的配置，使用原始的交易所ID
-		_, err = d.db.Exec(`
-			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet, 
-			                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-		`, id, userID, name, typ, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
+		if d.usePostgreSQL {
+			_, err = d.db.Exec(`
+				INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet,
+				                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+			`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey)
+		} else {
+			_, err = d.db.Exec(`
+				INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet,
+				                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+			`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey)
+		}
 
 		if err != nil {
 			log.Printf("❌ UpdateExchange: 创建记录失败: %v", err)
@@ -1179,10 +1198,19 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 
 // CreateAIModel 创建AI模型配置
 func (d *Database) CreateAIModel(userID, id, name, provider string, enabled bool, apiKey, customAPIURL string) error {
-	_, err := d.db.Exec(`
-		INSERT OR IGNORE INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url) 
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, id, userID, name, provider, enabled, apiKey, customAPIURL)
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`
+			INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (id) DO NOTHING
+		`, id, userID, name, provider, enabled, apiKey, customAPIURL)
+	} else {
+		_, err = d.db.Exec(`
+			INSERT OR IGNORE INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, id, userID, name, provider, enabled, apiKey, customAPIURL)
+	}
 	return err
 }
 
@@ -1192,20 +1220,37 @@ func (d *Database) CreateExchange(userID, id, name, typ string, enabled bool, ap
 	encryptedAPIKey := d.encryptSensitiveData(apiKey)
 	encryptedSecretKey := d.encryptSensitiveData(secretKey)
 	encryptedAsterPrivateKey := d.encryptSensitiveData(asterPrivateKey)
-	
-	_, err := d.db.Exec(`
-		INSERT OR IGNORE INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key) 
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey)
+
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`
+			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			ON CONFLICT (id, user_id) DO NOTHING
+		`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey)
+	} else {
+		_, err = d.db.Exec(`
+			INSERT OR IGNORE INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey)
+	}
 	return err
 }
 
 // CreateTrader 创建交易员
 func (d *Database) CreateTrader(trader *TraderRecord) error {
-	_, err := d.db.Exec(`
-		INSERT INTO traders (id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running, btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top, custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, trader.ID, trader.UserID, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance, trader.ScanIntervalMinutes, trader.IsRunning, trader.BTCETHLeverage, trader.AltcoinLeverage, trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop, trader.CustomPrompt, trader.OverrideBasePrompt, trader.SystemPromptTemplate, trader.IsCrossMargin)
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`
+			INSERT INTO traders (id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running, btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top, custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		`, trader.ID, trader.UserID, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance, trader.ScanIntervalMinutes, trader.IsRunning, trader.BTCETHLeverage, trader.AltcoinLeverage, trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop, trader.CustomPrompt, trader.OverrideBasePrompt, trader.SystemPromptTemplate, trader.IsCrossMargin)
+	} else {
+		_, err = d.db.Exec(`
+			INSERT INTO traders (id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running, btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top, custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, trader.ID, trader.UserID, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance, trader.ScanIntervalMinutes, trader.IsRunning, trader.BTCETHLeverage, trader.AltcoinLeverage, trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop, trader.CustomPrompt, trader.OverrideBasePrompt, trader.SystemPromptTemplate, trader.IsCrossMargin)
+	}
 	return err
 }
 
@@ -1265,41 +1310,76 @@ func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 
 // UpdateTraderStatus 更新交易员状态
 func (d *Database) UpdateTraderStatus(userID, id string, isRunning bool) error {
-	_, err := d.db.Exec(`UPDATE traders SET is_running = ? WHERE id = ? AND user_id = ?`, isRunning, id, userID)
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`UPDATE traders SET is_running = $1 WHERE id = $2 AND user_id = $3`, isRunning, id, userID)
+	} else {
+		_, err = d.db.Exec(`UPDATE traders SET is_running = ? WHERE id = ? AND user_id = ?`, isRunning, id, userID)
+	}
 	return err
 }
 
 // UpdateTrader 更新交易员配置
 func (d *Database) UpdateTrader(trader *TraderRecord) error {
-	_, err := d.db.Exec(`
-		UPDATE traders SET
-			name = ?, ai_model_id = ?, exchange_id = ?, initial_balance = ?,
-			scan_interval_minutes = ?, btc_eth_leverage = ?, altcoin_leverage = ?,
-			trading_symbols = ?, custom_prompt = ?, override_base_prompt = ?,
-			system_prompt_template = ?, is_cross_margin = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND user_id = ?
-	`, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance,
-		trader.ScanIntervalMinutes, trader.BTCETHLeverage, trader.AltcoinLeverage,
-		trader.TradingSymbols, trader.CustomPrompt, trader.OverrideBasePrompt,
-		trader.SystemPromptTemplate, trader.IsCrossMargin, trader.ID, trader.UserID)
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`
+			UPDATE traders SET
+				name = $1, ai_model_id = $2, exchange_id = $3, initial_balance = $4,
+				scan_interval_minutes = $5, btc_eth_leverage = $6, altcoin_leverage = $7,
+				trading_symbols = $8, custom_prompt = $9, override_base_prompt = $10,
+				system_prompt_template = $11, is_cross_margin = $12, updated_at = NOW()
+			WHERE id = $13 AND user_id = $14
+		`, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance,
+			trader.ScanIntervalMinutes, trader.BTCETHLeverage, trader.AltcoinLeverage,
+			trader.TradingSymbols, trader.CustomPrompt, trader.OverrideBasePrompt,
+			trader.SystemPromptTemplate, trader.IsCrossMargin, trader.ID, trader.UserID)
+	} else {
+		_, err = d.db.Exec(`
+			UPDATE traders SET
+				name = ?, ai_model_id = ?, exchange_id = ?, initial_balance = ?,
+				scan_interval_minutes = ?, btc_eth_leverage = ?, altcoin_leverage = ?,
+				trading_symbols = ?, custom_prompt = ?, override_base_prompt = ?,
+				system_prompt_template = ?, is_cross_margin = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND user_id = ?
+		`, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance,
+			trader.ScanIntervalMinutes, trader.BTCETHLeverage, trader.AltcoinLeverage,
+			trader.TradingSymbols, trader.CustomPrompt, trader.OverrideBasePrompt,
+			trader.SystemPromptTemplate, trader.IsCrossMargin, trader.ID, trader.UserID)
+	}
 	return err
 }
 
 // UpdateTraderCustomPrompt 更新交易员自定义Prompt
 func (d *Database) UpdateTraderCustomPrompt(userID, id string, customPrompt string, overrideBase bool) error {
-	_, err := d.db.Exec(`UPDATE traders SET custom_prompt = ?, override_base_prompt = ? WHERE id = ? AND user_id = ?`, customPrompt, overrideBase, id, userID)
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`UPDATE traders SET custom_prompt = $1, override_base_prompt = $2 WHERE id = $3 AND user_id = $4`, customPrompt, overrideBase, id, userID)
+	} else {
+		_, err = d.db.Exec(`UPDATE traders SET custom_prompt = ?, override_base_prompt = ? WHERE id = ? AND user_id = ?`, customPrompt, overrideBase, id, userID)
+	}
 	return err
 }
 
 // UpdateTraderInitialBalance 更新交易员初始余额（用于自动同步交易所实际余额）
 func (d *Database) UpdateTraderInitialBalance(userID, id string, newBalance float64) error {
-	_, err := d.db.Exec(`UPDATE traders SET initial_balance = ? WHERE id = ? AND user_id = ?`, newBalance, id, userID)
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`UPDATE traders SET initial_balance = $1 WHERE id = $2 AND user_id = $3`, newBalance, id, userID)
+	} else {
+		_, err = d.db.Exec(`UPDATE traders SET initial_balance = ? WHERE id = ? AND user_id = ?`, newBalance, id, userID)
+	}
 	return err
 }
 
 // DeleteTrader 删除交易员
 func (d *Database) DeleteTrader(userID, id string) error {
-	_, err := d.db.Exec(`DELETE FROM traders WHERE id = ? AND user_id = ?`, id, userID)
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`DELETE FROM traders WHERE id = $1 AND user_id = $2`, id, userID)
+	} else {
+		_, err = d.db.Exec(`DELETE FROM traders WHERE id = ? AND user_id = ?`, id, userID)
+	}
 	return err
 }
 
@@ -1363,7 +1443,12 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 // GetSystemConfig 获取系统配置
 func (d *Database) GetSystemConfig(key string) (string, error) {
 	var value string
-	err := d.db.QueryRow(`SELECT value FROM system_config WHERE key = ?`, key).Scan(&value)
+	var err error
+	if d.usePostgreSQL {
+		err = d.db.QueryRow(`SELECT value FROM system_config WHERE key = $1`, key).Scan(&value)
+	} else {
+		err = d.db.QueryRow(`SELECT value FROM system_config WHERE key = ?`, key).Scan(&value)
+	}
 	return value, err
 }
 
