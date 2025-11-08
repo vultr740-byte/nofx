@@ -44,10 +44,15 @@ function getModelDisplayName(modelId: string): string {
   }
 }
 
-// 提取下划线后面的名称部分
+// 提取下划线后面的名称部分，处理复合ID
 function getShortName(fullName: string): string {
   const parts = fullName.split('_')
-  return parts.length > 1 ? parts[parts.length - 1] : fullName
+  // 如果是复合ID（如 "user123_binance"），返回交易所类型部分
+  if (parts.length > 1) {
+    return parts[parts.length - 1]
+  }
+  // 否则返回完整名称
+  return fullName
 }
 
 // 获取交易所显示名称，优先使用自定义名称
@@ -2532,7 +2537,7 @@ function ExchangeConfigModal({
         </div>
 
         {/* Fixed button area - always visible */}
-        <div className="flex gap-3 mt-4 flex-shrink-0 px-6 pb-6">
+        <div className="flex gap-3 mt-4 flex-shrink-0">
           <button
             type="button"
             onClick={onClose}

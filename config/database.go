@@ -1114,7 +1114,7 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 
 // UpdateExchange 更新交易所配置，如果不存在则创建用户特定配置
 func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, customExchangeName string) error {
-	log.Printf("🔧 UpdateExchange: userID=%s, id=%s, enabled=%v", userID, id, enabled)
+	log.Printf("🔧 UpdateExchange: userID=%s, exchangeType=%s, enabled=%v", userID, id, enabled)
 
 	// 加密敏感字段
 	encryptedAPIKey := d.encryptSensitiveData(apiKey)
@@ -1126,16 +1126,23 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 
 	// 首先确定交易所的基本信息
 	var name, typ string
+	var exchangeID string
+
 	if id == "binance" {
+		exchangeID = userID + "_binance" // 每个用户有独立的binance配置
 		name = "Binance Futures"
 		typ = "cex"
 	} else if id == "hyperliquid" {
+		exchangeID = userID + "_hyperliquid" // 每个用户有独立的hyperliquid配置
 		name = "Hyperliquid"
 		typ = "dex"
 	} else if id == "aster" {
+		exchangeID = userID + "_aster" // 每个用户有独立的aster配置
 		name = "Aster DEX"
 		typ = "dex"
 	} else {
+		// 对于用户自定义的交易所，使用用户ID + 交易所类型作为ID
+		exchangeID = userID + "_" + id
 		name = id + " Exchange"
 		typ = "cex"
 	}
@@ -1161,14 +1168,14 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 				aster_private_key = EXCLUDED.aster_private_key,
 				custom_exchange_name = EXCLUDED.custom_exchange_name,
 				updated_at = NOW()
-		`, id, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, customExchangeName)
+		`, exchangeID, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, customExchangeName)
 	} else {
-		// SQLite 保持原有逻辑
+		// SQLite 使用 INSERT OR REPLACE 逻辑
 		result, err = d.db.Exec(`
-			UPDATE exchanges SET enabled = ?, api_key = ?, secret_key = ?, testnet = ?,
-			       hyperliquid_wallet_addr = ?, aster_user = ?, aster_signer = ?, aster_private_key = ?, custom_exchange_name = ?, updated_at = datetime('now')
-			WHERE id = ? AND user_id = ?
-		`, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, customExchangeName, id, userID)
+			INSERT OR REPLACE INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet,
+			                                     hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, custom_exchange_name, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		`, exchangeID, userID, name, typ, enabled, encryptedAPIKey, encryptedSecretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, encryptedAsterPrivateKey, customExchangeName)
 	}
 	if err != nil {
 		log.Printf("❌ UpdateExchange: 操作失败: %v", err)
@@ -1177,7 +1184,7 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 
 	// PostgreSQL 使用 UPSERT，总是成功（插入或更新）
 	if d.usePostgreSQL {
-		log.Printf("✅ UpdateExchange: UPSERT 操作成功 (ID=%s, User=%s)", id, userID)
+		log.Printf("✅ UpdateExchange: UPSERT 操作成功 (ID=%s, User=%s)", exchangeID, userID)
 		return nil
 	}
 
