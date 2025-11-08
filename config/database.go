@@ -835,29 +835,56 @@ func (d *Database) GetAllUsers() ([]string, error) {
 
 // UpdateUserOTPVerified 更新用户OTP验证状态
 func (d *Database) UpdateUserOTPVerified(userID string, verified bool) error {
-	_, err := d.db.Exec(`UPDATE users SET otp_verified = ? WHERE id = ?`, verified, userID)
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`UPDATE users SET otp_verified = $1 WHERE id = $2`, verified, userID)
+	} else {
+		_, err = d.db.Exec(`UPDATE users SET otp_verified = ? WHERE id = ?`, verified, userID)
+	}
 	return err
 }
 
 // UpdateUserPassword 更新用户密码
 func (d *Database) UpdateUserPassword(userID, passwordHash string) error {
-	_, err := d.db.Exec(`
-		UPDATE users
-		SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, passwordHash, userID)
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`
+			UPDATE users
+			SET password_hash = $1, updated_at = NOW()
+			WHERE id = $2
+		`, passwordHash, userID)
+	} else {
+		_, err = d.db.Exec(`
+			UPDATE users
+			SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, passwordHash, userID)
+	}
 	return err
 }
 
 // GetAIModels 获取用户的AI模型配置
 func (d *Database) GetAIModels(userID string) ([]*AIModelConfig, error) {
-	rows, err := d.db.Query(`
-		SELECT id, user_id, name, provider, enabled, api_key,
-		       COALESCE(custom_api_url, '') as custom_api_url,
-		       COALESCE(custom_model_name, '') as custom_model_name,
-		       created_at, updated_at
-		FROM ai_models WHERE user_id = ? ORDER BY id
-	`, userID)
+	var rows *sql.Rows
+	var err error
+
+	if d.usePostgreSQL {
+		rows, err = d.db.Query(`
+			SELECT id, user_id, name, provider, enabled, api_key,
+			       COALESCE(custom_api_url, '') as custom_api_url,
+			       COALESCE(custom_model_name, '') as custom_model_name,
+			       created_at, updated_at
+			FROM ai_models WHERE user_id = $1 ORDER BY id
+		`, userID)
+	} else {
+		rows, err = d.db.Query(`
+			SELECT id, user_id, name, provider, enabled, api_key,
+			       COALESCE(custom_api_url, '') as custom_api_url,
+			       COALESCE(custom_model_name, '') as custom_model_name,
+			       created_at, updated_at
+			FROM ai_models WHERE user_id = ? ORDER BY id
+		`, userID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -970,13 +997,13 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 // GetExchanges 获取用户的交易所配置
 func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 	rows, err := d.db.Query(`
-		SELECT id, user_id, name, type, enabled, api_key, secret_key, testnet, 
+		SELECT id, user_id, name, type, enabled, api_key, secret_key, testnet,
 		       COALESCE(hyperliquid_wallet_addr, '') as hyperliquid_wallet_addr,
 		       COALESCE(aster_user, '') as aster_user,
 		       COALESCE(aster_signer, '') as aster_signer,
 		       COALESCE(aster_private_key, '') as aster_private_key,
-		       created_at, updated_at 
-		FROM exchanges WHERE user_id = ? ORDER BY id
+		       created_at, updated_at
+		FROM exchanges WHERE user_id = $1 ORDER BY id
 	`, userID)
 	if err != nil {
 		return nil, err
@@ -1113,16 +1140,32 @@ func (d *Database) CreateTrader(trader *TraderRecord) error {
 
 // GetTraders 获取用户的交易员
 func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
-	rows, err := d.db.Query(`
-		SELECT id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running,
-		       COALESCE(btc_eth_leverage, 5) as btc_eth_leverage, COALESCE(altcoin_leverage, 5) as altcoin_leverage,
-		       COALESCE(trading_symbols, '') as trading_symbols,
-		       COALESCE(use_coin_pool, 0) as use_coin_pool, COALESCE(use_oi_top, 0) as use_oi_top,
-		       COALESCE(custom_prompt, '') as custom_prompt, COALESCE(override_base_prompt, 0) as override_base_prompt,
-		       COALESCE(system_prompt_template, 'default') as system_prompt_template,
-		       COALESCE(is_cross_margin, 1) as is_cross_margin, created_at, updated_at
-		FROM traders WHERE user_id = ? ORDER BY created_at DESC
-	`, userID)
+	var rows *sql.Rows
+	var err error
+
+	if d.usePostgreSQL {
+		rows, err = d.db.Query(`
+			SELECT id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running,
+			       COALESCE(btc_eth_leverage, 5::INTEGER) as btc_eth_leverage, COALESCE(altcoin_leverage, 5::INTEGER) as altcoin_leverage,
+			       COALESCE(trading_symbols, '') as trading_symbols,
+			       COALESCE(use_coin_pool, 0::BOOLEAN) as use_coin_pool, COALESCE(use_oi_top, 0::BOOLEAN) as use_oi_top,
+			       COALESCE(custom_prompt, '') as custom_prompt, COALESCE(override_base_prompt, 0::BOOLEAN) as override_base_prompt,
+			       COALESCE(system_prompt_template, 'default') as system_prompt_template,
+			       COALESCE(is_cross_margin, 1::BOOLEAN) as is_cross_margin, created_at, updated_at
+			FROM traders WHERE user_id = $1 ORDER BY created_at DESC
+		`, userID)
+	} else {
+		rows, err = d.db.Query(`
+			SELECT id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running,
+			       COALESCE(btc_eth_leverage, 5) as btc_eth_leverage, COALESCE(altcoin_leverage, 5) as altcoin_leverage,
+			       COALESCE(trading_symbols, '') as trading_symbols,
+			       COALESCE(use_coin_pool, 0) as use_coin_pool, COALESCE(use_oi_top, 0) as use_oi_top,
+			       COALESCE(custom_prompt, '') as custom_prompt, COALESCE(override_base_prompt, 0) as override_base_prompt,
+			       COALESCE(system_prompt_template, 'default') as system_prompt_template,
+			       COALESCE(is_cross_margin, 1) as is_cross_margin, created_at, updated_at
+			FROM traders WHERE user_id = ? ORDER BY created_at DESC
+		`, userID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1255,31 +1298,63 @@ func (d *Database) GetSystemConfig(key string) (string, error) {
 
 // SetSystemConfig 设置系统配置
 func (d *Database) SetSystemConfig(key, value string) error {
-	_, err := d.db.Exec(`
-		INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)
-	`, key, value)
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`
+			INSERT INTO system_config (key, value)
+			VALUES ($1, $2)
+			ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+		`, key, value)
+	} else {
+		_, err = d.db.Exec(`
+			INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)
+		`, key, value)
+	}
 	return err
 }
 
 // CreateUserSignalSource 创建用户信号源配置
 func (d *Database) CreateUserSignalSource(userID, coinPoolURL, oiTopURL string) error {
-	_, err := d.db.Exec(`
-		INSERT OR REPLACE INTO user_signal_sources (user_id, coin_pool_url, oi_top_url, updated_at)
-		VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-	`, userID, coinPoolURL, oiTopURL)
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`
+			INSERT INTO user_signal_sources (user_id, coin_pool_url, oi_top_url, updated_at)
+			VALUES ($1, $2, $3, NOW())
+			ON CONFLICT (user_id) DO UPDATE SET
+				coin_pool_url = EXCLUDED.coin_pool_url,
+				oi_top_url = EXCLUDED.oi_top_url,
+				updated_at = NOW()
+		`, userID, coinPoolURL, oiTopURL)
+	} else {
+		_, err = d.db.Exec(`
+			INSERT OR REPLACE INTO user_signal_sources (user_id, coin_pool_url, oi_top_url, updated_at)
+			VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+		`, userID, coinPoolURL, oiTopURL)
+	}
 	return err
 }
 
 // GetUserSignalSource 获取用户信号源配置
 func (d *Database) GetUserSignalSource(userID string) (*UserSignalSource, error) {
 	var source UserSignalSource
-	err := d.db.QueryRow(`
-		SELECT id, user_id, coin_pool_url, oi_top_url, created_at, updated_at
-		FROM user_signal_sources WHERE user_id = ?
-	`, userID).Scan(
-		&source.ID, &source.UserID, &source.CoinPoolURL, &source.OITopURL,
-		&source.CreatedAt, &source.UpdatedAt,
-	)
+	var err error
+	if d.usePostgreSQL {
+		err = d.db.QueryRow(`
+			SELECT id, user_id, coin_pool_url, oi_top_url, created_at, updated_at
+			FROM user_signal_sources WHERE user_id = $1
+		`, userID).Scan(
+			&source.ID, &source.UserID, &source.CoinPoolURL, &source.OITopURL,
+			&source.CreatedAt, &source.UpdatedAt,
+		)
+	} else {
+		err = d.db.QueryRow(`
+			SELECT id, user_id, coin_pool_url, oi_top_url, created_at, updated_at
+			FROM user_signal_sources WHERE user_id = ?
+		`, userID).Scan(
+			&source.ID, &source.UserID, &source.CoinPoolURL, &source.OITopURL,
+			&source.CreatedAt, &source.UpdatedAt,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1288,10 +1363,18 @@ func (d *Database) GetUserSignalSource(userID string) (*UserSignalSource, error)
 
 // UpdateUserSignalSource 更新用户信号源配置
 func (d *Database) UpdateUserSignalSource(userID, coinPoolURL, oiTopURL string) error {
-	_, err := d.db.Exec(`
-		UPDATE user_signal_sources SET coin_pool_url = ?, oi_top_url = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE user_id = ?
-	`, coinPoolURL, oiTopURL, userID)
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`
+			UPDATE user_signal_sources SET coin_pool_url = $1, oi_top_url = $2, updated_at = NOW()
+			WHERE user_id = $3
+		`, coinPoolURL, oiTopURL, userID)
+	} else {
+		_, err = d.db.Exec(`
+			UPDATE user_signal_sources SET coin_pool_url = ?, oi_top_url = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE user_id = ?
+		`, coinPoolURL, oiTopURL, userID)
+	}
 	return err
 }
 
