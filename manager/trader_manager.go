@@ -708,6 +708,13 @@ func containsUserPrefix(traderID string) bool {
 	return false
 }
 
+// LoadAllTraders 为所有用户加载交易员到内存（公共接口使用）
+func (tm *TraderManager) LoadAllTraders(database *config.Database) error {
+	// 复用现有的 LoadTradersFromDatabase 方法，它已经加载了所有用户的交易员
+	log.Printf("📋 公共接口：加载所有用户的交易员")
+	return tm.LoadTradersFromDatabase(database)
+}
+
 // LoadUserTraders 为特定用户加载交易员到内存
 func (tm *TraderManager) LoadUserTraders(database *config.Database, userID string) error {
 	tm.mu.Lock()

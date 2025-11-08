@@ -334,10 +334,20 @@ func (s *Server) getTraderFromQuery(c *gin.Context) (*manager.TraderManager, str
 	userID := c.GetString("user_id")
 	traderID := c.Query("trader_id")
 
-	// 确保用户的交易员已加载到内存中
-	err := s.traderManager.LoadUserTraders(s.database, userID)
-	if err != nil {
-		log.Printf("⚠️ 加载用户 %s 的交易员失败: %v", userID, err)
+	// 确保交易员已加载到内存中
+	if userID == "" {
+		// 公共接口：加载所有用户的交易员
+		log.Printf("📋 公共接口：加载所有用户的交易员")
+		err := s.traderManager.LoadAllTraders(s.database)
+		if err != nil {
+			log.Printf("⚠️ 加载所有用户交易员失败: %v", err)
+		}
+	} else {
+		// 认证用户：加载特定用户的交易员
+		err := s.traderManager.LoadUserTraders(s.database, userID)
+		if err != nil {
+			log.Printf("⚠️ 加载用户 %s 的交易员失败: %v", userID, err)
+		}
 	}
 
 	if traderID == "" {
