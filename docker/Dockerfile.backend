@@ -46,6 +46,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
+COPY config.json* ./
 COPY . .
 RUN CGO_ENABLED=1 GOOS=linux \
     CGO_CFLAGS="-D_LARGEFILE64_SOURCE" \
@@ -61,6 +62,7 @@ RUN apk update && apk add --no-cache ca-certificates tzdata
 COPY --from=ta-lib-builder /usr/local /usr/local
 WORKDIR /app
 COPY --from=backend-builder /app/nofx .
+COPY config.json* ./
 
 EXPOSE 8080
 
