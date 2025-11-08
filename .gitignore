@@ -8,6 +8,7 @@
 
 # 编译产物
 nofx-auto
+nofx-local
 *.exe
 nofx
 nofx_test
