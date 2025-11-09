@@ -340,8 +340,37 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// TODO: 启动数据库中配置为运行状态的交易员
-	// traderManager.StartAll()
+	// 智能恢复：启动数据库中配置为运行状态的交易员
+	log.Println("🔄 检查并恢复运行中的交易员...")
+	runningTraders, err := database.GetRunningTraders()
+	if err != nil {
+		log.Printf("⚠️  获取运行中交易员失败: %v", err)
+	} else {
+		if len(runningTraders) > 0 {
+			log.Printf("📋 发现 %d 个运行中的交易员，开始恢复...", len(runningTraders))
+
+			for _, traderRecord := range runningTraders {
+				// 检查交易员是否已经在内存中
+				if trader, err := traderManager.GetTrader(traderRecord.ID); err == nil {
+					status := trader.GetStatus()
+					if isRunning, ok := status["is_running"].(bool); ok && !isRunning {
+						log.Printf("▶️  恢复交易员: %s (%s)", traderRecord.Name, traderRecord.ID)
+						go func() {
+							if err := trader.Run(); err != nil {
+								log.Printf("❌ 交易员 %s 恢复失败: %v", trader.GetName(), err)
+							}
+						}()
+					}
+				} else {
+					log.Printf("⚠️  交易员 %s (%s) 未在内存中，跳过恢复", traderRecord.Name, traderRecord.ID)
+				}
+			}
+
+			log.Printf("✅ 交易员恢复完成，共恢复 %d 个交易员", len(runningTraders))
+		} else {
+			log.Println("💡 没有发现运行中的交易员")
+		}
+	}
 
 	// 等待退出信号
 	<-sigChan

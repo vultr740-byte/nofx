@@ -1306,6 +1306,66 @@ func (d *Database) UpdateTraderStatus(userID, id string, isRunning bool) error {
 	return err
 }
 
+// GetRunningTraders 获取所有运行中的交易员
+func (d *Database) GetRunningTraders() ([]TraderRecord, error) {
+	var rows *sql.Rows
+	var err error
+
+	if d.usePostgreSQL {
+		rows, err = d.db.Query(`
+			SELECT id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running,
+			       btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top,
+			       custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin
+			FROM traders
+			WHERE is_running = true
+		`)
+	} else {
+		rows, err = d.db.Query(`
+			SELECT id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running,
+			       btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top,
+			       custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin
+			FROM traders
+			WHERE is_running = 1
+		`)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("查询运行中交易员失败: %w", err)
+	}
+	defer rows.Close()
+
+	var traders []TraderRecord
+	for rows.Next() {
+		var trader TraderRecord
+		var tradingSymbols, customPrompt, systemPromptTemplate sql.NullString
+
+		err := rows.Scan(
+			&trader.ID, &trader.UserID, &trader.Name, &trader.AIModelID, &trader.ExchangeID,
+			&trader.InitialBalance, &trader.ScanIntervalMinutes, &trader.IsRunning,
+			&trader.BTCETHLeverage, &trader.AltcoinLeverage, &tradingSymbols,
+			&trader.UseCoinPool, &trader.UseOITop, &customPrompt,
+			&trader.OverrideBasePrompt, &systemPromptTemplate, &trader.IsCrossMargin,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("扫描交易员数据失败: %w", err)
+		}
+
+		if tradingSymbols.Valid {
+			trader.TradingSymbols = tradingSymbols.String
+		}
+		if customPrompt.Valid {
+			trader.CustomPrompt = customPrompt.String
+		}
+		if systemPromptTemplate.Valid {
+			trader.SystemPromptTemplate = systemPromptTemplate.String
+		}
+
+		traders = append(traders, trader)
+	}
+
+	return traders, nil
+}
+
 // UpdateTrader 更新交易员配置
 func (d *Database) UpdateTrader(trader *TraderRecord) error {
 	var err error
