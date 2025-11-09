@@ -63,18 +63,18 @@ export default function HeaderBar({
             href="/"
             className="flex items-center gap-3 hover:opacity-80 transition-opacity cursor-pointer"
           >
-            <img src="/icons/nofx.svg" alt="NOFX Logo" className="w-8 h-8" />
+            <img src="/icons/agent.svg" alt="Agent Logo" className="w-8 h-8" />
             <span
               className="text-xl font-bold"
               style={{ color: 'var(--brand-yellow)' }}
             >
-              NOFX
+              Agent
             </span>
             <span
               className="text-sm hidden sm:block"
               style={{ color: 'var(--text-secondary)' }}
             >
-              Agentic Trading OS
+              Agent Trading OS
             </span>
           </a>
 

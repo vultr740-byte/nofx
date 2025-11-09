@@ -295,7 +295,7 @@ export function EquityChart({ traderId }: EquityChartProps) {
           position: 'relative',
         }}
       >
-        {/* NOFX Watermark */}
+        {/* Agent Watermark */}
         <div
           style={{
             position: 'absolute',
@@ -309,7 +309,7 @@ export function EquityChart({ traderId }: EquityChartProps) {
             fontFamily: 'monospace',
           }}
         >
-          NOFX
+          Agent
         </div>
         <ResponsiveContainer width="100%" height={280}>
           <LineChart

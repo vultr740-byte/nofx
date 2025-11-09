@@ -97,7 +97,7 @@ export function LoginPage() {
               className="text-2xl font-bold"
               style={{ color: 'var(--brand-light-gray)' }}
             >
-              登录 NOFX
+              登录 Agent
             </h1>
             <p
               className="text-sm mt-2"

@@ -1,0 +1,42 @@
+<svg width="32" height="32" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F0B90B;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#E1A706;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- 头部 -->
+  <circle cx="50" cy="32" r="18" fill="url(#grad1)"/>
+
+  <!-- 眼睛 -->
+  <circle cx="43" cy="30" r="3" fill="#fff"/>
+  <circle cx="57" cy="30" r="3" fill="#fff"/>
+  <circle cx="43" cy="30" r="1.5" fill="#000"/>
+  <circle cx="57" cy="30" r="1.5" fill="#000"/>
+
+  <!-- 嘴巴 -->
+  <path d="M 43 37 Q 50 41 57 37" stroke="#fff" stroke-width="2" stroke-linecap="round" fill="none"/>
+
+  <!-- 身体 -->
+  <rect x="30" y="50" width="40" height="28" rx="3" fill="url(#grad1)"/>
+
+  <!-- 身体细节 -->
+  <rect x="35" y="55" width="30" height="15" rx="2" fill="#1E2329" opacity="0.3"/>
+
+  <!-- 左臂 -->
+  <rect x="18" y="52" width="10" height="18" rx="2" fill="url(#grad1)"/>
+
+  <!-- 右臂 -->
+  <rect x="72" y="52" width="10" height="18" rx="2" fill="url(#grad1)"/>
+
+  <!-- 腿部 -->
+  <rect x="37" y="78" width="6" height="10" rx="2" fill="url(#grad1)"/>
+  <rect x="57" y="78" width="6" height="10" rx="2" fill="url(#grad1)"/>
+
+  <!-- 左脚 -->
+  <ellipse cx="40" cy="92" rx="6" ry="4" fill="url(#grad1)"/>
+
+  <!-- 右脚 -->
+  <ellipse cx="60" cy="92" rx="6" ry="4" fill="url(#grad1)"/>
+</svg>

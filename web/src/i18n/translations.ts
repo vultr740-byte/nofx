@@ -3,7 +3,7 @@ export type Language = 'en' | 'zh'
 export const translations = {
   en: {
     // Header
-    appTitle: 'NOFX',
+    appTitle: 'Agent',
     subtitle: 'Multi-AI Model Trading Platform',
     aiTraders: 'AI Traders',
     details: 'Details',
@@ -23,7 +23,7 @@ export const translations = {
     faqNav: 'FAQ',
 
     // Footer
-    footerTitle: 'NOFX - AI Trading System',
+    footerTitle: 'Agent - AI Trading System',
     footerWarning: '⚠️ Trading involves risk. Use at your own discretion.',
 
     // Stats Cards
@@ -447,20 +447,20 @@ export const translations = {
     heroTitle1: 'Read the Market.',
     heroTitle2: 'Write the Trade.',
     heroDescription:
-      'NOFX is the future standard for AI trading — an open, community-driven agentic trading OS. Supporting Binance, Aster DEX and other exchanges, self-hosted, multi-agent competition, let AI automatically make decisions, execute and optimize trades for you.',
+      'Agent is the future standard for AI trading — an open, community-driven agentic trading OS. Supporting Binance, Aster DEX and other exchanges, self-hosted, multi-agent competition, let AI automatically make decisions, execute and optimize trades for you.',
     poweredBy:
       'Powered by Aster DEX and Binance, strategically invested by Amber.ac.',
 
     // Landing Page CTA
     readyToDefine: 'Ready to define the future of AI trading?',
     startWithCrypto:
-      'Starting with crypto markets, expanding to TradFi. NOFX is the infrastructure of AgentFi.',
+      'Starting with crypto markets, expanding to TradFi. Agent is the infrastructure of AgentFi.',
     getStartedNow: 'Get Started Now',
     viewSourceCode: 'View Source Code',
 
     // Features Section
     coreFeatures: 'Core Features',
-    whyChooseNofx: 'Why Choose NOFX?',
+    whyChooseNofx: 'Why Choose Agent?',
     openCommunityDriven:
       'Open source, transparent, community-driven AI trading OS',
     openSourceSelfHosted: '100% Open Source & Self-Hosted',
@@ -486,10 +486,10 @@ export const translations = {
     secureFeatures4: 'Trading log auditing',
 
     // About Section
-    aboutNofx: 'About NOFX',
-    whatIsNofx: 'What is NOFX?',
+    aboutNofx: 'About Agent',
+    whatIsNofx: 'What is Agent?',
     nofxNotAnotherBot:
-      "NOFX is not another trading bot, but the 'Linux' of AI trading —",
+      "Agent is not another trading bot, but the 'Linux' of AI trading —",
     nofxDescription1:
       'a transparent, trustworthy open source OS that provides a unified',
     nofxDescription2:
@@ -507,7 +507,7 @@ export const translations = {
     startupMessages3: 'Web console http://localhost:3000',
 
     // How It Works Section
-    howToStart: 'How to Get Started with NOFX',
+    howToStart: 'How to Get Started with Agent',
     fourSimpleSteps:
       'Four simple steps to start your AI automated trading journey',
     step1Title: 'Clone GitHub Repository',
@@ -524,7 +524,7 @@ export const translations = {
       'Monitor trading, submit PRs to improve framework. Join Telegram to share strategies.',
     importantRiskWarning: 'Important Risk Warning',
     riskWarningText:
-      'Dev branch is unstable, do not use funds you cannot afford to lose. NOFX is non-custodial, no official strategies. Trading involves risks, invest carefully.',
+      'Dev branch is unstable, do not use funds you cannot afford to lose. Agent is non-custodial, no official strategies. Trading involves risks, invest carefully.',
 
     // Community Section (testimonials are kept as-is since they are quotes)
 
@@ -537,7 +537,7 @@ export const translations = {
     strategicInvestment: '(Strategic Investment)',
 
     // Login Modal
-    accessNofxPlatform: 'Access NOFX Platform',
+    accessNofxPlatform: 'Access Agent Platform',
     loginRegisterPrompt:
       'Please login or register to access the full AI trading platform',
     registerNewAccount: 'Register New Account',
@@ -563,7 +563,7 @@ export const translations = {
 
     // FAQ Page
     faqTitle: 'Frequently Asked Questions',
-    faqSubtitle: 'Find answers to common questions about NOFX',
+    faqSubtitle: 'Find answers to common questions about Agent',
     faqStillHaveQuestions: 'Still Have Questions?',
     faqContactUs: 'Join our community or check our GitHub for more help',
 
@@ -577,21 +577,21 @@ export const translations = {
     faqCategoryData: 'Data & Privacy',
 
     // FAQ Questions & Answers - General
-    faqWhatIsNOFX: 'What is NOFX?',
+    faqWhatIsNOFX: 'What is Agent?',
     faqWhatIsNOFXAnswer:
-      'NOFX is an AI-powered cryptocurrency trading bot that uses large language models (LLMs) to make trading decisions on futures markets.',
+      'Agent is an AI-powered cryptocurrency trading bot that uses large language models (LLMs) to make trading decisions on futures markets.',
 
     faqSupportedExchanges: 'Which exchanges are supported?',
     faqSupportedExchangesAnswer:
       'Binance Futures, Hyperliquid, and Aster DEX are supported. More exchanges coming soon.',
 
-    faqIsProfitable: 'Is NOFX profitable?',
+    faqIsProfitable: 'Is Agent profitable?',
     faqIsProfitableAnswer:
       'AI trading is experimental and not guaranteed to be profitable. Always start with small amounts and never invest more than you can afford to lose.',
 
     faqMultipleTraders: 'Can I run multiple traders simultaneously?',
     faqMultipleTradersAnswer:
-      'Yes! NOFX supports running multiple traders with different configurations, AI models, and trading strategies.',
+      'Yes! Agent supports running multiple traders with different configurations, AI models, and trading strategies.',
 
     // Contributing & Community
     faqGithubProjectsTasks: 'How to use GitHub Projects and pick up tasks?',
@@ -609,7 +609,7 @@ export const translations = {
 
     faqNeedCoding: 'Do I need coding experience?',
     faqNeedCodingAnswer:
-      'No! NOFX has a web UI for all configuration. However, basic command line knowledge helps with setup and troubleshooting.',
+      'No! Agent has a web UI for all configuration. However, basic command line knowledge helps with setup and troubleshooting.',
 
     faqGetApiKeys: 'How do I get API keys?',
     faqGetApiKeysAnswer:
@@ -762,7 +762,7 @@ export const translations = {
   },
   zh: {
     // Header
-    appTitle: 'NOFX',
+    appTitle: 'Agent',
     subtitle: '多AI模型交易平台',
     aiTraders: 'AI交易员',
     details: '详情',
