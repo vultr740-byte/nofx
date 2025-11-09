@@ -12,6 +12,16 @@ import type {
   UpdateExchangeConfigRequest,
   CompetitionData,
 } from '../types'
+
+// Temporary inline type definition to resolve compilation issue
+interface CreateModelConfigRequest {
+  model_name: string
+  provider_name: string
+  api_key: string
+  custom_api_url?: string
+  custom_model_name?: string
+  enabled: boolean
+}
 import { CryptoService } from './crypto'
 
 // 导出 API_BASE，让其他文件也能使用
@@ -129,6 +139,37 @@ export const api = {
     const res = await fetch(`${API_BASE}/supported-models`)
     if (!res.ok) throw new Error('获取支持的模型失败')
     return res.json()
+  },
+
+  async createModelConfig(request: CreateModelConfigRequest): Promise<void> {
+    // 获取RSA公钥
+    const publicKey = await CryptoService.fetchPublicKey()
+
+    // 初始化加密服务
+    await CryptoService.initialize(publicKey)
+
+    // 获取用户信息（从localStorage或其他地方）
+    const userId = localStorage.getItem('user_id') || ''
+    const sessionId = sessionStorage.getItem('session_id') || ''
+
+    // 加密敏感数据
+    const encryptedPayload = await CryptoService.encryptSensitiveData(
+      JSON.stringify(request),
+      userId,
+      sessionId
+    )
+
+    // 发送加密的请求
+    const res = await fetch('/api/models', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${localStorage.getItem('token')}`,
+      },
+      body: JSON.stringify(encryptedPayload),
+    })
+
+    if (!res.ok) throw new Error('创建模型配置失败')
   },
 
   async updateModelConfigs(request: UpdateModelConfigRequest): Promise<void> {

@@ -7,6 +7,16 @@ import type {
   AIModel,
   Exchange,
 } from '../types'
+
+// Temporary inline type definition to resolve compilation issue
+interface CreateModelConfigRequest {
+  model_name: string
+  provider_name: string
+  api_key: string
+  custom_api_url?: string
+  custom_model_name?: string
+  enabled: boolean
+}
 import { useLanguage } from '../contexts/LanguageContext'
 import { t, type Language } from '../i18n/translations'
 import { useAuth } from '../contexts/AuthContext'
@@ -476,7 +486,8 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     modelId: string,
     apiKey: string,
     customApiUrl?: string,
-    customModelName?: string
+    customModelName?: string,
+    isEdit: boolean = false
   ) => {
     try {
       // 创建或更新用户的模型配置
@@ -531,7 +542,22 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
         ),
       }
 
-      await api.updateModelConfigs(request)
+      // 根据是否为编辑模式选择调用不同的API
+      if (isEdit) {
+        // 编辑模式：调用PUT /models更新现有配置
+        await api.updateModelConfigs(request)
+      } else {
+        // 新建模式：调用POST /models创建新配置
+        const createRequest: CreateModelConfigRequest = {
+          model_name: modelToUpdate.name,
+          provider_name: modelToUpdate.provider,
+          api_key: apiKey,
+          custom_api_url: customApiUrl || '',
+          custom_model_name: customModelName || '',
+          enabled: true,
+        }
+        await api.createModelConfig(createRequest)
+      }
 
       // 重新获取用户配置以确保数据同步
       const refreshedModels = await api.getModelConfigs()
@@ -1227,7 +1253,9 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
           allModels={supportedModels}
           configuredModels={allModels}
           editingModelId={editingModel}
-          onSave={handleSaveModelConfig}
+          onSave={(modelId, apiKey, customApiUrl, customModelName) =>
+            handleSaveModelConfig(modelId, apiKey, customApiUrl, customModelName, !!editingModel)
+          }
           onDelete={handleDeleteModelConfig}
           onClose={() => {
             setShowModelModal(false)

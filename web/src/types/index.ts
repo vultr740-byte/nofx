@@ -91,3 +91,34 @@ export interface Statistics {
   total_open_positions: number
   total_close_positions: number
 }
+
+// AI模型相关类型
+export interface AIModel {
+  id: string
+  name: string
+  provider: string
+  enabled: boolean
+  customApiUrl?: string
+  customModelName?: string
+  apiKey?: string // 仅前端使用，不传输到后端
+}
+
+export interface CreateModelConfigRequest {
+  model_name: string
+  provider_name: string
+  api_key: string
+  custom_api_url?: string
+  custom_model_name?: string
+  enabled: boolean
+}
+
+export interface UpdateModelConfigRequest {
+  models: {
+    [key: string]: {
+      enabled: boolean
+      api_key: string
+      custom_api_url: string
+      custom_model_name: string
+    }
+  }
+}
