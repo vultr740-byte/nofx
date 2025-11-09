@@ -322,7 +322,7 @@ export function TraderConfigModal({
                   >
                     {availableModels.map((model) => (
                       <option key={model.id} value={model.id}>
-                        {getShortName(model.name || model.id).toUpperCase()}
+                        {(model.customModelName || getShortName(model.name || model.id)).toUpperCase()}
                       </option>
                     ))}
                   </select>
@@ -340,9 +340,7 @@ export function TraderConfigModal({
                   >
                     {availableExchanges.map((exchange) => (
                       <option key={exchange.id} value={exchange.id}>
-                        {getShortName(
-                          exchange.name || exchange.id
-                        ).toUpperCase()}
+                        {(exchange.customName || getShortName(exchange.name || exchange.id)).toUpperCase()}
                       </option>
                     ))}
                   </select>
