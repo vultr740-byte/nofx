@@ -1613,28 +1613,6 @@ function ModelConfigModal({
                 </div>
               )}
 
-              {/* 编辑模式下的API Key提示 */}
-              {editingModelId && (
-                <div>
-                  <label
-                    className="block text-sm font-semibold mb-2"
-                    style={{ color: '#EAECEF' }}
-                  >
-                    API Key
-                  </label>
-                  <div
-                    className="w-full px-3 py-2 rounded text-sm"
-                    style={{
-                      background: '#1a1d21',
-                      border: '1px solid #2B3139',
-                      color: '#848E9C',
-                    }}
-                  >
-                    🔒 出于安全考虑，编辑模式下不允许修改API Key
-                  </div>
-                </div>
-              )}
-
               <div>
                 <label
                   className="block text-sm font-semibold mb-2"
@@ -1716,7 +1694,7 @@ function ModelConfigModal({
             </button>
             <button
               type="submit"
-              disabled={!selectedModel || !apiKey.trim()}
+              disabled={!selectedModel || (!editingModelId && !apiKey.trim())}
               className="flex-1 px-4 py-2 rounded text-sm font-semibold disabled:opacity-50"
               style={{ background: '#F0B90B', color: '#000' }}
             >
