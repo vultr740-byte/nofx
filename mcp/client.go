@@ -68,8 +68,27 @@ func (client *Client) SetDeepSeekAPIKey(apiKey string, customURL string, customM
 		log.Printf("🔧 [MCP] DeepSeek 使用默认 BaseURL: %s", client.BaseURL)
 	}
 	if customModel != "" {
-		client.Model = customModel
-		log.Printf("🔧 [MCP] DeepSeek 使用自定义 Model: %s", customModel)
+		// 自动修正常见的模型名称错误
+		normalizedModel := customModel
+		switch strings.ToLower(customModel) {
+		case "deepseek":
+			normalizedModel = "deepseek-chat"
+			log.Printf("🔧 [MCP] DeepSeek 自动修正模型名: %s -> %s", customModel, normalizedModel)
+		case "deepseek-coder", "deepseek-chat":
+			// 这些是正确的DeepSeek模型名称，无需修正
+			log.Printf("✅ [MCP] DeepSeek 使用正确的模型名: %s", customModel)
+		default:
+			if !strings.Contains(strings.ToLower(customModel), "deepseek") {
+				log.Printf("⚠️ [MCP] DeepSeek 未知的模型名: %s，尝试使用默认模型", customModel)
+				normalizedModel = "deepseek-chat"
+			} else {
+				// 包含"deepseek"但不是标准名称，也进行修正
+				log.Printf("🔧 [MCP] DeepSeek 非标准模型名: %s，修正为 deepseek-chat", customModel)
+				normalizedModel = "deepseek-chat"
+			}
+		}
+		client.Model = normalizedModel
+		log.Printf("🔧 [MCP] DeepSeek 使用自定义 Model: %s", normalizedModel)
 	} else {
 		client.Model = "deepseek-chat"
 		log.Printf("🔧 [MCP] DeepSeek 使用默认 Model: %s", client.Model)
