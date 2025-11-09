@@ -64,6 +64,29 @@ function getModelDisplayName(model: any): string {
   return getFriendlyModelName(model.name)
 }
 
+// 获取交易员显示名称，避免显示过长的UUID
+function getTraderDisplayName(trader: any): string {
+  if (!trader.trader_name || trader.trader_name.trim() === '') {
+    // 如果没有名称，生成一个友好的默认名称
+    return `Trader ${trader.trader_id?.substring(0, 8)}`
+  }
+
+  const name = trader.trader_name.trim()
+
+  // 如果名称看起来像UUID（太长，包含连字符），则截取前几位
+  if (name.length > 20 && name.includes('-')) {
+    return name.split('-')[0] || `Trader ${name.substring(0, 8)}`
+  }
+
+  // 如果名称太长但没有连字符，截取前15个字符
+  if (name.length > 20) {
+    return name.substring(0, 15) + '...'
+  }
+
+  return name
+}
+
+
 // 提取下划线后面的名称部分，处理复合ID
 function getShortName(fullName: string): string {
   const parts = fullName.split('_')
@@ -75,8 +98,21 @@ function getShortName(fullName: string): string {
   return fullName
 }
 
-// 获取交易所显示名称，优先使用自定义名称
-function getExchangeDisplayName(exchange: any): string {
+// 获取交易所显示名称
+function getExchangeDisplayName(exchange: any, exchanges: any[] = []): string {
+  if (!exchange) {
+    return 'Unknown Exchange'
+  }
+
+  // 如果第一个参数是字符串（ID），则查找交易所对象
+  if (typeof exchange === 'string') {
+    const foundExchange = exchanges.find(e => e.id === exchange)
+    if (!foundExchange) {
+      return 'Unknown Exchange'
+    }
+    exchange = foundExchange
+  }
+
   // 如果有自定义名称且不为空，使用自定义名称
   if (exchange.customName && exchange.customName.trim() !== '') {
     return exchange.customName.trim()
@@ -96,7 +132,7 @@ function getExchangeDisplayName(exchange: any): string {
     }
   }
   // 降级到使用 name 字段
-  return exchange.name
+  return exchange.name || 'Unknown Exchange'
 }
 
 // 获取交易所类型（用于后端 API）
@@ -1009,7 +1045,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                       className="font-bold text-base md:text-lg truncate"
                       style={{ color: '#EAECEF' }}
                     >
-                      {trader.trader_name}
+                      {getTraderDisplayName(trader)}
                     </div>
                     <div
                       className="text-xs md:text-sm truncate"
@@ -1022,7 +1058,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                       {getFriendlyModelName(
                         trader.ai_model.split('_').pop() || trader.ai_model
                       )}{' '}
-                      Model • {trader.exchange_id?.toUpperCase()}
+                      Model • {getExchangeDisplayName(trader.exchange_id || '', allExchanges || [])}
                     </div>
                   </div>
                 </div>
