@@ -745,10 +745,40 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 		return
 	}
 
-	// 重新加载交易员到内存
-	err = s.traderManager.LoadUserTraders(s.database, userID)
-	if err != nil {
-		log.Printf("⚠️ 重新加载用户交易员到内存失败: %v", err)
+	// 检查交易员是否正在运行
+	autoTrader, err := s.traderManager.GetTrader(traderID)
+	if err == nil {
+		status := autoTrader.GetStatus()
+		if isRunning, ok := status["is_running"].(bool); ok && isRunning {
+			// 交易员正在运行，需要重启以应用新配置
+			log.Printf("🔄 交易员 %s 正在运行，重启以应用新配置", req.Name)
+
+			// 停止交易员
+			autoTrader.Stop()
+
+			// 等待一秒确保完全停止
+			time.Sleep(1 * time.Second)
+
+			// 重新加载并启动交易员
+			err = s.traderManager.LoadUserTraders(s.database, userID)
+			if err != nil {
+				log.Printf("⚠️ 重新加载用户交易员到内存失败: %v", err)
+			} else {
+				log.Printf("✅ 交易员 %s 已重新启动，新配置生效", req.Name)
+			}
+		} else {
+			// 交易员未运行，只需要重新加载配置
+			err = s.traderManager.LoadUserTraders(s.database, userID)
+			if err != nil {
+				log.Printf("⚠️ 重新加载用户交易员到内存失败: %v", err)
+			}
+		}
+	} else {
+		// 交易员不在内存中，重新加载
+		err = s.traderManager.LoadUserTraders(s.database, userID)
+		if err != nil {
+			log.Printf("⚠️ 重新加载用户交易员到内存失败: %v", err)
+		}
 	}
 
 	log.Printf("✓ 更新交易员成功: %s (模型: %s, 交易所: %s)", req.Name, req.AIModelID, req.ExchangeID)

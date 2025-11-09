@@ -785,9 +785,9 @@ func (tm *TraderManager) LoadUserTraders(database *config.Database, userID strin
 
 	// 为每个交易员加载配置
 	for _, traderCfg := range traders {
-		// 检查是否已经加载过这个交易员
+		// 检查是否已经加载过这个交易员（跳过已存在的，因为handleUpdateTrader会处理重启）
 		if _, exists := tm.traders[traderCfg.ID]; exists {
-			log.Printf("⚠️ 交易员 %s 已经加载，跳过", traderCfg.Name)
+			log.Printf("⚠️ 交易员 %s 已经在内存中，跳过加载（编辑时会自动重启）", traderCfg.Name)
 			continue
 		}
 
