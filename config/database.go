@@ -1495,6 +1495,58 @@ func (d *Database) DeleteTrader(userID, id string) error {
 	return err
 }
 
+// DeleteAIModel 删除用户的AI模型配置
+func (d *Database) DeleteAIModel(userID, id string) error {
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`DELETE FROM ai_models WHERE id = $1 AND user_id = $2`, id, userID)
+	} else {
+		_, err = d.db.Exec(`DELETE FROM ai_models WHERE id = ? AND user_id = ?`, id, userID)
+	}
+	return err
+}
+
+// IsModelUsedByTrader 检查AI模型是否被交易员使用
+func (d *Database) IsModelUsedByTrader(userID, modelID string) (bool, error) {
+	var count int
+	var err error
+	if d.usePostgreSQL {
+		err = d.db.QueryRow(`SELECT COUNT(*) FROM traders WHERE user_id = $1 AND ai_model = $2`, userID, modelID).Scan(&count)
+	} else {
+		err = d.db.QueryRow(`SELECT COUNT(*) FROM traders WHERE user_id = ? AND ai_model = ?`, userID, modelID).Scan(&count)
+	}
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// DeleteExchange 删除用户的交易所配置
+func (d *Database) DeleteExchange(userID, id string) error {
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`DELETE FROM exchanges WHERE id = $1 AND user_id = $2`, id, userID)
+	} else {
+		_, err = d.db.Exec(`DELETE FROM exchanges WHERE id = ? AND user_id = ?`, id, userID)
+	}
+	return err
+}
+
+// IsExchangeUsedByTrader 检查交易所是否被交易员使用
+func (d *Database) IsExchangeUsedByTrader(userID, exchangeID string) (bool, error) {
+	var count int
+	var err error
+	if d.usePostgreSQL {
+		err = d.db.QueryRow(`SELECT COUNT(*) FROM traders WHERE user_id = $1 AND exchange_id = $2`, userID, exchangeID).Scan(&count)
+	} else {
+		err = d.db.QueryRow(`SELECT COUNT(*) FROM traders WHERE user_id = ? AND exchange_id = ?`, userID, exchangeID).Scan(&count)
+	}
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // GetTraderConfig 获取交易员完整配置（包含AI模型和交易所信息）
 func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIModelConfig, *ExchangeConfig, error) {
 	var trader TraderRecord

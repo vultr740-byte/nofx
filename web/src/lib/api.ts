@@ -172,6 +172,30 @@ export const api = {
     if (!res.ok) throw new Error('创建模型配置失败')
   },
 
+  async deleteModelConfig(modelId: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/models/${modelId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+
+    if (!res.ok) {
+      const error = await res.json()
+      throw new Error(error.error || '删除模型配置失败')
+    }
+  },
+
+  async deleteExchangeConfig(exchangeId: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/exchanges/${exchangeId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+
+    if (!res.ok) {
+      const error = await res.json()
+      throw new Error(error.error || '删除交易所配置失败')
+    }
+  },
+
   async updateModelConfigs(request: UpdateModelConfigRequest): Promise<void> {
     // 获取RSA公钥
     const publicKey = await CryptoService.fetchPublicKey()

@@ -40,8 +40,8 @@ import {
   HelpCircle,
 } from 'lucide-react'
 
-// 获取友好的AI模型名称
-function getModelDisplayName(modelId: string): string {
+// 获取友好的AI模型名称（根据ID）
+function getFriendlyModelName(modelId: string): string {
   switch (modelId.toLowerCase()) {
     case 'deepseek':
       return 'DeepSeek'
@@ -52,6 +52,16 @@ function getModelDisplayName(modelId: string): string {
     default:
       return modelId.toUpperCase()
   }
+}
+
+// 获取AI模型显示名称，优先使用自定义名称
+function getModelDisplayName(model: any): string {
+  // 优先使用自定义模型名称
+  if (model.customModelName && model.customModelName.trim() !== '') {
+    return model.customModelName.trim()
+  }
+  // 其次使用友好名称映射
+  return getFriendlyModelName(model.name)
 }
 
 // 提取下划线后面的名称部分，处理复合ID
@@ -384,29 +394,13 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
-  // 通用删除配置处理函数
-  const handleDeleteConfig = async <T extends { id: string }>(config: {
-    id: string
-    type: 'model' | 'exchange'
-    checkInUse: (id: string) => boolean
-    getUsingTraders: (id: string) => any[]
-    cannotDeleteKey: string
-    confirmDeleteKey: string
-    allItems: T[] | undefined
-    clearFields: (item: T) => T
-    buildRequest: (items: T[]) => any
-    updateApi: (request: any) => Promise<void>
-    refreshApi: () => Promise<T[]>
-    setItems: (items: T[]) => void
-    closeModal: () => void
-    errorKey: string
-  }) => {
-    // 检查是否有交易员正在使用
-    if (config.checkInUse(config.id)) {
-      const usingTraders = config.getUsingTraders(config.id)
+  const handleDeleteModelConfig = async (modelId: string) => {
+    // 检查是否有交易员正在使用该模型
+    if (isModelUsedByAnyTrader(modelId)) {
+      const usingTraders = getTradersUsingModel(modelId)
       const traderNames = usingTraders.map((t) => t.trader_name).join(', ')
       alert(
-        t(config.cannotDeleteKey, language) +
+        t('cannotDeleteModelInUse', language) +
           '\n\n' +
           t('tradersUsing', language) +
           ': ' +
@@ -417,69 +411,23 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       return
     }
 
-    if (!confirm(t(config.confirmDeleteKey, language))) return
+    if (!confirm(t('confirmDeleteModel', language))) return
 
     try {
-      const updatedItems =
-        config.allItems?.map((item) =>
-          item.id === config.id ? config.clearFields(item) : item
-        ) || []
+      // 使用真正的删除API
+      await api.deleteModelConfig(modelId)
 
-      const request = config.buildRequest(updatedItems)
-      await config.updateApi(request)
+      // 重新获取模型列表
+      const refreshedModels = await api.getModelConfigs()
+      setAllModels(refreshedModels)
 
-      // 重新获取用户配置以确保数据同步
-      const refreshedItems = await config.refreshApi()
-      config.setItems(refreshedItems)
-
-      config.closeModal()
+      // 关闭模态框
+      setShowModelModal(false)
+      setEditingModel(null)
     } catch (error) {
-      console.error(`Failed to delete ${config.type} config:`, error)
-      alert(t(config.errorKey, language))
+      console.error('Failed to delete model config:', error)
+      alert((error as Error).message || t('deleteConfigFailed', language))
     }
-  }
-
-  const handleDeleteModelConfig = async (modelId: string) => {
-    await handleDeleteConfig({
-      id: modelId,
-      type: 'model',
-      checkInUse: isModelUsedByAnyTrader,
-      getUsingTraders: getTradersUsingModel,
-      cannotDeleteKey: 'cannotDeleteModelInUse',
-      confirmDeleteKey: 'confirmDeleteModel',
-      allItems: allModels,
-      clearFields: (m) => ({
-        ...m,
-        apiKey: '',
-        customApiUrl: '',
-        customModelName: '',
-        enabled: false,
-      }),
-      buildRequest: (models) => ({
-        models: Object.fromEntries(
-          models.map((model) => [
-            model.provider,
-            {
-              enabled: model.enabled,
-              api_key: model.apiKey || '',
-              custom_api_url: model.customApiUrl || '',
-              custom_model_name: model.customModelName || '',
-            },
-          ])
-        ),
-      }),
-      updateApi: api.updateModelConfigs,
-      refreshApi: api.getModelConfigs,
-      setItems: (items) => {
-        // 使用函数式更新确保状态正确更新
-        setAllModels([...items])
-      },
-      closeModal: () => {
-        setShowModelModal(false)
-        setEditingModel(null)
-      },
-      errorKey: 'deleteConfigFailed',
-    })
   }
 
   const handleSaveModelConfig = async (
@@ -572,54 +520,39 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   }
 
   const handleDeleteExchangeConfig = async (exchangeId: string) => {
-    await handleDeleteConfig({
-      id: exchangeId,
-      type: 'exchange',
-      checkInUse: isExchangeUsedByAnyTrader,
-      getUsingTraders: getTradersUsingExchange,
-      cannotDeleteKey: 'cannotDeleteExchangeInUse',
-      confirmDeleteKey: 'confirmDeleteExchange',
-      allItems: allExchanges,
-      clearFields: (e) => ({
-        ...e,
-        apiKey: '',
-        secretKey: '',
-        hyperliquidWalletAddr: '',
-        asterUser: '',
-        asterSigner: '',
-        asterPrivateKey: '',
-        enabled: false,
-      }),
-      buildRequest: (exchanges) => ({
-        exchanges: Object.fromEntries(
-          exchanges.map((exchange) => [
-            exchange.id,
-            {
-              enabled: exchange.enabled,
-              api_key: exchange.apiKey || '',
-              secret_key: exchange.secretKey || '',
-              testnet: exchange.testnet || false,
-              hyperliquid_wallet_addr: exchange.hyperliquidWalletAddr || '',
-              aster_user: exchange.asterUser || '',
-              aster_signer: exchange.asterSigner || '',
-              aster_private_key: exchange.asterPrivateKey || '',
-              custom_exchange_name: exchange.customName || '',
-            },
-          ])
-        ),
-      }),
-      updateApi: api.updateExchangeConfigsEncrypted,
-      refreshApi: api.getExchangeConfigs,
-      setItems: (items) => {
-        // 使用函数式更新确保状态正确更新
-        setAllExchanges([...items])
-      },
-      closeModal: () => {
-        setShowExchangeModal(false)
-        setEditingExchange(null)
-      },
-      errorKey: 'deleteExchangeConfigFailed',
-    })
+    // 检查是否有交易员正在使用该交易所
+    if (isExchangeUsedByAnyTrader(exchangeId)) {
+      const usingTraders = getTradersUsingExchange(exchangeId)
+      const traderNames = usingTraders.map((t) => t.trader_name).join(', ')
+      alert(
+        t('cannotDeleteExchangeInUse', language) +
+          '\n\n' +
+          t('tradersUsing', language) +
+          ': ' +
+          traderNames +
+          '\n\n' +
+          t('pleaseDeleteTradersFirst', language)
+      )
+      return
+    }
+
+    if (!confirm(t('confirmDeleteExchange', language))) return
+
+    try {
+      // 使用真正的删除API
+      await api.deleteExchangeConfig(exchangeId)
+
+      // 重新获取交易所列表
+      const refreshedExchanges = await api.getExchangeConfigs()
+      setAllExchanges(refreshedExchanges)
+
+      // 关闭模态框
+      setShowExchangeModal(false)
+      setEditingExchange(null)
+    } catch (error) {
+      console.error('Failed to delete exchange config:', error)
+      alert((error as Error).message || t('deleteExchangeConfigFailed', language))
+    }
   }
 
   const handleSaveExchangeConfig = async (
@@ -928,7 +861,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                             color: '#fff',
                           }}
                         >
-                          {getShortName(model.name)[0]}
+                          {(getModelDisplayName(model))[0] || '?'}
                         </div>
                       )}
                     </div>
@@ -937,7 +870,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                         className="font-semibold text-sm md:text-base truncate"
                         style={{ color: '#EAECEF' }}
                       >
-                        {getShortName(model.name)}
+                        {getModelDisplayName(model)}
                       </div>
                       <div className="text-xs" style={{ color: '#848E9C' }}>
                         {inUse
@@ -1086,7 +1019,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                           : '#c084fc',
                       }}
                     >
-                      {getModelDisplayName(
+                      {getFriendlyModelName(
                         trader.ai_model.split('_').pop() || trader.ai_model
                       )}{' '}
                       Model • {trader.exchange_id?.toUpperCase()}
@@ -1570,7 +1503,7 @@ function ModelConfigModal({
                 <option value="">{t('pleaseSelectModel', language)}</option>
                 {availableModels.map((model) => (
                   <option key={model.id} value={model.id}>
-                    {getShortName(model.name)} ({model.provider})
+                    {getModelDisplayName(model)} ({model.provider})
                   </option>
                 ))}
               </select>
@@ -1604,7 +1537,7 @@ function ModelConfigModal({
                 </div>
                 <div>
                   <div className="font-semibold" style={{ color: '#EAECEF' }}>
-                    {getShortName(selectedModel.name)}
+                    {getModelDisplayName(selectedModel)}
                   </div>
                   <div className="text-xs" style={{ color: '#848E9C' }}>
                     {selectedModel.provider} • {selectedModel.id}

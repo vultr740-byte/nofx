@@ -143,10 +143,12 @@ func (s *Server) setupRoutes() {
 			protected.GET("/models", s.handleGetModelConfigs)
 			protected.POST("/models", s.handleCreateModelConfig)
 			protected.PUT("/models", s.handleUpdateModelConfigs)
+			protected.DELETE("/models/:id", s.handleDeleteModelConfig)
 
 			// 交易所配置
 			protected.GET("/exchanges", s.handleGetExchangeConfigs)
 			protected.PUT("/exchanges", s.handleUpdateExchangeConfigs)
+			protected.DELETE("/exchanges/:id", s.handleDeleteExchangeConfig)
 
 			// 用户信号源配置
 			protected.GET("/user/signal-sources", s.handleGetUserSignalSource)
@@ -1300,6 +1302,41 @@ func (s *Server) handleCreateModelConfig(c *gin.Context) {
 	})
 }
 
+// handleDeleteModelConfig 删除AI模型配置
+func (s *Server) handleDeleteModelConfig(c *gin.Context) {
+	userID := c.GetString("user_id")
+	modelID := c.Param("id")
+
+	log.Printf("🗑️ 用户 %s 请求删除模型配置: %s", userID, modelID)
+
+	// 检查模型是否被交易员使用
+	inUse, err := s.database.IsModelUsedByTrader(userID, modelID)
+	if err != nil {
+		log.Printf("❌ 检查模型使用状态失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "检查模型使用状态失败"})
+		return
+	}
+
+	if inUse {
+		log.Printf("⚠️ 模型 %s 正被交易员使用，无法删除", modelID)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "该模型正在被交易员使用，请先停止使用该模型的交易员后再删除",
+			"code":  "MODEL_IN_USE",
+		})
+		return
+	}
+
+	// 删除模型配置
+	if err := s.database.DeleteAIModel(userID, modelID); err != nil {
+		log.Printf("❌ 删除模型配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除模型配置失败"})
+		return
+	}
+
+	log.Printf("✅ 成功删除模型配置: %s (用户: %s)", modelID, userID)
+	c.JSON(http.StatusOK, gin.H{"message": "模型配置删除成功"})
+}
+
 // handleGetExchangeConfigs 获取交易所配置
 func (s *Server) handleGetExchangeConfigs(c *gin.Context) {
 	userID := c.GetString("user_id")
@@ -1396,6 +1433,41 @@ func (s *Server) handleUpdateExchangeConfigs(c *gin.Context) {
 
 	log.Printf("✓ 交易所配置已更新: %+v", req.Exchanges)
 	c.JSON(http.StatusOK, gin.H{"message": "交易所配置已更新"})
+}
+
+// handleDeleteExchangeConfig 删除交易所配置
+func (s *Server) handleDeleteExchangeConfig(c *gin.Context) {
+	userID := c.GetString("user_id")
+	exchangeID := c.Param("id")
+
+	log.Printf("🗑️ 用户 %s 请求删除交易所配置: %s", userID, exchangeID)
+
+	// 检查交易所是否被交易员使用
+	inUse, err := s.database.IsExchangeUsedByTrader(userID, exchangeID)
+	if err != nil {
+		log.Printf("❌ 检查交易所使用状态失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "检查交易所使用状态失败"})
+		return
+	}
+
+	if inUse {
+		log.Printf("⚠️ 交易所 %s 正被交易员使用，无法删除", exchangeID)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "该交易所正在被交易员使用，请先停止使用该交易所的交易员后再删除",
+			"code":  "EXCHANGE_IN_USE",
+		})
+		return
+	}
+
+	// 删除交易所配置
+	if err := s.database.DeleteExchange(userID, exchangeID); err != nil {
+		log.Printf("❌ 删除交易所配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除交易所配置失败"})
+		return
+	}
+
+	log.Printf("✅ 成功删除交易所配置: %s (用户: %s)", exchangeID, userID)
+	c.JSON(http.StatusOK, gin.H{"message": "交易所配置删除成功"})
 }
 
 // handleGetUserSignalSource 获取用户信号源配置
