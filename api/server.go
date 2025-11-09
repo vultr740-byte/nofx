@@ -123,6 +123,7 @@ func (s *Server) setupRoutes() {
 			// AI交易员管理
 			protected.GET("/my-traders", s.handleTraderList)
 			protected.GET("/traders/:id/config", s.handleGetTraderConfig)
+			protected.GET("/traders/:id/debug", s.handleDebugTrader) // 临时调试端点
 			protected.POST("/traders", s.handleCreateTrader)
 			protected.PUT("/traders/:id", s.handleUpdateTrader)
 			protected.DELETE("/traders/:id", s.handleDeleteTrader)
@@ -783,27 +784,90 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 	userID := c.GetString("user_id")
 	traderID := c.Param("id")
 
+	log.Printf("🔍 [DEBUG] 启动交易员请求 - 用户ID: %s, 交易员ID: %s", userID, traderID)
+
 	// 校验交易员是否属于当前用户
-	_, _, _, err := s.database.GetTraderConfig(userID, traderID)
+	traderCfg, aiModelCfg, exchangeCfg, err := s.database.GetTraderConfig(userID, traderID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "交易员不存在或无访问权限"})
+		log.Printf("❌ [DEBUG] GetTraderConfig失败 - 用户ID: %s, 交易员ID: %s, 错误: %v", userID, traderID, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "交易员不存在或无访问权限", "debug": fmt.Sprintf("数据库查询失败: %v", err)})
+		return
+	}
+
+	log.Printf("✅ [DEBUG] 找到交易员配置 - 名称: %s, AI模型: %s(%s), 交易所: %s(%s)",
+		traderCfg.Name, aiModelCfg.Provider, aiModelCfg.ID, exchangeCfg.Type, exchangeCfg.ID)
+	log.Printf("✅ [DEBUG] AI模型状态: %t, 交易所状态: %t", aiModelCfg.Enabled, exchangeCfg.Enabled)
+
+	// 检查AI模型和交易所是否启用
+	if !aiModelCfg.Enabled {
+		log.Printf("❌ [DEBUG] AI模型未启用: %s", aiModelCfg.ID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "AI模型未启用", "ai_model_id": aiModelCfg.ID})
+		return
+	}
+
+	if !exchangeCfg.Enabled {
+		log.Printf("❌ [DEBUG] 交易所未启用: %s", exchangeCfg.ID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "交易所未启用", "exchange_id": exchangeCfg.ID})
+		return
+	}
+
+	// 检查必要配置
+	if exchangeCfg.Type == "binance" && (exchangeCfg.APIKey == "" || exchangeCfg.SecretKey == "") {
+		log.Printf("❌ [DEBUG] Binance交易所缺少API密钥")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Binance交易所缺少API密钥"})
+		return
+	}
+
+	if exchangeCfg.Type == "hyperliquid" && (exchangeCfg.SecretKey == "" || exchangeCfg.HyperliquidWalletAddr == "") {
+		log.Printf("❌ [DEBUG] Hyperliquid交易所缺少私钥或钱包地址")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Hyperliquid交易所缺少私钥或钱包地址"})
+		return
+	}
+
+	if aiModelCfg.APIKey == "" {
+		log.Printf("❌ [DEBUG] AI模型缺少API密钥: %s", aiModelCfg.ID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "AI模型缺少API密钥", "ai_model_id": aiModelCfg.ID})
 		return
 	}
 
 	trader, err := s.traderManager.GetTrader(traderID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "交易员不存在"})
-		return
+		log.Printf("❌ [DEBUG] TraderManager中找不到交易员 - 交易员ID: %s, 错误: %v", traderID, err)
+		log.Printf("🔄 [DEBUG] 尝试重新加载用户交易员...")
+
+		// 尝试重新加载用户的交易员
+		reloadErr := s.traderManager.LoadUserTraders(s.database, userID)
+		if reloadErr != nil {
+			log.Printf("❌ [DEBUG] 重新加载用户交易员失败: %v", reloadErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "交易员加载失败，请重试", "debug": fmt.Sprintf("重新加载失败: %v", reloadErr)})
+			return
+		}
+
+		// 再次尝试获取交易员
+		trader, err = s.traderManager.GetTrader(traderID)
+		if err != nil {
+			log.Printf("❌ [DEBUG] 重新加载后仍然找不到交易员: %v", err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "交易员不存在或加载失败", "debug": fmt.Sprintf("TraderManager错误: %v", err)})
+			return
+		}
+
+		log.Printf("✅ [DEBUG] 重新加载成功找到交易员")
 	}
+
+	log.Printf("✅ [DEBUG] 找到TraderManager实例: %s", trader.GetName())
 
 	// 检查交易员是否已经在运行
 	status := trader.GetStatus()
+	log.Printf("🔍 [DEBUG] 交易员当前状态: %+v", status)
+
 	if isRunning, ok := status["is_running"].(bool); ok && isRunning {
+		log.Printf("⚠️ [DEBUG] 交易员已在运行中")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "交易员已在运行中"})
 		return
 	}
 
 	// 启动交易员
+	log.Printf("🚀 [DEBUG] 开始启动交易员...")
 	go func() {
 		log.Printf("▶️  启动交易员 %s (%s)", traderID, trader.GetName())
 		if err := trader.Run(); err != nil {
@@ -812,13 +876,16 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 	}()
 
 	// 更新数据库中的运行状态
+	log.Printf("💾 [DEBUG] 更新数据库状态...")
 	err = s.database.UpdateTraderStatus(userID, traderID, true)
 	if err != nil {
 		log.Printf("⚠️  更新交易员状态失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "交易员启动成功，但状态更新失败", "debug": fmt.Sprintf("状态更新错误: %v", err)})
+		return
 	}
 
-	log.Printf("✓ 交易员 %s 已启动", trader.GetName())
-	c.JSON(http.StatusOK, gin.H{"message": "交易员已启动"})
+	log.Printf("✅ [DEBUG] 交易员 %s 启动成功", trader.GetName())
+	c.JSON(http.StatusOK, gin.H{"message": "交易员已启动", "trader_id": traderID, "trader_name": trader.GetName()})
 }
 
 // handleStopTrader 停止交易员
@@ -1269,6 +1336,100 @@ func (s *Server) handleTraderList(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// handleDebugTrader 临时调试端点 - 用于诊断交易员启动问题
+func (s *Server) handleDebugTrader(c *gin.Context) {
+	userID := c.GetString("user_id")
+	traderID := c.Param("id")
+
+	log.Printf("🔍 [DEBUG-ENDPOINT] 调试请求 - 用户ID: %s, 交易员ID: %s", userID, traderID)
+
+	debugInfo := make(map[string]interface{})
+	debugInfo["user_id"] = userID
+	debugInfo["trader_id"] = traderID
+	debugInfo["timestamp"] = time.Now().Format("2006-01-02 15:04:05")
+
+	// 1. 检查数据库中的交易员配置
+	traderCfg, aiModelCfg, exchangeCfg, err := s.database.GetTraderConfig(userID, traderID)
+	if err != nil {
+		debugInfo["database_error"] = err.Error()
+		debugInfo["config_found"] = false
+		c.JSON(http.StatusOK, gin.H{"debug_info": debugInfo})
+		return
+	}
+
+	debugInfo["config_found"] = true
+	debugInfo["trader_name"] = traderCfg.Name
+	debugInfo["ai_model_id"] = traderCfg.AIModelID
+	debugInfo["exchange_id"] = traderCfg.ExchangeID
+	debugInfo["is_running"] = traderCfg.IsRunning
+
+	// 2. 检查AI模型配置
+	debugInfo["ai_model"] = map[string]interface{}{
+		"id":      aiModelCfg.ID,
+		"name":    aiModelCfg.Name,
+		"provider": aiModelCfg.Provider,
+		"enabled": aiModelCfg.Enabled,
+		"has_api_key": aiModelCfg.APIKey != "",
+	}
+
+	// 3. 检查交易所配置
+	debugInfo["exchange"] = map[string]interface{}{
+		"id":      exchangeCfg.ID,
+		"name":    exchangeCfg.Name,
+		"type":    exchangeCfg.Type,
+		"enabled": exchangeCfg.Enabled,
+	}
+
+	// 根据交易所类型检查必要字段
+	switch exchangeCfg.Type {
+	case "binance":
+		debugInfo["exchange"].(map[string]interface{})["has_api_key"] = exchangeCfg.APIKey != ""
+		debugInfo["exchange"].(map[string]interface{})["has_secret_key"] = exchangeCfg.SecretKey != ""
+	case "hyperliquid":
+		debugInfo["exchange"].(map[string]interface{})["has_private_key"] = exchangeCfg.SecretKey != ""
+		debugInfo["exchange"].(map[string]interface{})["has_wallet_addr"] = exchangeCfg.HyperliquidWalletAddr != ""
+	case "aster":
+		debugInfo["exchange"].(map[string]interface{})["has_user"] = exchangeCfg.AsterUser != ""
+		debugInfo["exchange"].(map[string]interface{})["has_signer"] = exchangeCfg.AsterSigner != ""
+		debugInfo["exchange"].(map[string]interface{})["has_private_key"] = exchangeCfg.AsterPrivateKey != ""
+	}
+
+	// 4. 检查TraderManager中是否存在该交易员
+	trader, err := s.traderManager.GetTrader(traderID)
+	if err != nil {
+		debugInfo["trader_manager_error"] = err.Error()
+		debugInfo["trader_in_memory"] = false
+	} else {
+		debugInfo["trader_in_memory"] = true
+		debugInfo["trader_name_in_memory"] = trader.GetName()
+		status := trader.GetStatus()
+		debugInfo["trader_status"] = status
+	}
+
+	// 5. 检查用户所有交易员列表
+	userTraders, err := s.database.GetTraders(userID)
+	if err != nil {
+		debugInfo["user_traders_error"] = err.Error()
+	} else {
+		debugInfo["user_traders_count"] = len(userTraders)
+		traderIDs := make([]string, len(userTraders))
+		for i, t := range userTraders {
+			traderIDs[i] = t.ID
+		}
+		debugInfo["user_trader_ids"] = traderIDs
+	}
+
+	// 6. 检查TraderManager中所有交易员
+	allTraders := s.traderManager.GetAllTraders()
+	debugInfo["trader_manager_count"] = len(allTraders)
+	debugInfo["trader_manager_ids"] = make([]string, 0, len(allTraders))
+	for id := range allTraders {
+		debugInfo["trader_manager_ids"] = append(debugInfo["trader_manager_ids"].([]string), id)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"debug_info": debugInfo})
+}
+
 // handleGetTraderConfig 获取交易员详细配置
 func (s *Server) handleGetTraderConfig(c *gin.Context) {
 	userID := c.GetString("user_id")
@@ -1316,6 +1477,100 @@ func (s *Server) handleGetTraderConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+// handleDebugTrader 临时调试端点 - 用于诊断交易员启动问题
+func (s *Server) handleDebugTrader(c *gin.Context) {
+	userID := c.GetString("user_id")
+	traderID := c.Param("id")
+
+	log.Printf("🔍 [DEBUG-ENDPOINT] 调试请求 - 用户ID: %s, 交易员ID: %s", userID, traderID)
+
+	debugInfo := make(map[string]interface{})
+	debugInfo["user_id"] = userID
+	debugInfo["trader_id"] = traderID
+	debugInfo["timestamp"] = time.Now().Format("2006-01-02 15:04:05")
+
+	// 1. 检查数据库中的交易员配置
+	traderCfg, aiModelCfg, exchangeCfg, err := s.database.GetTraderConfig(userID, traderID)
+	if err != nil {
+		debugInfo["database_error"] = err.Error()
+		debugInfo["config_found"] = false
+		c.JSON(http.StatusOK, gin.H{"debug_info": debugInfo})
+		return
+	}
+
+	debugInfo["config_found"] = true
+	debugInfo["trader_name"] = traderCfg.Name
+	debugInfo["ai_model_id"] = traderCfg.AIModelID
+	debugInfo["exchange_id"] = traderCfg.ExchangeID
+	debugInfo["is_running"] = traderCfg.IsRunning
+
+	// 2. 检查AI模型配置
+	debugInfo["ai_model"] = map[string]interface{}{
+		"id":      aiModelCfg.ID,
+		"name":    aiModelCfg.Name,
+		"provider": aiModelCfg.Provider,
+		"enabled": aiModelCfg.Enabled,
+		"has_api_key": aiModelCfg.APIKey != "",
+	}
+
+	// 3. 检查交易所配置
+	debugInfo["exchange"] = map[string]interface{}{
+		"id":      exchangeCfg.ID,
+		"name":    exchangeCfg.Name,
+		"type":    exchangeCfg.Type,
+		"enabled": exchangeCfg.Enabled,
+	}
+
+	// 根据交易所类型检查必要字段
+	switch exchangeCfg.Type {
+	case "binance":
+		debugInfo["exchange"].(map[string]interface{})["has_api_key"] = exchangeCfg.APIKey != ""
+		debugInfo["exchange"].(map[string]interface{})["has_secret_key"] = exchangeCfg.SecretKey != ""
+	case "hyperliquid":
+		debugInfo["exchange"].(map[string]interface{})["has_private_key"] = exchangeCfg.SecretKey != ""
+		debugInfo["exchange"].(map[string]interface{})["has_wallet_addr"] = exchangeCfg.HyperliquidWalletAddr != ""
+	case "aster":
+		debugInfo["exchange"].(map[string]interface{})["has_user"] = exchangeCfg.AsterUser != ""
+		debugInfo["exchange"].(map[string]interface{})["has_signer"] = exchangeCfg.AsterSigner != ""
+		debugInfo["exchange"].(map[string]interface{})["has_private_key"] = exchangeCfg.AsterPrivateKey != ""
+	}
+
+	// 4. 检查TraderManager中是否存在该交易员
+	trader, err := s.traderManager.GetTrader(traderID)
+	if err != nil {
+		debugInfo["trader_manager_error"] = err.Error()
+		debugInfo["trader_in_memory"] = false
+	} else {
+		debugInfo["trader_in_memory"] = true
+		debugInfo["trader_name_in_memory"] = trader.GetName()
+		status := trader.GetStatus()
+		debugInfo["trader_status"] = status
+	}
+
+	// 5. 检查用户所有交易员列表
+	userTraders, err := s.database.GetTraders(userID)
+	if err != nil {
+		debugInfo["user_traders_error"] = err.Error()
+	} else {
+		debugInfo["user_traders_count"] = len(userTraders)
+		traderIDs := make([]string, len(userTraders))
+		for i, t := range userTraders {
+			traderIDs[i] = t.ID
+		}
+		debugInfo["user_trader_ids"] = traderIDs
+	}
+
+	// 6. 检查TraderManager中所有交易员
+	allTraders := s.traderManager.GetAllTraders()
+	debugInfo["trader_manager_count"] = len(allTraders)
+	debugInfo["trader_manager_ids"] = make([]string, 0, len(allTraders))
+	for id := range allTraders {
+		debugInfo["trader_manager_ids"] = append(debugInfo["trader_manager_ids"].([]string), id)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"debug_info": debugInfo})
 }
 
 // handleStatus 系统状态
@@ -2119,6 +2374,100 @@ func (s *Server) handlePublicTraderList(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// handleDebugTrader 临时调试端点 - 用于诊断交易员启动问题
+func (s *Server) handleDebugTrader(c *gin.Context) {
+	userID := c.GetString("user_id")
+	traderID := c.Param("id")
+
+	log.Printf("🔍 [DEBUG-ENDPOINT] 调试请求 - 用户ID: %s, 交易员ID: %s", userID, traderID)
+
+	debugInfo := make(map[string]interface{})
+	debugInfo["user_id"] = userID
+	debugInfo["trader_id"] = traderID
+	debugInfo["timestamp"] = time.Now().Format("2006-01-02 15:04:05")
+
+	// 1. 检查数据库中的交易员配置
+	traderCfg, aiModelCfg, exchangeCfg, err := s.database.GetTraderConfig(userID, traderID)
+	if err != nil {
+		debugInfo["database_error"] = err.Error()
+		debugInfo["config_found"] = false
+		c.JSON(http.StatusOK, gin.H{"debug_info": debugInfo})
+		return
+	}
+
+	debugInfo["config_found"] = true
+	debugInfo["trader_name"] = traderCfg.Name
+	debugInfo["ai_model_id"] = traderCfg.AIModelID
+	debugInfo["exchange_id"] = traderCfg.ExchangeID
+	debugInfo["is_running"] = traderCfg.IsRunning
+
+	// 2. 检查AI模型配置
+	debugInfo["ai_model"] = map[string]interface{}{
+		"id":      aiModelCfg.ID,
+		"name":    aiModelCfg.Name,
+		"provider": aiModelCfg.Provider,
+		"enabled": aiModelCfg.Enabled,
+		"has_api_key": aiModelCfg.APIKey != "",
+	}
+
+	// 3. 检查交易所配置
+	debugInfo["exchange"] = map[string]interface{}{
+		"id":      exchangeCfg.ID,
+		"name":    exchangeCfg.Name,
+		"type":    exchangeCfg.Type,
+		"enabled": exchangeCfg.Enabled,
+	}
+
+	// 根据交易所类型检查必要字段
+	switch exchangeCfg.Type {
+	case "binance":
+		debugInfo["exchange"].(map[string]interface{})["has_api_key"] = exchangeCfg.APIKey != ""
+		debugInfo["exchange"].(map[string]interface{})["has_secret_key"] = exchangeCfg.SecretKey != ""
+	case "hyperliquid":
+		debugInfo["exchange"].(map[string]interface{})["has_private_key"] = exchangeCfg.SecretKey != ""
+		debugInfo["exchange"].(map[string]interface{})["has_wallet_addr"] = exchangeCfg.HyperliquidWalletAddr != ""
+	case "aster":
+		debugInfo["exchange"].(map[string]interface{})["has_user"] = exchangeCfg.AsterUser != ""
+		debugInfo["exchange"].(map[string]interface{})["has_signer"] = exchangeCfg.AsterSigner != ""
+		debugInfo["exchange"].(map[string]interface{})["has_private_key"] = exchangeCfg.AsterPrivateKey != ""
+	}
+
+	// 4. 检查TraderManager中是否存在该交易员
+	trader, err := s.traderManager.GetTrader(traderID)
+	if err != nil {
+		debugInfo["trader_manager_error"] = err.Error()
+		debugInfo["trader_in_memory"] = false
+	} else {
+		debugInfo["trader_in_memory"] = true
+		debugInfo["trader_name_in_memory"] = trader.GetName()
+		status := trader.GetStatus()
+		debugInfo["trader_status"] = status
+	}
+
+	// 5. 检查用户所有交易员列表
+	userTraders, err := s.database.GetTraders(userID)
+	if err != nil {
+		debugInfo["user_traders_error"] = err.Error()
+	} else {
+		debugInfo["user_traders_count"] = len(userTraders)
+		traderIDs := make([]string, len(userTraders))
+		for i, t := range userTraders {
+			traderIDs[i] = t.ID
+		}
+		debugInfo["user_trader_ids"] = traderIDs
+	}
+
+	// 6. 检查TraderManager中所有交易员
+	allTraders := s.traderManager.GetAllTraders()
+	debugInfo["trader_manager_count"] = len(allTraders)
+	debugInfo["trader_manager_ids"] = make([]string, 0, len(allTraders))
+	for id := range allTraders {
+		debugInfo["trader_manager_ids"] = append(debugInfo["trader_manager_ids"].([]string), id)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"debug_info": debugInfo})
+}
+
 // handlePublicCompetition 获取公开的竞赛数据（无需认证）
 func (s *Server) handlePublicCompetition(c *gin.Context) {
 	competition, err := s.traderManager.GetCompetitionData()
@@ -2200,6 +2549,100 @@ func (s *Server) handleEquityHistoryBatch(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// handleDebugTrader 临时调试端点 - 用于诊断交易员启动问题
+func (s *Server) handleDebugTrader(c *gin.Context) {
+	userID := c.GetString("user_id")
+	traderID := c.Param("id")
+
+	log.Printf("🔍 [DEBUG-ENDPOINT] 调试请求 - 用户ID: %s, 交易员ID: %s", userID, traderID)
+
+	debugInfo := make(map[string]interface{})
+	debugInfo["user_id"] = userID
+	debugInfo["trader_id"] = traderID
+	debugInfo["timestamp"] = time.Now().Format("2006-01-02 15:04:05")
+
+	// 1. 检查数据库中的交易员配置
+	traderCfg, aiModelCfg, exchangeCfg, err := s.database.GetTraderConfig(userID, traderID)
+	if err != nil {
+		debugInfo["database_error"] = err.Error()
+		debugInfo["config_found"] = false
+		c.JSON(http.StatusOK, gin.H{"debug_info": debugInfo})
+		return
+	}
+
+	debugInfo["config_found"] = true
+	debugInfo["trader_name"] = traderCfg.Name
+	debugInfo["ai_model_id"] = traderCfg.AIModelID
+	debugInfo["exchange_id"] = traderCfg.ExchangeID
+	debugInfo["is_running"] = traderCfg.IsRunning
+
+	// 2. 检查AI模型配置
+	debugInfo["ai_model"] = map[string]interface{}{
+		"id":      aiModelCfg.ID,
+		"name":    aiModelCfg.Name,
+		"provider": aiModelCfg.Provider,
+		"enabled": aiModelCfg.Enabled,
+		"has_api_key": aiModelCfg.APIKey != "",
+	}
+
+	// 3. 检查交易所配置
+	debugInfo["exchange"] = map[string]interface{}{
+		"id":      exchangeCfg.ID,
+		"name":    exchangeCfg.Name,
+		"type":    exchangeCfg.Type,
+		"enabled": exchangeCfg.Enabled,
+	}
+
+	// 根据交易所类型检查必要字段
+	switch exchangeCfg.Type {
+	case "binance":
+		debugInfo["exchange"].(map[string]interface{})["has_api_key"] = exchangeCfg.APIKey != ""
+		debugInfo["exchange"].(map[string]interface{})["has_secret_key"] = exchangeCfg.SecretKey != ""
+	case "hyperliquid":
+		debugInfo["exchange"].(map[string]interface{})["has_private_key"] = exchangeCfg.SecretKey != ""
+		debugInfo["exchange"].(map[string]interface{})["has_wallet_addr"] = exchangeCfg.HyperliquidWalletAddr != ""
+	case "aster":
+		debugInfo["exchange"].(map[string]interface{})["has_user"] = exchangeCfg.AsterUser != ""
+		debugInfo["exchange"].(map[string]interface{})["has_signer"] = exchangeCfg.AsterSigner != ""
+		debugInfo["exchange"].(map[string]interface{})["has_private_key"] = exchangeCfg.AsterPrivateKey != ""
+	}
+
+	// 4. 检查TraderManager中是否存在该交易员
+	trader, err := s.traderManager.GetTrader(traderID)
+	if err != nil {
+		debugInfo["trader_manager_error"] = err.Error()
+		debugInfo["trader_in_memory"] = false
+	} else {
+		debugInfo["trader_in_memory"] = true
+		debugInfo["trader_name_in_memory"] = trader.GetName()
+		status := trader.GetStatus()
+		debugInfo["trader_status"] = status
+	}
+
+	// 5. 检查用户所有交易员列表
+	userTraders, err := s.database.GetTraders(userID)
+	if err != nil {
+		debugInfo["user_traders_error"] = err.Error()
+	} else {
+		debugInfo["user_traders_count"] = len(userTraders)
+		traderIDs := make([]string, len(userTraders))
+		for i, t := range userTraders {
+			traderIDs[i] = t.ID
+		}
+		debugInfo["user_trader_ids"] = traderIDs
+	}
+
+	// 6. 检查TraderManager中所有交易员
+	allTraders := s.traderManager.GetAllTraders()
+	debugInfo["trader_manager_count"] = len(allTraders)
+	debugInfo["trader_manager_ids"] = make([]string, 0, len(allTraders))
+	for id := range allTraders {
+		debugInfo["trader_manager_ids"] = append(debugInfo["trader_manager_ids"].([]string), id)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"debug_info": debugInfo})
+}
+
 // getEquityHistoryForTraders 获取多个交易员的历史数据
 func (s *Server) getEquityHistoryForTraders(traderIDs []string) map[string]interface{} {
 	result := make(map[string]interface{})
@@ -2279,4 +2722,98 @@ func (s *Server) handleGetPublicTraderConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+// handleDebugTrader 临时调试端点 - 用于诊断交易员启动问题
+func (s *Server) handleDebugTrader(c *gin.Context) {
+	userID := c.GetString("user_id")
+	traderID := c.Param("id")
+
+	log.Printf("🔍 [DEBUG-ENDPOINT] 调试请求 - 用户ID: %s, 交易员ID: %s", userID, traderID)
+
+	debugInfo := make(map[string]interface{})
+	debugInfo["user_id"] = userID
+	debugInfo["trader_id"] = traderID
+	debugInfo["timestamp"] = time.Now().Format("2006-01-02 15:04:05")
+
+	// 1. 检查数据库中的交易员配置
+	traderCfg, aiModelCfg, exchangeCfg, err := s.database.GetTraderConfig(userID, traderID)
+	if err != nil {
+		debugInfo["database_error"] = err.Error()
+		debugInfo["config_found"] = false
+		c.JSON(http.StatusOK, gin.H{"debug_info": debugInfo})
+		return
+	}
+
+	debugInfo["config_found"] = true
+	debugInfo["trader_name"] = traderCfg.Name
+	debugInfo["ai_model_id"] = traderCfg.AIModelID
+	debugInfo["exchange_id"] = traderCfg.ExchangeID
+	debugInfo["is_running"] = traderCfg.IsRunning
+
+	// 2. 检查AI模型配置
+	debugInfo["ai_model"] = map[string]interface{}{
+		"id":      aiModelCfg.ID,
+		"name":    aiModelCfg.Name,
+		"provider": aiModelCfg.Provider,
+		"enabled": aiModelCfg.Enabled,
+		"has_api_key": aiModelCfg.APIKey != "",
+	}
+
+	// 3. 检查交易所配置
+	debugInfo["exchange"] = map[string]interface{}{
+		"id":      exchangeCfg.ID,
+		"name":    exchangeCfg.Name,
+		"type":    exchangeCfg.Type,
+		"enabled": exchangeCfg.Enabled,
+	}
+
+	// 根据交易所类型检查必要字段
+	switch exchangeCfg.Type {
+	case "binance":
+		debugInfo["exchange"].(map[string]interface{})["has_api_key"] = exchangeCfg.APIKey != ""
+		debugInfo["exchange"].(map[string]interface{})["has_secret_key"] = exchangeCfg.SecretKey != ""
+	case "hyperliquid":
+		debugInfo["exchange"].(map[string]interface{})["has_private_key"] = exchangeCfg.SecretKey != ""
+		debugInfo["exchange"].(map[string]interface{})["has_wallet_addr"] = exchangeCfg.HyperliquidWalletAddr != ""
+	case "aster":
+		debugInfo["exchange"].(map[string]interface{})["has_user"] = exchangeCfg.AsterUser != ""
+		debugInfo["exchange"].(map[string]interface{})["has_signer"] = exchangeCfg.AsterSigner != ""
+		debugInfo["exchange"].(map[string]interface{})["has_private_key"] = exchangeCfg.AsterPrivateKey != ""
+	}
+
+	// 4. 检查TraderManager中是否存在该交易员
+	trader, err := s.traderManager.GetTrader(traderID)
+	if err != nil {
+		debugInfo["trader_manager_error"] = err.Error()
+		debugInfo["trader_in_memory"] = false
+	} else {
+		debugInfo["trader_in_memory"] = true
+		debugInfo["trader_name_in_memory"] = trader.GetName()
+		status := trader.GetStatus()
+		debugInfo["trader_status"] = status
+	}
+
+	// 5. 检查用户所有交易员列表
+	userTraders, err := s.database.GetTraders(userID)
+	if err != nil {
+		debugInfo["user_traders_error"] = err.Error()
+	} else {
+		debugInfo["user_traders_count"] = len(userTraders)
+		traderIDs := make([]string, len(userTraders))
+		for i, t := range userTraders {
+			traderIDs[i] = t.ID
+		}
+		debugInfo["user_trader_ids"] = traderIDs
+	}
+
+	// 6. 检查TraderManager中所有交易员
+	allTraders := s.traderManager.GetAllTraders()
+	debugInfo["trader_manager_count"] = len(allTraders)
+	debugInfo["trader_manager_ids"] = make([]string, 0, len(allTraders))
+	for id := range allTraders {
+		debugInfo["trader_manager_ids"] = append(debugInfo["trader_manager_ids"].([]string), id)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"debug_info": debugInfo})
 }
