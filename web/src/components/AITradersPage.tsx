@@ -1485,7 +1485,7 @@ function ModelConfigModal({
 
     onSave(
       selectedModelId,
-      editingModelId ? undefined : apiKey.trim(), // 编辑模式下不更新API Key
+      editingModelId ? '' : apiKey.trim(), // 编辑模式下传递空字符串
       baseUrl.trim() || undefined,
       modelName.trim() || undefined
     )
