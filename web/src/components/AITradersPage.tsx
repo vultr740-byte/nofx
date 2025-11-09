@@ -502,8 +502,8 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
         return
       }
 
-      if (existingModel) {
-        // 更新现有配置
+      if (isEdit) {
+        // 编辑模式：更新现有配置
         updatedModels =
           allModels?.map((m) =>
             m.id === modelId
@@ -517,7 +517,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
               : m
           ) || []
       } else {
-        // 添加新配置
+        // 新建模式：添加新配置
         const newModel = {
           ...modelToUpdate,
           apiKey,
