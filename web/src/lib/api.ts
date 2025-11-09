@@ -160,11 +160,11 @@ export const api = {
     )
 
     // 发送加密的请求
-    const res = await fetch('/api/models', {
+    const res = await fetch(`${API_BASE}/models`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token')}`,
+        Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
       },
       body: JSON.stringify(encryptedPayload),
     })
