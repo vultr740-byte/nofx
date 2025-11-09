@@ -1069,6 +1069,71 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 	return err
 }
 
+// UpdateAIModelExceptAPIKey 更新AI模型配置，但不更新API Key（用于编辑模式）
+func (d *Database) UpdateAIModelExceptAPIKey(userID, id string, enabled bool, customAPIURL, customModelName string) error {
+	// 先尝试精确匹配 ID（新版逻辑，支持多个相同 provider 的模型）
+	var existingID string
+	var err error
+
+	if d.usePostgreSQL {
+		err = d.db.QueryRow(`
+			SELECT id FROM ai_models WHERE user_id = $1 AND id = $2 LIMIT 1
+		`, userID, id).Scan(&existingID)
+	} else {
+		err = d.db.QueryRow(`
+			SELECT id FROM ai_models WHERE user_id = ? AND id = ? LIMIT 1
+		`, userID, id).Scan(&existingID)
+	}
+
+	if err == nil {
+		// 找到了现有配置（精确匹配 ID），更新除API Key外的字段
+		if d.usePostgreSQL {
+			_, err = d.db.Exec(`
+				UPDATE ai_models SET enabled = $1, custom_api_url = $2, custom_model_name = $3, updated_at = NOW()
+				WHERE id = $4 AND user_id = $5
+			`, enabled, customAPIURL, customModelName, existingID, userID)
+		} else {
+			_, err = d.db.Exec(`
+				UPDATE ai_models SET enabled = ?, custom_api_url = ?, custom_model_name = ?, updated_at = datetime('now')
+				WHERE id = ? AND user_id = ?
+			`, enabled, customAPIURL, customModelName, existingID, userID)
+		}
+		return err
+	}
+
+	// ID 不存在，尝试兼容旧逻辑：将 id 作为 provider 查找
+	provider := id
+	if d.usePostgreSQL {
+		err = d.db.QueryRow(`
+			SELECT id FROM ai_models WHERE user_id = $1 AND provider = $2 LIMIT 1
+		`, userID, provider).Scan(&existingID)
+	} else {
+		err = d.db.QueryRow(`
+			SELECT id FROM ai_models WHERE user_id = ? AND provider = ? LIMIT 1
+		`, userID, provider).Scan(&existingID)
+	}
+
+	if err == nil {
+		// 找到了现有配置（通过 provider 匹配，兼容旧版），更新它（但不更新API Key）
+		log.Printf("⚠️  使用旧版 provider 匹配更新模型（不更新API Key）: %s -> %s", provider, existingID)
+		if d.usePostgreSQL {
+			_, err = d.db.Exec(`
+				UPDATE ai_models SET enabled = $1, custom_api_url = $2, custom_model_name = $3, updated_at = NOW()
+				WHERE id = $4 AND user_id = $5
+			`, enabled, customAPIURL, customModelName, existingID, userID)
+		} else {
+			_, err = d.db.Exec(`
+				UPDATE ai_models SET enabled = ?, custom_api_url = ?, custom_model_name = ?, updated_at = datetime('now')
+				WHERE id = ? AND user_id = ?
+			`, enabled, customAPIURL, customModelName, existingID, userID)
+		}
+		return err
+	}
+
+	// 没有找到任何现有配置，返回错误
+	return fmt.Errorf("模型 %s 不存在", id)
+}
+
 // GetExchanges 获取用户的交易所配置
 func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 	query := `

@@ -141,6 +141,7 @@ func (s *Server) setupRoutes() {
 
 			// AI模型配置
 			protected.GET("/models", s.handleGetModelConfigs)
+			protected.POST("/models", s.handleCreateModelConfig)
 			protected.PUT("/models", s.handleUpdateModelConfigs)
 
 			// 交易所配置
@@ -395,6 +396,15 @@ type CreateTraderRequest struct {
 	UseOITop             bool    `json:"use_oi_top"`
 }
 
+type CreateModelConfigRequest struct {
+	ModelName        string `json:"model_name" binding:"required"`
+	ProviderName     string `json:"provider_name" binding:"required"`
+	APIKey           string `json:"api_key" binding:"required"`
+	CustomAPIURL     string `json:"custom_api_url"`
+	CustomModelName  string `json:"custom_model_name"`
+	Enabled          bool   `json:"enabled"`
+}
+
 type ModelConfig struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -441,7 +451,7 @@ type SafeExchangeConfig struct {
 type UpdateModelConfigRequest struct {
 	Models map[string]struct {
 		Enabled         bool   `json:"enabled"`
-		APIKey          string `json:"api_key"`
+		APIKey          string `json:"api_key,omitempty"`         // 可选，空字符串表示不更新
 		CustomAPIURL    string `json:"custom_api_url"`
 		CustomModelName string `json:"custom_model_name"`
 	} `json:"models"`
@@ -1187,10 +1197,20 @@ func (s *Server) handleUpdateModelConfigs(c *gin.Context) {
 
 	// 更新每个模型的配置
 	for modelID, modelData := range req.Models {
-		err := s.database.UpdateAIModel(userID, modelID, modelData.Enabled, modelData.APIKey, modelData.CustomAPIURL, modelData.CustomModelName)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("更新模型 %s 失败: %v", modelID, err)})
-			return
+		if modelData.APIKey != "" {
+			// 如果提供了API Key，更新所有字段
+			err := s.database.UpdateAIModel(userID, modelID, modelData.Enabled, modelData.APIKey, modelData.CustomAPIURL, modelData.CustomModelName)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("更新模型 %s 失败: %v", modelID, err)})
+				return
+			}
+		} else {
+			// 如果API Key为空，不更新API Key（编辑模式）
+			err := s.database.UpdateAIModelExceptAPIKey(userID, modelID, modelData.Enabled, modelData.CustomAPIURL, modelData.CustomModelName)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("更新模型 %s 失败: %v", modelID, err)})
+				return
+			}
 		}
 	}
 
@@ -1203,6 +1223,81 @@ func (s *Server) handleUpdateModelConfigs(c *gin.Context) {
 
 	log.Printf("✓ AI模型配置已更新: %+v", req.Models)
 	c.JSON(http.StatusOK, gin.H{"message": "模型配置已更新"})
+}
+
+// handleCreateModelConfig 创建新的AI模型配置
+func (s *Server) handleCreateModelConfig(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	// 读取原始请求体
+	bodyBytes, err := c.GetRawData()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求体失败"})
+		return
+	}
+
+	// 解析加密的 payload
+	var encryptedPayload crypto.EncryptedPayload
+	if err := json.Unmarshal(bodyBytes, &encryptedPayload); err != nil {
+		log.Printf("❌ 解析加密载荷失败: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误，必须使用加密传输"})
+		return
+	}
+
+	// 验证是否为加密数据
+	if encryptedPayload.WrappedKey == "" {
+		log.Printf("❌ 检测到非加密请求 (UserID: %s)", userID)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "此接口仅支持加密传输，请使用加密客户端",
+			"code":    "ENCRYPTION_REQUIRED",
+			"message": "Encrypted transmission is required for security reasons",
+		})
+		return
+	}
+
+	// 解密数据
+	decrypted, err := s.cryptoHandler.cryptoService.DecryptSensitiveData(&encryptedPayload)
+	if err != nil {
+		log.Printf("❌ 解密模型配置失败 (UserID: %s): %v", userID, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "解密数据失败"})
+		return
+	}
+
+	// 解析解密后的数据
+	var req CreateModelConfigRequest
+	if err := json.Unmarshal([]byte(decrypted), &req); err != nil {
+		log.Printf("❌ 解析解密数据失败: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "解析解密数据失败"})
+		return
+	}
+	log.Printf("🔓 已解密模型创建数据 (UserID: %s)", userID)
+
+	// 生成模型ID（如果前端没有提供）
+	modelID := uuid.New().String()
+
+	// 创建新模型
+	err = s.database.CreateAIModel(userID, modelID, req.ModelName, req.ProviderName, req.Enabled, req.APIKey, req.CustomAPIURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("创建模型失败: %v", err)})
+		return
+	}
+
+	// 如果提供了自定义模型名称，也要更新
+	if req.CustomModelName != "" {
+		err = s.database.UpdateAIModel(userID, modelID, req.Enabled, req.APIKey, req.CustomAPIURL, req.CustomModelName)
+		if err != nil {
+			log.Printf("⚠️ 更新模型自定义名称失败: %v", err)
+			// 不返回错误，因为模型已经创建成功
+		}
+	}
+
+	log.Printf("✅ 创建新AI模型成功: %s (ID: %s, Provider: %s)", req.ModelName, modelID, req.ProviderName)
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "模型创建成功",
+		"model_id": modelID,
+		"name": req.ModelName,
+		"provider": req.ProviderName,
+	})
 }
 
 // handleGetExchangeConfigs 获取交易所配置
@@ -2232,6 +2327,7 @@ func (s *Server) Start() error {
 	log.Printf("  • POST /api/traders/:id/start - 启动AI交易员")
 	log.Printf("  • POST /api/traders/:id/stop  - 停止AI交易员")
 	log.Printf("  • GET  /api/models           - 获取AI模型配置")
+	log.Printf("  • POST /api/models           - 创建新的AI模型配置")
 	log.Printf("  • PUT  /api/models           - 更新AI模型配置")
 	log.Printf("  • GET  /api/exchanges        - 获取交易所配置")
 	log.Printf("  • PUT  /api/exchanges        - 更新交易所配置")

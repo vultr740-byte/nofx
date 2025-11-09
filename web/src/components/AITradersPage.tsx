@@ -1468,22 +1468,24 @@ function ModelConfigModal({
     ? configuredModels?.find((m) => m.id === selectedModelId)
     : allModels?.find((m) => m.id === selectedModelId)
 
-  // 如果是编辑现有模型，初始化API Key、Base URL和Model Name
+  // 如果是编辑现有模型，只初始化Base URL和Model Name（API Key不允许修改）
   useEffect(() => {
     if (editingModelId && selectedModel) {
-      setApiKey(selectedModel.apiKey || '')
       setBaseUrl(selectedModel.customApiUrl || '')
       setModelName(selectedModel.customModelName || '')
+      // 编辑模式下API Key保持为空，不允许修改
+      setApiKey('')
     }
   }, [editingModelId, selectedModel])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!selectedModelId || !apiKey.trim()) return
+    // 新建模式下需要API Key，编辑模式下不需要
+    if (!selectedModelId || (!editingModelId && !apiKey.trim())) return
 
     onSave(
       selectedModelId,
-      apiKey.trim(),
+      editingModelId ? undefined : apiKey.trim(), // 编辑模式下不更新API Key
       baseUrl.trim() || undefined,
       modelName.trim() || undefined
     )
@@ -1586,27 +1588,52 @@ function ModelConfigModal({
 
           {selectedModel && (
             <>
-              <div>
-                <label
-                  className="block text-sm font-semibold mb-2"
-                  style={{ color: '#EAECEF' }}
-                >
-                  API Key
-                </label>
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={t('enterAPIKey', language)}
-                  className="w-full px-3 py-2 rounded"
-                  style={{
-                    background: '#0B0E11',
-                    border: '1px solid #2B3139',
-                    color: '#EAECEF',
-                  }}
-                  required
-                />
-              </div>
+              {/* API Key字段 - 只在新建模式下显示 */}
+              {!editingModelId && (
+                <div>
+                  <label
+                    className="block text-sm font-semibold mb-2"
+                    style={{ color: '#EAECEF' }}
+                  >
+                    API Key
+                  </label>
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder={t('enterAPIKey', language)}
+                    className="w-full px-3 py-2 rounded"
+                    style={{
+                      background: '#0B0E11',
+                      border: '1px solid #2B3139',
+                      color: '#EAECEF',
+                    }}
+                    required
+                  />
+                </div>
+              )}
+
+              {/* 编辑模式下的API Key提示 */}
+              {editingModelId && (
+                <div>
+                  <label
+                    className="block text-sm font-semibold mb-2"
+                    style={{ color: '#EAECEF' }}
+                  >
+                    API Key
+                  </label>
+                  <div
+                    className="w-full px-3 py-2 rounded text-sm"
+                    style={{
+                      background: '#1a1d21',
+                      border: '1px solid #2B3139',
+                      color: '#848E9C',
+                    }}
+                  >
+                    🔒 出于安全考虑，编辑模式下不允许修改API Key
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label
