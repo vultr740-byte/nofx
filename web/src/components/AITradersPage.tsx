@@ -86,6 +86,23 @@ function getTraderDisplayName(trader: any): string {
   return name
 }
 
+// 根据模型ID获取模型显示名称，优先使用自定义名称
+function getModelDisplayNameById(modelId: string, models: any[] = []): string {
+  const model = models.find(m => m.id === modelId)
+  if (!model) {
+    // 如果找不到模型，返回友好的默认名称
+    return getFriendlyModelName(modelId.split('_').pop() || modelId)
+  }
+
+  // 优先使用自定义模型名称
+  if (model.customModelName && model.customModelName.trim() !== '') {
+    return model.customModelName.trim()
+  }
+
+  // 其次使用友好名称映射
+  return getFriendlyModelName(model.name || modelId)
+}
+
 
 // 提取下划线后面的名称部分，处理复合ID
 function getShortName(fullName: string): string {
@@ -1055,10 +1072,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                           : '#c084fc',
                       }}
                     >
-                      {getFriendlyModelName(
-                        trader.ai_model.split('_').pop() || trader.ai_model
-                      )}{' '}
-                      Model • {getExchangeDisplayName(trader.exchange_id || '', allExchanges || [])}
+                      {getModelDisplayNameById(trader.ai_model, allModels || [])} • {getExchangeDisplayName(trader.exchange_id || '', allExchanges || [])}
                     </div>
                   </div>
                 </div>
