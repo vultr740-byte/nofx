@@ -920,8 +920,15 @@ func (s *Server) handleStopTrader(c *gin.Context) {
 		return
 	}
 
-	// 停止交易员
-	trader.Stop()
+	// 停止交易员（添加panic恢复）
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("⚠️  停止交易员时发生panic但已恢复: %v", r)
+			}
+		}()
+		trader.Stop()
+	}()
 
 	// 更新数据库中的运行状态
 	err = s.database.UpdateTraderStatus(userID, traderID, false)

@@ -273,7 +273,16 @@ func (at *AutoTrader) Stop() {
 		return
 	}
 	at.isRunning = false
-	close(at.stopMonitorCh) // 通知监控goroutine停止
+
+	// 安全地关闭停止通道（防止重复关闭导致panic）
+	select {
+	case <-at.stopMonitorCh:
+		// 通道已关闭，无需再次关闭
+	default:
+		// 通道未关闭，安全关闭
+		close(at.stopMonitorCh)
+	}
+
 	at.monitorWg.Wait()     // 等待监控goroutine结束
 	log.Println("⏹ 自动交易系统停止")
 }
