@@ -1511,9 +1511,9 @@ func (d *Database) IsModelUsedByTrader(userID, modelID string) (bool, error) {
 	var count int
 	var err error
 	if d.usePostgreSQL {
-		err = d.db.QueryRow(`SELECT COUNT(*) FROM traders WHERE user_id = $1 AND ai_model = $2`, userID, modelID).Scan(&count)
+		err = d.db.QueryRow(`SELECT COUNT(*) FROM traders WHERE user_id = $1 AND ai_model_id = $2`, userID, modelID).Scan(&count)
 	} else {
-		err = d.db.QueryRow(`SELECT COUNT(*) FROM traders WHERE user_id = ? AND ai_model = ?`, userID, modelID).Scan(&count)
+		err = d.db.QueryRow(`SELECT COUNT(*) FROM traders WHERE user_id = ? AND ai_model_id = ?`, userID, modelID).Scan(&count)
 	}
 	if err != nil {
 		return false, err
