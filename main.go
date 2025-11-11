@@ -11,6 +11,7 @@ import (
 	"nofx/manager"
 	"nofx/market"
 	"nofx/pool"
+	"nofx/telegram"
 	"os"
 	"os/signal"
 	"strconv"
@@ -272,6 +273,16 @@ func main() {
 		log.Fatalf("❌ 加载交易员失败: %v", err)
 	}
 
+	// 从数据库加载所有TG交易员到内存
+	log.Printf("🔄 开始加载TG交易员...")
+	err = traderManager.LoadTGTradersFromDatabase(database)
+	if err != nil {
+		log.Printf("⚠️ 加载TG交易员失败: %v", err)
+		// TG交易员加载失败不应该导致程序退出，因为它们可能不存在
+	} else {
+		log.Printf("✅ TG交易员加载完成")
+	}
+
 	// 获取数据库中的所有交易员配置（用于显示，使用default用户）
 	traders, err := database.GetTraders("default")
 	if err != nil {
@@ -333,6 +344,24 @@ func main() {
 		}
 	}()
 
+	// 初始化并启动 Telegram Bot
+	telegramConfig := config.LoadTelegramBotConfig()
+	var telegramBot *telegram.TelegramBotManager
+	if telegramConfig.Enabled {
+		var err error
+		telegramBot, err = telegram.NewTelegramBotManager(telegramConfig.BotToken, database, telegramConfig.Debug, telegramConfig.HyperliquidTestnet, traderManager)
+		if err != nil {
+			log.Printf("❌ Telegram Bot 初始化失败: %v", err)
+		} else {
+			go func() {
+				log.Printf("🚀 Telegram Bot 启动中...")
+				telegramBot.Start()
+			}()
+		}
+	} else {
+		log.Printf("ℹ️ Telegram Bot 已禁用")
+	}
+
 	// 启动流行情数据 - 默认使用所有交易员设置的币种 如果没有设置币种 则优先使用系统默认
 	go market.NewWSMonitor(150).Start(database.GetCustomCoins())
 	//go market.NewWSMonitor(150).Start([]string{}) //这里是一个使用方式 传入空的话 则使用market市场的所有币种
@@ -340,16 +369,23 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// 智能恢复：启动数据库中配置为运行状态的交易员
-	log.Println("🔄 检查并恢复运行中的交易员...")
+	// 智能恢复：只恢复普通交易员，不恢复TG交易员（TG交易员需要用户手动启动）
+	log.Println("🔄 检查并恢复运行中的普通交易员...")
 	runningTraders, err := database.GetRunningTraders()
 	if err != nil {
 		log.Printf("⚠️  获取运行中交易员失败: %v", err)
 	} else {
 		if len(runningTraders) > 0 {
-			log.Printf("📋 发现 %d 个运行中的交易员，开始恢复...", len(runningTraders))
+			restoredCount := 0
+			log.Printf("📋 发现 %d 个运行中的交易员，开始恢复（跳过TG交易员）...", len(runningTraders))
 
 			for _, traderRecord := range runningTraders {
+				// 跳过TG交易员，它们需要用户手动启动
+				if strings.HasPrefix(traderRecord.ID, "AI交易员-") {
+					log.Printf("⏭️  跳过TG交易员: %s (%s) - 需要用户手动启动", traderRecord.Name, traderRecord.ID)
+					continue
+				}
+
 				// 检查交易员是否已经在内存中
 				if trader, err := traderManager.GetTrader(traderRecord.ID); err == nil {
 					status := trader.GetStatus()
@@ -360,16 +396,24 @@ func main() {
 								log.Printf("❌ 交易员 %s 恢复失败: %v", trader.GetName(), err)
 							}
 						}()
+						restoredCount++
 					}
 				} else {
 					log.Printf("⚠️  交易员 %s (%s) 未在内存中，跳过恢复", traderRecord.Name, traderRecord.ID)
 				}
 			}
 
-			log.Printf("✅ 交易员恢复完成，共恢复 %d 个交易员", len(runningTraders))
+			log.Printf("✅ 交易员恢复完成，共恢复 %d 个普通交易员（TG交易员已跳过）", restoredCount)
 		} else {
 			log.Println("💡 没有发现运行中的交易员")
 		}
+	}
+
+	// 恢复运行中的TG交易员
+	if telegramBot != nil {
+		log.Println("🔄 检查并恢复运行中的TG交易员...")
+		tgRestoredCount := restoreTGTraders(database, telegramBot)
+		log.Printf("✅ TG交易员恢复完成，共恢复 %d 个TG交易员", tgRestoredCount)
 	}
 
 	// 等待退出信号
@@ -381,4 +425,95 @@ func main() {
 
 	fmt.Println()
 	fmt.Println("👋 感谢使用AI交易系统！")
+}
+
+// restoreTGTraders 恢复运行中的TG交易员
+func restoreTGTraders(database config.DatabaseInterface, telegramBot *telegram.TelegramBotManager) int {
+	// 获取所有TG用户
+	tgUserIDs, err := database.GetAllTGUsers()
+	if err != nil {
+		log.Printf("⚠️ 获取TG用户列表失败: %v", err)
+		return 0
+	}
+
+	restoredCount := 0
+	log.Printf("📋 发现 %d 个TG用户，检查运行中的TG交易员...", len(tgUserIDs))
+
+	for _, tgUserID := range tgUserIDs {
+		tgTraders, err := database.GetTgTraders(tgUserID)
+		if err != nil {
+			log.Printf("⚠️ 获取TG用户 %d 的交易员失败: %v", tgUserID, err)
+			continue
+		}
+
+		for _, tgTrader := range tgTraders {
+			if tgTrader.IsRunning {
+				log.Printf("🔄 发现运行中的TG交易员: %s (%s)", tgTrader.Name, tgTrader.ID)
+
+				// 尝试通过TelegramBotManager获取已加载的交易员实例（确保设置了TelegramBotManager）
+				if traderObj, err := telegramBot.GetTelegramTraderManager().GetTgTrader(tgTrader.ID); err == nil {
+					// 检查交易员是否真的在运行
+					status := traderObj.GetStatus()
+					if isRunning, ok := status["is_running"].(bool); ok && !isRunning {
+						// 交易员存在但未运行，启动它
+						log.Printf("▶️ 启动TG交易员: %s (%s)", tgTrader.Name, tgTrader.ID)
+						go func() {
+							if err := traderObj.Run(); err != nil {
+								log.Printf("❌ TG交易员 %s 启动失败: %v", tgTrader.Name, err)
+								// 更新数据库状态为停止
+								if updateErr := database.UpdateTgTraderStatus(tgUserID, tgTrader.ID, false); updateErr != nil {
+									log.Printf("更新TG交易员状态失败: %v", updateErr)
+								}
+							} else {
+								log.Printf("✅ TG交易员 %s 启动成功", tgTrader.Name)
+							}
+						}()
+						restoredCount++
+					} else if isRunning {
+						log.Printf("✅ TG交易员 %s 已在运行中", tgTrader.Name)
+						restoredCount++
+					}
+				} else {
+					// 交易员不在内存中，需要动态加载
+					log.Printf("🔍 TG交易员 %s 不在内存中，尝试动态加载...", tgTrader.Name)
+					// 类型断言：将DatabaseInterface转换为*config.Database
+					dbConcrete, ok := database.(*config.Database)
+					if !ok {
+						log.Printf("❌ 数据库类型断言失败，无法动态加载TG交易员")
+						continue
+					}
+					// 直接通过TelegramBotManager的traderMgr动态加载TG交易员
+					if err := telegramBot.GetTraderManager().LoadTGTradersFromDatabase(dbConcrete); err != nil {
+						log.Printf("❌ 动态加载TG交易员失败: %v", err)
+						continue
+					}
+
+					// 再次尝试通过TelegramBotManager获取并启动（确保设置了TelegramBotManager）
+					if traderObj, err := telegramBot.GetTelegramTraderManager().GetTgTrader(tgTrader.ID); err == nil {
+						log.Printf("▶️ 启动动态加载的TG交易员: %s (%s)", tgTrader.Name, tgTrader.ID)
+						go func() {
+							if err := traderObj.Run(); err != nil {
+								log.Printf("❌ TG交易员 %s 启动失败: %v", tgTrader.Name, err)
+								// 更新数据库状态为停止
+								if updateErr := database.UpdateTgTraderStatus(tgUserID, tgTrader.ID, false); updateErr != nil {
+									log.Printf("更新TG交易员状态失败: %v", updateErr)
+								}
+							} else {
+								log.Printf("✅ TG交易员 %s 动态加载并启动成功", tgTrader.Name)
+							}
+						}()
+						restoredCount++
+					} else {
+						log.Printf("❌ 动态加载TG交易员 %s 后仍无法获取实例", tgTrader.Name)
+						// 更新数据库状态为停止，避免不一致
+						if updateErr := database.UpdateTgTraderStatus(tgUserID, tgTrader.ID, false); updateErr != nil {
+							log.Printf("更新TG交易员状态失败: %v", updateErr)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return restoredCount
 }

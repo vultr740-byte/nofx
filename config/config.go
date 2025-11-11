@@ -66,3 +66,13 @@ func LoadConfig(filename string) (*Config, error) {
 
 	return &configFile, nil
 }
+
+// 全局配置变量，用于Telegram Bot等模块
+var (
+	InitialBalance       float64 = 10000.0 // 默认初始资金
+	ScanIntervalMinutes  int     = 5        // 默认扫描间隔
+	BTCETHLeverage       int     = 3        // 默认BTC/ETH杠杆
+	AltcoinLeverage      int     = 2        // 默认山寨币杠杆
+	PromptTemplate       string  = "default" // 默认提示词模板
+	Exchange             string  = "hyperliquid" // 默认交易所
+)

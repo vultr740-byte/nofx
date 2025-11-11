@@ -5,15 +5,51 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"nofx/config"
 	"nofx/decision"
 	"nofx/logger"
 	"nofx/market"
 	"nofx/mcp"
 	"nofx/pool"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
+
+// decodeUnicodeEscapes 解码Unicode转义序列，确保UTF-8安全
+func decodeUnicodeEscapes(text string) string {
+	if text == "" {
+		return text
+	}
+
+	// 处理常见的Unicode转义序列
+	text = strings.ReplaceAll(text, "\\u003e", ">")
+	text = strings.ReplaceAll(text, "\\u003c", "<")
+	text = strings.ReplaceAll(text, "\\u0026", "&")
+	text = strings.ReplaceAll(text, "\\u003d", "=")
+	text = strings.ReplaceAll(text, "\\u0022", "\"")
+	text = strings.ReplaceAll(text, "\\u0027", "'")
+	text = strings.ReplaceAll(text, "\\u000a", "\n")
+	text = strings.ReplaceAll(text, "\\u000d", "\r")
+	text = strings.ReplaceAll(text, "\\u0009", "\t")
+	text = strings.ReplaceAll(text, "\\u005c", "\\")
+
+	// 移除控制字符（除了换行、回车、制表符）
+	var safe strings.Builder
+	for _, r := range text {
+		if r == utf8.RuneError {
+			continue // 跳过无效的UTF-8字符
+		}
+		if r < 32 && r != '\n' && r != '\r' && r != '\t' {
+			continue // 跳过控制字符（除了换行、回车、制表符）
+		}
+		safe.WriteRune(r)
+	}
+
+	return safe.String()
+}
 
 // AutoTraderConfig 自动交易配置（简化版 - AI全权决策）
 type AutoTraderConfig struct {
@@ -107,6 +143,7 @@ type AutoTrader struct {
 	lastBalanceSyncTime   time.Time          // 上次余额同步时间
 	database              interface{}        // 数据库引用（用于自动更新余额）
 	userID                string             // 用户ID
+	telegramBotManager    interface{}        // Telegram Bot管理器引用（用于TG交易员推送决策）
 }
 
 // NewAutoTrader 创建自动交易器
@@ -161,6 +198,16 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 		config.Exchange = "binance"
 	}
 
+	// 设置杠杆默认值（防止为零）
+	if config.BTCETHLeverage <= 0 {
+		config.BTCETHLeverage = 3 // 默认3倍
+		log.Printf("⚙️ [%s] BTC/ETH杠杆设置为默认值: %dx", config.Name, config.BTCETHLeverage)
+	}
+	if config.AltcoinLeverage <= 0 {
+		config.AltcoinLeverage = 2 // 默认2倍
+		log.Printf("⚙️ [%s] 山寨币杠杆设置为默认值: %dx", config.Name, config.AltcoinLeverage)
+	}
+
 	// 根据配置创建对应的交易器
 	var trader Trader
 	var err error
@@ -192,9 +239,9 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 		return nil, fmt.Errorf("不支持的交易平台: %s", config.Exchange)
 	}
 
-	// 验证初始金额配置
+	// 如果初始余额为0或负数，将在启动时自动获取
 	if config.InitialBalance <= 0 {
-		return nil, fmt.Errorf("初始金额必须大于0，请在配置中设置InitialBalance")
+		log.Printf("💰 [%s] 初始余额为 %.2f，将在启动时自动获取当前交易所余额", config.Name, config.InitialBalance)
 	}
 
 	// 初始化决策日志记录器（使用trader ID创建独立目录）
@@ -233,13 +280,203 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 		lastBalanceSyncTime:   time.Now(), // 初始化为当前时间
 		database:              database,
 		userID:                userID,
+		telegramBotManager:    nil, // 初始化为空，后续通过SetTelegramBotManager设置
 	}, nil
+}
+
+// SetTelegramBotManager 设置Telegram Bot管理器（用于TG交易员推送决策）
+func (at *AutoTrader) SetTelegramBotManager(telegramBotManager interface{}) {
+	at.telegramBotManager = telegramBotManager
+}
+
+// pushDecisionToTelegram 推送AI决策到Telegram（仅适用于TG交易员）
+func (at *AutoTrader) pushDecisionToTelegram(record *logger.DecisionRecord) {
+	// 检查是否有Telegram Bot管理器
+	if at.telegramBotManager == nil {
+		return
+	}
+
+	// 检查是否为TG交易员（通过userID判断是否为数字）
+	// TG交易员的userID是Telegram ID，通常是数字
+	if at.userID == "" || at.userID == "default" {
+		return
+	}
+
+	// 使用类型断言来获取TelegramBotManager
+	tgBotMgr, ok := at.telegramBotManager.(interface {
+		PushDecisionToUser(telegramID int64, decisionMsg string) error
+	})
+	if !ok {
+		log.Printf("⚠️ TelegramBotManager类型不匹配，无法推送决策")
+		return
+	}
+
+	// 格式化决策消息
+	decisionMsg := at.formatDecisionForTelegram(record)
+
+	// 将userID转换为int64（Telegram ID）
+	telegramID, err := strconv.ParseInt(at.userID, 10, 64)
+	if err != nil {
+		log.Printf("⚠️ 无法解析Telegram ID: %v", err)
+		return
+	}
+
+	// 推送消息到Telegram
+	go func() {
+		if err := tgBotMgr.PushDecisionToUser(telegramID, decisionMsg); err != nil {
+			log.Printf("⚠️ 推送决策到Telegram失败: %v", err)
+		} else {
+			log.Printf("✅ 成功推送AI决策到Telegram (用户ID: %s)", at.userID)
+		}
+	}()
+}
+
+// formatDecisionForTelegram 格式化AI决策为Telegram消息
+// ⚠️ 重要编码注意事项：
+// 1. Telegram API 要求所有文本必须是有效的UTF-8编码
+// 2. 避免使用特殊字符、控制字符、不可打印字符
+// 3. 使用标准ASCII和常见Unicode符号（如 ✅❌📊等）
+// 4. 不要直接复制粘贴系统提示词中的特殊字符（如 \u0026 等转义序列）
+// 5. 如果遇到编码错误，检查：
+//    - 数据源是否包含不可见字符
+//    - 字符串拼接是否正确处理了转义
+//    - 是否有直接从外部源复制的内容
+func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) string {
+	var statusEmoji string
+	if record.Success {
+		statusEmoji = "✅"
+	} else {
+		statusEmoji = "❌"
+	}
+
+	msg := fmt.Sprintf(`%s **AI决策报告** - %s
+
+📊 **周期信息**
+• 决策时间: %s
+• 周期编号: #%d
+
+🤖 **AI思维链**`,
+		statusEmoji,
+		at.name,
+		record.Timestamp.Format("2006-01-02 15:04:05"),
+		record.CycleNumber,
+	)
+
+	// 添加AI思维链（提高长度限制确保完整显示）
+	// ⚠️ 重要：CoTTrace在存储时已经通过decodeUnicodeEscapes确保UTF-8安全
+	if record.CoTTrace != "" {
+		cotTrace := record.CoTTrace
+		// 提高长度限制到3000字符，避免截断AI的完整思维过程
+		if len(cotTrace) > 3000 {
+			cotTrace = cotTrace[:2997] + "..."
+		}
+		msg += fmt.Sprintf("\n```\n%s\n```", cotTrace)
+	}
+
+	// 添加决策信息
+	// ⚠️ 重要：DecisionJSON在存储时已经通过decodeUnicodeEscapes处理过，无需重复解码
+	if record.DecisionJSON != "" {
+		msg += fmt.Sprintf("\n\n📋 **决策JSON**\n```json\n%s\n```", record.DecisionJSON)
+	}
+
+	// 添加执行结果
+	if len(record.Decisions) > 0 {
+		msg += "\n\n⚡ **执行结果**"
+		for _, decision := range record.Decisions {
+			decisionStatus := "❌"
+			if decision.Success {
+				decisionStatus = "✅"
+			}
+			msg += fmt.Sprintf("\n%s %s %s", decisionStatus, decision.Symbol, decision.Action)
+			if decision.Error != "" {
+				msg += fmt.Sprintf(" (%s)", decision.Error)
+			}
+		}
+	}
+
+	// 添加账户状态
+	msg += fmt.Sprintf("\n\n💰 **账户状态**")
+	msg += fmt.Sprintf("\n• 总余额: %.2f USDT", record.AccountState.TotalBalance)
+	msg += fmt.Sprintf("\n• 可用余额: %.2f USDT", record.AccountState.AvailableBalance)
+	if record.AccountState.PositionCount > 0 {
+		msg += fmt.Sprintf("\n• 持仓数量: %d", record.AccountState.PositionCount)
+		msg += fmt.Sprintf("\n• 未实现盈亏: %.2f USDT", record.AccountState.TotalUnrealizedProfit)
+	}
+
+	// 添加错误信息
+	// ⚠️ 重要：确保错误消息是UTF-8安全的
+	if record.ErrorMessage != "" {
+		// 简单的UTF-8清理：移除控制字符
+		safeError := record.ErrorMessage
+		safeError = strings.ReplaceAll(safeError, "\x00", "")
+		safeError = strings.ReplaceAll(safeError, "\x01", "")
+		safeError = strings.ReplaceAll(safeError, "\x02", "")
+		safeError = strings.ReplaceAll(safeError, "\x03", "")
+		safeError = strings.ReplaceAll(safeError, "\x04", "")
+		safeError = strings.ReplaceAll(safeError, "\x05", "")
+		safeError = strings.ReplaceAll(safeError, "\x06", "")
+		safeError = strings.ReplaceAll(safeError, "\x07", "")
+		safeError = strings.ReplaceAll(safeError, "\x08", "")
+		safeError = strings.ReplaceAll(safeError, "\x0B", "")
+		safeError = strings.ReplaceAll(safeError, "\x0C", "")
+		safeError = strings.ReplaceAll(safeError, "\x0D", "")
+		safeError = strings.ReplaceAll(safeError, "\x0E", "")
+		safeError = strings.ReplaceAll(safeError, "\x0F", "")
+		// 更多控制字符可以根据需要添加...
+
+		msg += fmt.Sprintf("\n\n⚠️ **错误信息**: %s", safeError)
+	}
+
+	msg += fmt.Sprintf("\n\n🤖 *由 %s 自动推送*", at.name)
+
+	return msg
 }
 
 // Run 运行自动交易主循环
 func (at *AutoTrader) Run() error {
 	at.isRunning = true
 	log.Println("🚀 AI驱动自动交易系统启动")
+
+	// 如果初始余额为0，先获取当前余额
+	if at.initialBalance <= 0 {
+		log.Printf("💰 正在自动获取当前交易所余额...")
+		balanceInfo, err := at.trader.GetBalance()
+		if err != nil {
+			log.Printf("❌ 获取初始余额失败: %v", err)
+			return fmt.Errorf("获取初始余额失败: %w", err)
+		}
+
+		// 提取可用余额
+		var actualBalance float64
+		if availableBalance, ok := balanceInfo["available_balance"].(float64); ok && availableBalance > 0 {
+			actualBalance = availableBalance
+		} else if availableBalance, ok := balanceInfo["availableBalance"].(float64); ok && availableBalance > 0 {
+			actualBalance = availableBalance
+		} else if totalBalance, ok := balanceInfo["balance"].(float64); ok && totalBalance > 0 {
+			actualBalance = totalBalance
+		} else if totalEquity, ok := balanceInfo["total_equity"].(float64); ok && totalEquity > 0 {
+			actualBalance = totalEquity
+		} else if accountValue, ok := balanceInfo["accountValue"].(float64); ok && accountValue > 0 {
+			actualBalance = accountValue
+		}
+
+		if actualBalance > 0 {
+			at.initialBalance = actualBalance
+			log.Printf("✅ 自动获取初始余额成功: %.2f USDT", at.initialBalance)
+
+			// 更新数据库中的初始余额
+			if db, ok := at.database.(config.DatabaseInterface); ok {
+				if err := db.UpdateTraderInitialBalance(at.userID, at.id, at.initialBalance); err != nil {
+					log.Printf("⚠️ [%s] 更新数据库初始余额失败: %v", at.name, err)
+				} else {
+					log.Printf("✅ [%s] 已更新数据库初始余额", at.name)
+				}
+			}
+		} else {
+			log.Printf("⚠️ 警告: 交易所余额为0或无法解析，继续使用初始余额: %.2f", at.initialBalance)
+		}
+	}
+
 	log.Printf("💰 初始余额: %.2f USDT", at.initialBalance)
 	log.Printf("⚙️  扫描间隔: %v", at.config.ScanInterval)
 	log.Println("🤖 AI将全权决定杠杆、仓位大小、止损止盈等参数")
@@ -403,6 +640,8 @@ func (at *AutoTrader) runCycle() error {
 		record.Success = false
 		record.ErrorMessage = fmt.Sprintf("风险控制暂停中，剩余 %.0f 分钟", remaining.Minutes())
 		at.decisionLogger.LogDecision(record)
+		// 推送风险控制暂停信息到Telegram
+		at.pushDecisionToTelegram(record)
 		return nil
 	}
 
@@ -422,6 +661,8 @@ func (at *AutoTrader) runCycle() error {
 		record.Success = false
 		record.ErrorMessage = fmt.Sprintf("构建交易上下文失败: %v", err)
 		at.decisionLogger.LogDecision(record)
+		// 推送交易上下文构建失败信息到Telegram
+		at.pushDecisionToTelegram(record)
 		return fmt.Errorf("构建交易上下文失败: %w", err)
 	}
 
@@ -462,9 +703,10 @@ func (at *AutoTrader) runCycle() error {
 
 	// 即使有错误，也保存思维链、决策和输入prompt（用于debug）
 	if decision != nil {
-		record.SystemPrompt = decision.SystemPrompt // 保存系统提示词
-		record.InputPrompt = decision.UserPrompt
-		record.CoTTrace = decision.CoTTrace
+		// ⚠️ 关键修复：在存储时就解码Unicode转义序列，避免后续编码问题
+		record.SystemPrompt = decodeUnicodeEscapes(decision.SystemPrompt)
+		record.InputPrompt = decodeUnicodeEscapes(decision.UserPrompt)
+		record.CoTTrace = decodeUnicodeEscapes(decision.CoTTrace)
 		if len(decision.Decisions) > 0 {
 			decisionJSON, _ := json.MarshalIndent(decision.Decisions, "", "  ")
 			record.DecisionJSON = string(decisionJSON)
@@ -493,6 +735,8 @@ func (at *AutoTrader) runCycle() error {
 		}
 
 		at.decisionLogger.LogDecision(record)
+		// 推送AI决策失败信息到Telegram
+		at.pushDecisionToTelegram(record)
 		return fmt.Errorf("获取AI决策失败: %w", err)
 	}
 
@@ -563,6 +807,9 @@ func (at *AutoTrader) runCycle() error {
 	if err := at.decisionLogger.LogDecision(record); err != nil {
 		log.Printf("⚠ 保存决策记录失败: %v", err)
 	}
+
+	// 10. 推送决策到Telegram（仅适用于TG交易员）
+	at.pushDecisionToTelegram(record)
 
 	return nil
 }

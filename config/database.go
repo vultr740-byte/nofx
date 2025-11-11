@@ -47,9 +47,26 @@ type DatabaseInterface interface {
 	UpdateUserSignalSource(userID, coinPoolURL, oiTopURL string) error
 	GetCustomCoins() []string
 	LoadBetaCodesFromFile(filePath string) error
+	EnsureUserInUsersTable(userID string) error
 	ValidateBetaCode(code string) (bool, error)
 	UseBetaCode(code, userEmail string) error
 	GetBetaCodeStats() (total, used int, err error)
+	// Telegram 用户相关方法
+	CreateTGUserTable() error
+	CreateTGUser(telegramID int64, username, firstName string, chatID int64, languageCode string) error
+	GetTGUsers() ([]string, error)
+	GetAllTGUsers() ([]int64, error)
+	GetTGUserByTelegramID(telegramID int64) (interface{}, error)
+	GetTGUserByChatID(chatID int64) (interface{}, error)
+	UpdateTGUserSession(telegramID int64, sessionData interface{}) error
+	UpdateTGUserAction(telegramID int64, action string) error
+	UpdateTGUserLastInteraction(telegramID int64) error
+	// TG交易员相关方法
+	CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) error
+	GetTgTraders(tgUserID int64) ([]TgTraderRecord, error)
+	UpdateTgTraderStatus(tgUserID int64, traderID string, isRunning bool) error
+	DeleteTgTrader(tgUserID int64, traderID string) error
+	GetTgTraderConfig(tgUserID int64, traderID string) (*TgTraderRecord, error)
 	Close() error
 }
 
@@ -278,6 +295,36 @@ func (d *Database) createPostgreSQLTables() error {
 		`CREATE TRIGGER update_system_config_updated_at
 		BEFORE UPDATE ON system_config
 		FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+
+		// Telegram 用户表
+		`CREATE TABLE IF NOT EXISTS tg_users (
+			id TEXT PRIMARY KEY DEFAULT uuid_generate_v4(),
+			telegram_id BIGINT UNIQUE NOT NULL,
+			telegram_username VARCHAR(255),
+			telegram_first_name VARCHAR(255),
+			telegram_chat_id BIGINT NOT NULL,
+			language_code VARCHAR(10) DEFAULT 'en',
+			current_action VARCHAR(100) DEFAULT 'idle',
+			session_data JSONB DEFAULT '{}',
+			session_expires_at TIMESTAMPTZ,
+			notification_enabled BOOLEAN DEFAULT TRUE,
+			last_interaction_at TIMESTAMPTZ,
+			is_active BOOLEAN DEFAULT TRUE,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		// Telegram 用户表索引
+		`CREATE INDEX IF NOT EXISTS idx_tg_users_telegram_id ON tg_users(telegram_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tg_users_chat_id ON tg_users(telegram_chat_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tg_users_current_action ON tg_users(current_action)`,
+		`CREATE INDEX IF NOT EXISTS idx_tg_users_is_active ON tg_users(is_active)`,
+
+		// Telegram 用户表触发器
+		`DROP TRIGGER IF EXISTS update_tg_users_updated_at ON tg_users`,
+		`CREATE TRIGGER update_tg_users_updated_at
+		BEFORE UPDATE ON tg_users
+		FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 	}
 
 	for _, query := range queries {
@@ -430,6 +477,37 @@ func (d *Database) createSQLiteTables() error {
 			BEGIN
 				UPDATE system_config SET updated_at = CURRENT_TIMESTAMP WHERE key = NEW.key;
 			END`,
+
+		// Telegram 用户表
+		`CREATE TABLE IF NOT EXISTS tg_users (
+			id TEXT PRIMARY KEY,
+			telegram_id INTEGER UNIQUE NOT NULL,
+			telegram_username TEXT,
+			telegram_first_name TEXT,
+			telegram_chat_id INTEGER NOT NULL,
+			language_code TEXT DEFAULT 'en',
+			current_action TEXT DEFAULT 'idle',
+			session_data TEXT DEFAULT '{}',
+			session_expires_at DATETIME,
+			notification_enabled BOOLEAN DEFAULT 1,
+			last_interaction_at DATETIME,
+			is_active BOOLEAN DEFAULT 1,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+
+		// Telegram 用户表索引
+		`CREATE INDEX IF NOT EXISTS idx_tg_users_telegram_id ON tg_users(telegram_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tg_users_chat_id ON tg_users(telegram_chat_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tg_users_current_action ON tg_users(current_action)`,
+		`CREATE INDEX IF NOT EXISTS idx_tg_users_is_active ON tg_users(is_active)`,
+
+		// Telegram 用户表触发器
+		`CREATE TRIGGER IF NOT EXISTS update_tg_users_updated_at
+			AFTER UPDATE ON tg_users
+			BEGIN
+				UPDATE tg_users SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+			END`,
 	}
 
 	for _, query := range queries {
@@ -574,6 +652,72 @@ func (d *Database) initDefaultData() error {
 		if err != nil {
 			return fmt.Errorf("初始化系统配置失败: %w", err)
 		}
+	}
+
+	return nil
+}
+
+// createTgTradersTable 创建 tg_traders 表（Telegram专用）
+func (d *Database) createTgTradersTable() error {
+	var err error
+	if d.usePostgreSQL {
+		_, err = d.db.Exec(`
+			CREATE TABLE IF NOT EXISTS tg_traders (
+				id TEXT PRIMARY KEY DEFAULT uuid_generate_v4(),
+				tg_user_id TEXT NOT NULL,
+				name TEXT NOT NULL,
+				ai_model_id TEXT NOT NULL,
+				exchange_id TEXT NOT NULL,
+				initial_balance DECIMAL(20,8) NOT NULL,
+				scan_interval_minutes INTEGER DEFAULT 3,
+				is_running BOOLEAN DEFAULT FALSE,
+				btc_eth_leverage INTEGER DEFAULT 5,
+				altcoin_leverage INTEGER DEFAULT 5,
+				trading_symbols TEXT DEFAULT '',
+				use_coin_pool BOOLEAN DEFAULT FALSE,
+				use_oi_top BOOLEAN DEFAULT FALSE,
+				custom_prompt TEXT DEFAULT '',
+				override_base_prompt BOOLEAN DEFAULT FALSE,
+				is_cross_margin BOOLEAN DEFAULT TRUE,
+				use_default_coins BOOLEAN DEFAULT TRUE,
+				custom_coins TEXT DEFAULT '',
+				system_prompt_template TEXT DEFAULT 'default',
+				created_at TIMESTAMPTZ DEFAULT NOW(),
+				updated_at TIMESTAMPTZ DEFAULT NOW(),
+				FOREIGN KEY (tg_user_id) REFERENCES tg_users(telegram_id) ON DELETE CASCADE,
+				FOREIGN KEY (ai_model_id) REFERENCES ai_models(id),
+				FOREIGN KEY (exchange_id) REFERENCES exchanges(id)
+			)
+		`)
+	} else {
+		_, err = d.db.Exec(`
+			CREATE TABLE IF NOT EXISTS tg_traders (
+				id TEXT PRIMARY KEY,
+				tg_user_id TEXT NOT NULL,
+				name TEXT NOT NULL,
+				ai_model_id TEXT NOT NULL,
+				exchange_id TEXT NOT NULL,
+				initial_balance REAL NOT NULL,
+				scan_interval_minutes INTEGER DEFAULT 3,
+				is_running BOOLEAN DEFAULT 0,
+				btc_eth_leverage INTEGER DEFAULT 5,
+				altcoin_leverage INTEGER DEFAULT 5,
+				trading_symbols TEXT DEFAULT '',
+				use_coin_pool BOOLEAN DEFAULT 0,
+				use_oi_top BOOLEAN DEFAULT 0,
+				custom_prompt TEXT DEFAULT '',
+				override_base_prompt BOOLEAN DEFAULT 0,
+				is_cross_margin BOOLEAN DEFAULT 1,
+				use_default_coins BOOLEAN DEFAULT 1,
+				custom_coins TEXT DEFAULT '',
+				system_prompt_template TEXT DEFAULT 'default',
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			)
+		`)
+	}
+	if err != nil {
+		return fmt.Errorf("创建tg_traders表失败: %w", err)
 	}
 
 	return nil
@@ -731,6 +875,32 @@ type TraderRecord struct {
 	UpdatedAt            time.Time `json:"updated_at"`
 }
 
+// TgTraderRecord TG交易员记录
+type TgTraderRecord struct {
+	ID                   string    `json:"id"`
+	TgUserID             int64     `json:"tg_user_id"`        // TG用户ID
+	Name                 string    `json:"name"`
+	AIModelID            string    `json:"ai_model_id"`
+	ExchangeID           string    `json:"exchange_id"`
+	InitialBalance       float64   `json:"initial_balance"`
+	ScanIntervalMinutes  int       `json:"scan_interval_minutes"`
+	IsRunning            bool      `json:"is_running"`
+	BTCETHLeverage       int       `json:"btc_eth_leverage"`
+	AltcoinLeverage      int       `json:"altcoin_leverage"`
+	TradingSymbols       string    `json:"trading_symbols"`
+	UseCoinPool          bool      `json:"use_coin_pool"`
+	UseOITop             bool      `json:"use_oi_top"`
+	CustomPrompt         string    `json:"custom_prompt"`
+	OverrideBasePrompt   bool      `json:"override_base_prompt"`
+	IsCrossMargin        bool      `json:"is_cross_margin"`
+	UseDefaultCoins      bool      `json:"use_default_coins"`
+	CustomCoins          string    `json:"custom_coins"`
+	SystemPromptTemplate string    `json:"system_prompt_template"`
+	AIModelAPIKey        string    `json:"ai_model_api_key"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
 // UserSignalSource 用户信号源配置
 type UserSignalSource struct {
 	ID          int       `json:"id"`
@@ -865,6 +1035,33 @@ func (d *Database) GetAllUsers() ([]string, error) {
 		userIDs = append(userIDs, userID)
 	}
 	return userIDs, nil
+}
+
+// GetAllTGUsers 获取所有TG用户ID列表
+func (d *Database) GetAllTGUsers() ([]int64, error) {
+	var query string
+	if d.usePostgreSQL {
+		query = `SELECT DISTINCT telegram_id FROM tg_users ORDER BY telegram_id`
+	} else {
+		query = `SELECT DISTINCT telegram_id FROM tg_users ORDER BY telegram_id`
+	}
+
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tgUserIDs []int64
+	for rows.Next() {
+		var telegramID int64
+		if err := rows.Scan(&telegramID); err != nil {
+			return nil, err
+		}
+		tgUserIDs = append(tgUserIDs, telegramID)
+	}
+
+	return tgUserIDs, nil
 }
 
 // UpdateUserOTPVerified 更新用户OTP验证状态
@@ -1919,4 +2116,567 @@ func (d *Database) decryptSensitiveData(encrypted string) string {
 	}
 	
 	return decrypted
+}
+
+// TGUser 数据库相关实现
+
+// CreateTGUserTable 创建 tg_users 表
+func (d *Database) CreateTGUserTable() error {
+	var query string
+	if d.usePostgreSQL {
+		query = `
+		CREATE TABLE IF NOT EXISTS tg_users (
+			id TEXT PRIMARY KEY DEFAULT uuid_generate_v4(),
+			telegram_id BIGINT UNIQUE NOT NULL,
+			telegram_username VARCHAR(255),
+			telegram_first_name VARCHAR(255),
+			telegram_chat_id BIGINT NOT NULL,
+			language_code VARCHAR(10) DEFAULT 'en',
+			current_action VARCHAR(100) DEFAULT 'idle',
+			session_data JSONB DEFAULT '{}',
+			session_expires_at TIMESTAMPTZ,
+			notification_enabled BOOLEAN DEFAULT TRUE,
+			last_interaction_at TIMESTAMPTZ,
+			is_active BOOLEAN DEFAULT TRUE,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		);
+
+		-- 创建索引
+		CREATE INDEX IF NOT EXISTS idx_tg_users_telegram_id ON tg_users(telegram_id);
+		CREATE INDEX IF NOT EXISTS idx_tg_users_chat_id ON tg_users(telegram_chat_id);
+		CREATE INDEX IF NOT EXISTS idx_tg_users_current_action ON tg_users(current_action);
+		CREATE INDEX IF NOT EXISTS idx_tg_users_is_active ON tg_users(is_active);
+
+		-- 创建更新时间触发器
+		DROP TRIGGER IF EXISTS update_tg_users_updated_at ON tg_users;
+		CREATE TRIGGER update_tg_users_updated_at
+		BEFORE UPDATE ON tg_users
+		FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+		`
+	} else {
+		query = `
+		CREATE TABLE IF NOT EXISTS tg_users (
+			id TEXT PRIMARY KEY,
+			telegram_id INTEGER UNIQUE NOT NULL,
+			telegram_username TEXT,
+			telegram_first_name TEXT,
+			telegram_chat_id INTEGER NOT NULL,
+			language_code TEXT DEFAULT 'en',
+			current_action TEXT DEFAULT 'idle',
+			session_data TEXT DEFAULT '{}',
+			session_expires_at DATETIME,
+			notification_enabled BOOLEAN DEFAULT 1,
+			last_interaction_at DATETIME,
+			is_active BOOLEAN DEFAULT 1,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		-- 创建索引
+		CREATE INDEX IF NOT EXISTS idx_tg_users_telegram_id ON tg_users(telegram_id);
+		CREATE INDEX IF NOT EXISTS idx_tg_users_chat_id ON tg_users(telegram_chat_id);
+		CREATE INDEX IF NOT EXISTS idx_tg_users_current_action ON tg_users(current_action);
+		CREATE INDEX IF NOT EXISTS idx_tg_users_is_active ON tg_users(is_active);
+
+		-- 创建更新触发器
+		CREATE TRIGGER IF NOT EXISTS update_tg_users_updated_at
+			AFTER UPDATE ON tg_users
+			BEGIN
+				UPDATE tg_users SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+			END;
+		`
+	}
+
+	_, err := d.db.Exec(query)
+	if err != nil {
+		return fmt.Errorf("创建 tg_users 表失败: %w", err)
+	}
+
+	log.Printf("✅ tg_users 表创建成功")
+	return nil
+}
+
+// CreateTGUser 创建 Telegram 用户
+func (d *Database) CreateTGUser(telegramID int64, username, firstName string, chatID int64, languageCode string) error {
+	sessionData := map[string]interface{}{}
+	sessionDataJSON, err := json.Marshal(sessionData)
+	if err != nil {
+		return fmt.Errorf("序列化 session_data 失败: %w", err)
+	}
+
+	var query string
+	if d.usePostgreSQL {
+		query = `
+			INSERT INTO tg_users (telegram_id, telegram_username, telegram_first_name, telegram_chat_id,
+			                      language_code, current_action, session_data, notification_enabled, is_active)
+			VALUES ($1, $2, $3, $4, $5, 'account_created', $6, TRUE, TRUE)
+			RETURNING id
+		`
+		err = d.db.QueryRow(query, telegramID, username, firstName, chatID, languageCode, sessionDataJSON).Scan(new(string))
+	} else {
+		query = `
+			INSERT INTO tg_users (id, telegram_id, telegram_username, telegram_first_name, telegram_chat_id,
+			                      language_code, current_action, session_data, notification_enabled, is_active)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`
+		id := fmt.Sprintf("tg_%d_%d", telegramID, time.Now().Unix())
+		_, err = d.db.Exec(query, id, telegramID, username, firstName, chatID, languageCode, "account_created", sessionDataJSON, true, true)
+	}
+
+	if err != nil {
+		return fmt.Errorf("创建 TGUser 失败: %w", err)
+	}
+
+	return nil
+}
+
+// GetTGUserByTelegramID 通过 Telegram ID 获取用户
+func (d *Database) GetTGUserByTelegramID(telegramID int64) (interface{}, error) {
+	var id, telegramUsername, telegramFirstName, languageCode, currentAction string
+	var telegramChatID int64
+	var sessionData json.RawMessage
+	var notificationEnabled, isActive bool
+	var lastInteractionAt, createdAt, updatedAt time.Time
+
+	var query string
+	if d.usePostgreSQL {
+		query = `
+			SELECT id, telegram_id, telegram_username, telegram_first_name, telegram_chat_id,
+			       language_code, current_action, session_data, notification_enabled,
+			       last_interaction_at, is_active, created_at, updated_at
+			FROM tg_users WHERE telegram_id = $1
+		`
+		err := d.db.QueryRow(query, telegramID).Scan(
+			&id, &telegramID, &telegramUsername, &telegramFirstName, &telegramChatID,
+			&languageCode, &currentAction, &sessionData, &notificationEnabled,
+			&lastInteractionAt, &isActive, &createdAt, &updatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		query = `
+			SELECT id, telegram_id, telegram_username, telegram_first_name, telegram_chat_id,
+			       language_code, current_action, session_data, notification_enabled,
+			       last_interaction_at, is_active, created_at, updated_at
+			FROM tg_users WHERE telegram_id = ?
+		`
+		err := d.db.QueryRow(query, telegramID).Scan(
+			&id, &telegramID, &telegramUsername, &telegramFirstName, &telegramChatID,
+			&languageCode, &currentAction, &sessionData, &notificationEnabled,
+			&lastInteractionAt, &isActive, &createdAt, &updatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	user := map[string]interface{}{
+		"id":                   id,
+		"telegram_id":          telegramID,
+		"telegram_username":    telegramUsername,
+		"telegram_first_name":  telegramFirstName,
+		"telegram_chat_id":     telegramChatID,
+		"language_code":        languageCode,
+		"current_action":       currentAction,
+		"session_data":         sessionData,
+		"notification_enabled": notificationEnabled,
+		"last_interaction_at":  lastInteractionAt,
+		"is_active":            isActive,
+		"created_at":           createdAt,
+		"updated_at":           updatedAt,
+	}
+
+	return user, nil
+}
+
+// GetTGUserByChatID 通过 Chat ID 获取用户
+func (d *Database) GetTGUserByChatID(chatID int64) (interface{}, error) {
+	var id, telegramUsername, telegramFirstName, languageCode, currentAction string
+	var telegramID int64
+	var sessionData json.RawMessage
+	var notificationEnabled, isActive bool
+	var lastInteractionAt, createdAt, updatedAt time.Time
+
+	var query string
+	if d.usePostgreSQL {
+		query = `
+			SELECT id, telegram_id, telegram_username, telegram_first_name, telegram_chat_id,
+			       language_code, current_action, session_data, notification_enabled,
+			       last_interaction_at, is_active, created_at, updated_at
+			FROM tg_users WHERE telegram_chat_id = $1
+		`
+		err := d.db.QueryRow(query, chatID).Scan(
+			&id, &telegramID, &telegramUsername, &telegramFirstName, &chatID,
+			&languageCode, &currentAction, &sessionData, &notificationEnabled,
+			&lastInteractionAt, &isActive, &createdAt, &updatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		query = `
+			SELECT id, telegram_id, telegram_username, telegram_first_name, telegram_chat_id,
+			       language_code, current_action, session_data, notification_enabled,
+			       last_interaction_at, is_active, created_at, updated_at
+			FROM tg_users WHERE telegram_chat_id = ?
+		`
+		err := d.db.QueryRow(query, chatID).Scan(
+			&id, &telegramID, &telegramUsername, &telegramFirstName, &chatID,
+			&languageCode, &currentAction, &sessionData, &notificationEnabled,
+			&lastInteractionAt, &isActive, &createdAt, &updatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	user := map[string]interface{}{
+		"id":                   id,
+		"telegram_id":          telegramID,
+		"telegram_username":    telegramUsername,
+		"telegram_first_name":  telegramFirstName,
+		"telegram_chat_id":     chatID,
+		"language_code":        languageCode,
+		"current_action":       currentAction,
+		"session_data":         sessionData,
+		"notification_enabled": notificationEnabled,
+		"last_interaction_at":  lastInteractionAt,
+		"is_active":            isActive,
+		"created_at":           createdAt,
+		"updated_at":           updatedAt,
+	}
+
+	return user, nil
+}
+
+// UpdateTGUserSession 更新用户会话数据
+func (d *Database) UpdateTGUserSession(telegramID int64, sessionData interface{}) error {
+	sessionDataJSON, err := json.Marshal(sessionData)
+	if err != nil {
+		return fmt.Errorf("序列化 session_data 失败: %w", err)
+	}
+
+	var query string
+	if d.usePostgreSQL {
+		query = `
+			UPDATE tg_users
+			SET session_data = $1, last_interaction_at = NOW()
+			WHERE telegram_id = $2
+		`
+		_, err = d.db.Exec(query, sessionDataJSON, telegramID)
+	} else {
+		query = `
+			UPDATE tg_users
+			SET session_data = ?, last_interaction_at = CURRENT_TIMESTAMP
+			WHERE telegram_id = ?
+		`
+		_, err = d.db.Exec(query, sessionDataJSON, telegramID)
+	}
+
+	return err
+}
+
+// UpdateTGUserAction 更新用户当前操作
+func (d *Database) UpdateTGUserAction(telegramID int64, action string) error {
+	var query string
+	if d.usePostgreSQL {
+		query = `
+			UPDATE tg_users
+			SET current_action = $1, last_interaction_at = NOW()
+			WHERE telegram_id = $2
+		`
+		_, err := d.db.Exec(query, action, telegramID)
+		return err
+	} else {
+		query = `
+			UPDATE tg_users
+			SET current_action = ?, last_interaction_at = CURRENT_TIMESTAMP
+			WHERE telegram_id = ?
+		`
+		_, err := d.db.Exec(query, action, telegramID)
+		return err
+	}
+}
+
+// UpdateTGUserLastInteraction 更新用户最后交互时间
+func (d *Database) UpdateTGUserLastInteraction(telegramID int64) error {
+	var query string
+	if d.usePostgreSQL {
+		query = `UPDATE tg_users SET last_interaction_at = NOW() WHERE telegram_id = $1`
+		_, err := d.db.Exec(query, telegramID)
+		return err
+	} else {
+		query = `UPDATE tg_users SET last_interaction_at = CURRENT_TIMESTAMP WHERE telegram_id = ?`
+		_, err := d.db.Exec(query, telegramID)
+		return err
+	}
+}
+
+// EnsureUserInUsersTable 确保用户在users表中存在
+func (d *Database) EnsureUserInUsersTable(userID string) error {
+	// 检查用户是否在users表中存在
+	var count int
+	err := d.db.QueryRow(`
+		SELECT COUNT(*) FROM users WHERE id = ?
+	`, userID).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("查询users表失败: %w", err)
+	}
+
+	// 如果不存在，创建一个记录
+	if count == 0 {
+		_, err = d.db.Exec(`
+			INSERT INTO users (id, email, password_hash, otp_verified)
+			VALUES (?, ?, ?, 1)
+		`, userID, userID+"@telegram.local", "telegram_user")
+		if err != nil {
+			return fmt.Errorf("创建用户记录失败: %w", err)
+		}
+		log.Printf("✅ 为Telegram用户创建users表记录: %s", userID)
+	}
+
+	return nil
+}
+
+// CreateTgTrader 创建TG交易员
+func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) error {
+	if d.usePostgreSQL {
+		query := `
+			INSERT INTO tg_traders (
+				id, tg_user_id, name, ai_model_id, exchange_id,
+				initial_balance, scan_interval_minutes, is_running,
+				btc_eth_leverage, altcoin_leverage, trading_symbols,
+				use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
+				is_cross_margin, use_default_coins, custom_coins,
+				system_prompt_template, created_at, updated_at
+			) VALUES (
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW()
+			)`
+		_, err := d.db.Exec(query,
+			traderRecord.ID, traderRecord.TgUserID, traderRecord.Name, traderRecord.AIModelID,
+			traderRecord.ExchangeID, traderRecord.InitialBalance, traderRecord.ScanIntervalMinutes,
+			traderRecord.IsRunning, traderRecord.BTCETHLeverage, traderRecord.AltcoinLeverage,
+			traderRecord.TradingSymbols, traderRecord.UseCoinPool, traderRecord.UseOITop,
+			traderRecord.CustomPrompt, traderRecord.OverrideBasePrompt, traderRecord.IsCrossMargin,
+			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.SystemPromptTemplate,
+		)
+		return err
+	} else {
+		query := `
+			INSERT INTO tg_traders (
+				id, tg_user_id, name, ai_model_id, exchange_id,
+				initial_balance, scan_interval_minutes, is_running,
+				btc_eth_leverage, altcoin_leverage, trading_symbols,
+				use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
+				is_cross_margin, use_default_coins, custom_coins,
+				system_prompt_template, created_at, updated_at
+			) VALUES (
+				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+			)`
+		_, err := d.db.Exec(query,
+			traderRecord.ID, traderRecord.TgUserID, traderRecord.Name, traderRecord.AIModelID,
+			traderRecord.ExchangeID, traderRecord.InitialBalance, traderRecord.ScanIntervalMinutes,
+			traderRecord.IsRunning, traderRecord.BTCETHLeverage, traderRecord.AltcoinLeverage,
+			traderRecord.TradingSymbols, traderRecord.UseCoinPool, traderRecord.UseOITop,
+			traderRecord.CustomPrompt, traderRecord.OverrideBasePrompt, traderRecord.IsCrossMargin,
+			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.SystemPromptTemplate,
+		)
+		return err
+	}
+}
+
+// GetTgTraders 获取用户的TG交易员列表
+func (d *Database) GetTgTraders(tgUserID int64) ([]TgTraderRecord, error) {
+	var query string
+	if d.usePostgreSQL {
+		query = `
+			SELECT id, tg_user_id, name, ai_model_id, exchange_id,
+				   initial_balance, scan_interval_minutes, is_running,
+				   btc_eth_leverage, altcoin_leverage, trading_symbols,
+				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
+				   is_cross_margin, use_default_coins, custom_coins,
+				   system_prompt_template, created_at, updated_at
+			FROM tg_traders
+			WHERE tg_user_id = $1
+			ORDER BY created_at DESC
+		`
+	} else {
+		query = `
+			SELECT id, tg_user_id, name, ai_model_id, exchange_id,
+				   initial_balance, scan_interval_minutes, is_running,
+				   btc_eth_leverage, altcoin_leverage, trading_symbols,
+				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
+				   is_cross_margin, use_default_coins, custom_coins,
+				   system_prompt_template, created_at, updated_at
+			FROM tg_traders
+			WHERE tg_user_id = ?
+			ORDER BY created_at DESC
+		`
+	}
+
+	rows, err := d.db.Query(query, tgUserID)
+	if err != nil {
+		return nil, fmt.Errorf("查询tg_traders失败: %w", err)
+	}
+	defer rows.Close()
+
+	var traders []TgTraderRecord
+	for rows.Next() {
+		var trader TgTraderRecord
+		err := rows.Scan(
+			&trader.ID, &trader.TgUserID, &trader.Name, &trader.AIModelID,
+			&trader.ExchangeID, &trader.InitialBalance, &trader.ScanIntervalMinutes,
+			&trader.IsRunning, &trader.BTCETHLeverage, &trader.AltcoinLeverage,
+			&trader.TradingSymbols, &trader.UseCoinPool, &trader.UseOITop,
+			&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.IsCrossMargin,
+			&trader.UseDefaultCoins, &trader.CustomCoins, &trader.SystemPromptTemplate,
+			&trader.CreatedAt, &trader.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("扫描tg_traders行失败: %w", err)
+		}
+		traders = append(traders, trader)
+	}
+
+	return traders, nil
+}
+
+// UpdateTgTraderStatus 更新TG交易员状态
+func (d *Database) UpdateTgTraderStatus(tgUserID int64, traderID string, isRunning bool) error {
+	var query string
+	var args []interface{}
+
+	if d.usePostgreSQL {
+		query = `
+			UPDATE tg_traders
+			SET is_running = $1, updated_at = NOW()
+			WHERE tg_user_id = $2 AND id = $3
+		`
+		args = []interface{}{isRunning, tgUserID, traderID}
+	} else {
+		query = `
+			UPDATE tg_traders
+			SET is_running = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE tg_user_id = ? AND id = ?
+		`
+		args = []interface{}{isRunning, tgUserID, traderID}
+	}
+
+	result, err := d.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("更新TG交易员状态失败: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("获取影响行数失败: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("未找到匹配的TG交易员记录")
+	}
+
+	return nil
+}
+
+// DeleteTgTrader 删除TG交易员
+func (d *Database) DeleteTgTrader(tgUserID int64, traderID string) error {
+	var query string
+	var args []interface{}
+
+	if d.usePostgreSQL {
+		query = `DELETE FROM tg_traders WHERE tg_user_id = $1 AND id = $2`
+		args = []interface{}{tgUserID, traderID}
+	} else {
+		query = `DELETE FROM tg_traders WHERE tg_user_id = ? AND id = ?`
+		args = []interface{}{tgUserID, traderID}
+	}
+
+	result, err := d.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("删除TG交易员失败: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("获取影响行数失败: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("未找到匹配的TG交易员记录")
+	}
+
+	return nil
+}
+
+// GetTgTraderConfig 获取TG交易员配置
+func (d *Database) GetTgTraderConfig(tgUserID int64, traderID string) (*TgTraderRecord, error) {
+	var query string
+	if d.usePostgreSQL {
+		query = `
+			SELECT id, tg_user_id, name, ai_model_id, exchange_id,
+				   initial_balance, scan_interval_minutes, is_running,
+				   btc_eth_leverage, altcoin_leverage, trading_symbols,
+				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
+				   is_cross_margin, use_default_coins, custom_coins,
+				   system_prompt_template, created_at, updated_at
+			FROM tg_traders
+			WHERE tg_user_id = $1 AND id = $2
+		`
+	} else {
+		query = `
+			SELECT id, tg_user_id, name, ai_model_id, exchange_id,
+				   initial_balance, scan_interval_minutes, is_running,
+				   btc_eth_leverage, altcoin_leverage, trading_symbols,
+				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
+				   is_cross_margin, use_default_coins, custom_coins,
+				   system_prompt_template, created_at, updated_at
+			FROM tg_traders
+			WHERE tg_user_id = ? AND id = ?
+		`
+	}
+
+	var trader TgTraderRecord
+	err := d.db.QueryRow(query, tgUserID, traderID).Scan(
+		&trader.ID, &trader.TgUserID, &trader.Name, &trader.AIModelID,
+		&trader.ExchangeID, &trader.InitialBalance, &trader.ScanIntervalMinutes,
+		&trader.IsRunning, &trader.BTCETHLeverage, &trader.AltcoinLeverage,
+		&trader.TradingSymbols, &trader.UseCoinPool, &trader.UseOITop,
+		&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.IsCrossMargin,
+		&trader.UseDefaultCoins, &trader.CustomCoins, &trader.SystemPromptTemplate,
+		&trader.CreatedAt, &trader.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("未找到TG交易员记录")
+		}
+		return nil, fmt.Errorf("获取TG交易员配置失败: %w", err)
+	}
+
+	return &trader, nil
+}
+
+// GetTGUsers 获取所有TG用户
+func (d *Database) GetTGUsers() ([]string, error) {
+	var users []string
+	query := "SELECT telegram_id FROM tg_users"
+
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("获取TG用户失败: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var telegramID int64
+		if err := rows.Scan(&telegramID); err != nil {
+			continue
+		}
+		users = append(users, fmt.Sprintf("%d", telegramID))
+	}
+
+	return users, nil
 }

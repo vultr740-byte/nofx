@@ -2,16 +2,21 @@ package manager
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"nofx/config"
 	"nofx/trader"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // CompetitionCache 竞赛数据缓存
@@ -708,6 +713,203 @@ func containsUserPrefix(traderID string) bool {
 	return false
 }
 
+// LoadTGTradersFromDatabase 从数据库加载所有TG交易员到内存
+func (tm *TraderManager) LoadTGTradersFromDatabase(database *config.Database) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	// 获取所有TG用户
+	tgUserIDs, err := database.GetAllTGUsers()
+	if err != nil {
+		return fmt.Errorf("获取TG用户列表失败: %w", err)
+	}
+
+	log.Printf("📋 发现 %d 个TG用户，开始加载TG交易员...", len(tgUserIDs))
+
+	var loadedCount int
+	for _, tgUserID := range tgUserIDs {
+
+		// 获取每个TG用户的交易员
+		tgTraders, err := database.GetTgTraders(tgUserID)
+		if err != nil {
+			log.Printf("⚠️ 获取TG用户 %d 的交易员失败: %v", tgUserID, err)
+			continue
+		}
+
+		if len(tgTraders) == 0 {
+			log.Printf("📋 TG用户 %d: 0 个交易员", tgUserID)
+			continue
+		}
+
+		log.Printf("📋 TG用户 %d: %d 个交易员", tgUserID, len(tgTraders))
+
+		for _, tgTrader := range tgTraders {
+			if err := tm.loadTGTraderFromDB(database, &tgTrader, tgUserID); err != nil {
+				log.Printf("❌ 加载TG交易员失败: %s (ID: %d), error: %v", tgTrader.Name, tgUserID, err)
+				continue
+			}
+			loadedCount++
+		}
+	}
+
+	log.Printf("✅ 成功加载 %d 个TG交易员到内存", loadedCount)
+	return nil
+}
+
+// loadTGTraderFromDB 从数据库加载单个TG交易员
+func (tm *TraderManager) loadTGTraderFromDB(database *config.Database, tgTrader *config.TgTraderRecord, tgUserID int64) error {
+	// 获取TG用户的session_data以提取Hyperliquid配置
+	tgUser, err := database.GetTGUserByTelegramID(tgUserID)
+	if err != nil {
+		return fmt.Errorf("获取TG用户信息失败: %w", err)
+	}
+
+	// 将interface{}转换为map
+	userMap, ok := tgUser.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("用户数据格式错误")
+	}
+
+	sessionDataRaw, ok := userMap["session_data"]
+	if !ok {
+		return fmt.Errorf("未找到session_data")
+	}
+
+	// 解析session_data
+	var sessionDataStr string
+	if str, ok := sessionDataRaw.(string); ok {
+		sessionDataStr = str
+	} else if bytes, ok := sessionDataRaw.([]byte); ok {
+		sessionDataStr = string(bytes)
+	} else {
+		jsonBytes, err := json.Marshal(sessionDataRaw)
+		if err != nil {
+			return fmt.Errorf("解析session_data失败: %w", err)
+		}
+		sessionDataStr = string(jsonBytes)
+	}
+
+	// 解析session_data JSON
+	var sessionData map[string]interface{}
+	if err := json.Unmarshal([]byte(sessionDataStr), &sessionData); err != nil {
+		return fmt.Errorf("解析session_data JSON失败: %w", err)
+	}
+
+	agentKey, ok := sessionData["agent_key"].(string)
+	if !ok || agentKey == "" {
+		return fmt.Errorf("未找到agent_key")
+	}
+
+	// 检查交易员是否已经在运行
+	if _, exists := tm.traders[tgTrader.ID]; exists {
+		log.Printf("⚠️ TG交易员 %s 已存在于内存中，跳过", tgTrader.ID)
+		return nil
+	}
+
+	// 确保扫描间隔不为0
+	scanInterval := tgTrader.ScanIntervalMinutes
+	log.Printf("🔍 TG交易员 %s 扫描间隔: %d 分钟", tgTrader.Name, scanInterval)
+	if scanInterval <= 0 {
+		log.Printf("⚠️ TG交易员 %s 扫描间隔为0，使用默认值5分钟", tgTrader.Name)
+		scanInterval = 5 // 默认5分钟扫描间隔
+	}
+
+	// 获取AI模型和交易所配置
+	// TG用户使用默认的AI模型和交易所配置
+	userID := "default" // 使用default用户获取系统默认配置
+	aiModels, err := database.GetAIModels(userID)
+	if err != nil || len(aiModels) == 0 {
+		// 如果default用户没有配置，尝试使用任何可用的AI模型
+		aiModels, err = database.GetAIModels("3e0eb7b6-245b-48a5-9a91-2fba02f9de79") // 使用已知有配置的用户
+		if err != nil || len(aiModels) == 0 {
+			return fmt.Errorf("获取AI模型失败: %w", err)
+		}
+	}
+	aiModelCfg := aiModels[0]
+
+	exchanges, err := database.GetExchanges(userID)
+	if err != nil || len(exchanges) == 0 {
+		// 如果default用户没有配置，尝试使用任何可用的交易所配置
+		exchanges, err = database.GetExchanges("3e0eb7b6-245b-48a5-9a91-2fba02f9de79") // 使用已知有配置的用户
+		if err != nil || len(exchanges) == 0 {
+			return fmt.Errorf("获取交易所配置失败: %w", err)
+		}
+	}
+	exchangeCfg := exchanges[0]
+
+	// 使用专门的方法创建TG交易员实例
+	err = tm.createTGTraderInstance(tgTrader, aiModelCfg, exchangeCfg, agentKey, database)
+	if err != nil {
+		return fmt.Errorf("创建TG交易员实例失败: %w", err)
+	}
+
+	log.Printf("✅ 成功加载TG交易员: %s (用户ID: %d)", tgTrader.Name, tgUserID)
+	return nil
+}
+
+// createTGTraderInstance 创建TG交易员实例
+func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord, aiModelCfg *config.AIModelConfig, exchangeCfg *config.ExchangeConfig, agentKey string, database *config.Database) error {
+	// 从 session_data 中提取 wallet address
+	// agentKey 实际上既是私钥也可以派生出钱包地址
+	walletAddr, err := deriveAddressFromPrivateKey(agentKey)
+	if err != nil {
+		log.Printf("⚠️ 无法从私钥派生钱包地址: %v", err)
+		walletAddr = "" // 设为空，让系统处理
+	}
+
+	log.Printf("🔧 创建TG交易员实例，扫描间隔: %d 分钟", tgTrader.ScanIntervalMinutes)
+
+	// 优先使用TG交易员自己的API KEY，如果为空则使用环境变量
+	var apiKey string
+	if tgTrader.AIModelAPIKey != "" {
+		apiKey = tgTrader.AIModelAPIKey
+		log.Printf("🔑 使用TG交易员自身的API KEY")
+	} else {
+		apiKey = os.Getenv("DEEPSEEK_API_KEY")
+		if apiKey != "" {
+			log.Printf("🔑 使用环境变量DEEPSEEK_API_KEY")
+		} else {
+			log.Printf("⚠️ 未找到AI API KEY，TG交易员可能无法正常工作")
+		}
+	}
+
+	// 创建AutoTrader实例
+	trader, err := trader.NewAutoTrader(
+		trader.AutoTraderConfig{
+			ID:                     tgTrader.ID,
+			Name:                   tgTrader.Name,
+			InitialBalance:         tgTrader.InitialBalance,
+			ScanInterval:           time.Duration(tgTrader.ScanIntervalMinutes) * time.Minute,
+			AIModel:                "deepseek", // TG交易员默认使用deepseek
+			Exchange:              "hyperliquid",
+			HyperliquidPrivateKey:  agentKey,
+			HyperliquidWalletAddr:  walletAddr,
+			HyperliquidTestnet:    true,
+			DeepSeekKey:           apiKey,
+			UseQwen:                false,
+			// 添加杠杆配置
+			BTCETHLeverage:        tgTrader.BTCETHLeverage,
+			AltcoinLeverage:       tgTrader.AltcoinLeverage,
+		},
+		database,
+		fmt.Sprintf("%d", tgTrader.TgUserID), // TG用户ID作为UserID
+	)
+	if err != nil {
+		return fmt.Errorf("创建TG交易员失败: %w", err)
+	}
+
+	// 添加到内存中
+	tm.traders[tgTrader.ID] = trader
+
+	// TG交易员不在创建时自动启动，需要用户手动通过 /start_trader 命令启动
+	// 这样可以避免在WebSocket监控器未就绪时启动交易员导致panic
+	if tgTrader.IsRunning {
+		log.Printf("⚠️ TG交易员 %s 在数据库中标记为运行状态，但不会自动启动。请使用 /start_trader 命令手动启动。", tgTrader.Name)
+	}
+
+	return nil
+}
+
 // LoadAllTraders 为所有用户加载交易员到内存（公共接口使用）
 func (tm *TraderManager) LoadAllTraders(database *config.Database) error {
 	// 复用现有的 LoadTradersFromDatabase 方法，它已经加载了所有用户的交易员
@@ -942,4 +1144,37 @@ func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiMode
 	tm.traders[traderCfg.ID] = at
 	log.Printf("✓ Trader '%s' (%s + %s) 已为用户加载到内存", traderCfg.Name, aiModelCfg.Provider, exchangeCfg.ID)
 	return nil
+}
+
+// deriveAddressFromPrivateKey 从私钥派生钱包地址
+func deriveAddressFromPrivateKey(privateKeyHex string) (string, error) {
+	// 移除可能的 0x 前缀
+	privateKeyHex = strings.TrimPrefix(privateKeyHex, "0x")
+
+	// 检查私钥长度
+	if len(privateKeyHex) != 64 {
+		return "", fmt.Errorf("私钥长度不正确，期望64个字符，实际%d个", len(privateKeyHex))
+	}
+
+	// 将十六进制字符串转换为字节数组
+	privateKeyBytes, err := hex.DecodeString(privateKeyHex)
+	if err != nil {
+		return "", fmt.Errorf("解码私钥失败: %w", err)
+	}
+
+	// 创建私钥对象
+	privateKey, err := crypto.ToECDSA(privateKeyBytes)
+	if err != nil {
+		return "", fmt.Errorf("创建私钥对象失败: %w", err)
+	}
+
+	// 从私钥派生公钥，然后计算地址
+	publicKey := privateKey.Public()
+	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
+	if !ok {
+		return "", fmt.Errorf("公钥类型错误")
+	}
+
+	address := crypto.PubkeyToAddress(*publicKeyECDSA)
+	return address.Hex(), nil
 }

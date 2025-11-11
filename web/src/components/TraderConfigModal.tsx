@@ -393,7 +393,9 @@ export function TraderConfigModal({
                     <label className="text-sm text-[#EAECEF]">
                       初始余额 ($)
                       {!isEditMode && (
-                        <span className="text-[#F0B90B] ml-1">*</span>
+                        <span className="text-[#848E9C] ml-1 text-xs font-normal">
+                          (可选，系统将在启动时自动获取当前余额)
+                        </span>
                       )}
                     </label>
                     {isEditMode && (
@@ -417,11 +419,12 @@ export function TraderConfigModal({
                       )
                     }
                     className="w-full px-3 py-2 bg-[#0B0E11] border border-[#2B3139] rounded text-[#EAECEF] focus:border-[#F0B90B] focus:outline-none"
-                    min="100"
+                    min="0"
                     step="0.01"
+                    placeholder={isEditMode ? "当前余额" : "启动时将自动获取"}
                   />
                   {!isEditMode && (
-                    <p className="text-xs text-[#F0B90B] mt-1 flex items-center gap-1">
+                    <p className="text-xs text-[#848E9C] mt-1 flex items-center gap-1">
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
                         className="w-3.5 h-3.5"
@@ -432,11 +435,11 @@ export function TraderConfigModal({
                         strokeLinecap="round"
                         strokeLinejoin="round"
                       >
-                        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
-                        <line x1="12" x2="12" y1="9" y2="13" />
-                        <line x1="12" x2="12.01" y1="17" y2="17" />
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" x2="12" y1="16" y2="12"></line>
+                        <line x1="12" x2="12.01" y1="8" y2="8"></line>
                       </svg>
-                      请输入您交易所账户的当前实际余额。如果输入不准确，P&L统计将会错误。
+                      为获得准确的P&L统计，建议填写初始余额。如不填写，系统将在启动机器人时自动获取当前交易所余额作为初始资金。
                     </p>
                   )}
                   {isEditMode && (
