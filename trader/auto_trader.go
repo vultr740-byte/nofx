@@ -498,6 +498,10 @@ func (at *AutoTrader) Run() error {
 			if err := at.runCycle(); err != nil {
 				log.Printf("❌ 执行失败: %v", err)
 			}
+		case <-at.stopMonitorCh:
+			// 🔥 关键修复：监听停止信号，立即退出循环
+			log.Printf("🛑 收到停止信号，正在退出AI决策循环...")
+			return nil
 		}
 	}
 
@@ -1472,6 +1476,28 @@ func (at *AutoTrader) SetCustomPrompt(prompt string) {
 // SetOverrideBasePrompt 设置是否覆盖基础prompt
 func (at *AutoTrader) SetOverrideBasePrompt(override bool) {
 	at.overrideBasePrompt = override
+}
+
+// IsRunning 检查交易员是否正在运行
+func (at *AutoTrader) IsRunning() bool {
+	return at.isRunning
+}
+
+// GetStartTime 获取交易员启动时间
+func (at *AutoTrader) GetStartTime() time.Time {
+	return at.startTime
+}
+
+// GetCurrentBalance 获取当前余额（简化实现，返回0表示运行中）
+func (at *AutoTrader) GetCurrentBalance() float64 {
+	// 简化实现，实际项目中可以通过交易器接口获取真实余额
+	return 0
+}
+
+// GetPositionsCount 获取持仓数量（简化实现，返回-1表示不可用）
+func (at *AutoTrader) GetPositionsCount() int {
+	// 简化实现，实际项目中可以通过交易器接口获取真实持仓数量
+	return -1
 }
 
 // SetSystemPromptTemplate 设置系统提示词模板

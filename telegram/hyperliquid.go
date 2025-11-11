@@ -73,26 +73,21 @@ func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}
 		pnlEmoji = "🔴"
 	}
 
-	message := fmt.Sprintf(`💰 **账户余额总览**
+	message := fmt.Sprintf(`💰 账户余额总览
 
-**💎 总资产:** `+"`%.2f USDC`"+`
+💎 总资产: %.2f USDC
 
-**📊 资产分布:**
-• 🪙 现货余额: `+"`%.2f USDC`"+`
-• 📈 合约净值: `+"`%.2f USDC`"+`
+📊 资产详情:
+• 现货余额: %.2f USDC
+• 可用余额: %.2f USDC
+• 合约净值: %.2f USDC
 
-**💸 可用资金:**
-• 🔄 可用余额: `+"`%.2f USDC`"+`
-
-**%s 盈亏状况:**
-• 未实现盈亏: `+"`%.2f USDC (%.2f%%)`"+`
-
----
-💡 *提示: 现货资金需手动转账到合约账户才能用于交易*`,
+%s 盈亏状况:
+• 未实现盈亏: %.2f USDC (%.2f%%)`,
 		totalWalletBalance,
 		spotBalance,
-		totalWalletBalance-spotBalance,
 		availableBalance,
+		totalWalletBalance-spotBalance,
 		pnlEmoji,
 		totalUnrealizedProfit,
 		profitPercent,
@@ -104,16 +99,16 @@ func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}
 // formatPositionsMessage 格式化持仓消息
 func (s *HyperliquidService) formatPositionsMessage(positions []map[string]interface{}) string {
 	if len(positions) == 0 {
-		return `📊 **当前持仓**
+		return `📊 当前持仓
 
-🎯 *暂无持仓*
+🎯 暂无持仓
 
 ---
 💡 使用 /deposit 充值资金后即可开始交易`
 	}
 
 	var message strings.Builder
-	message.WriteString("📊 **当前持仓**\n\n")
+	message.WriteString("📊 当前持仓\n\n")
 
 	for i, pos := range positions {
 		symbol, _ := pos["symbol"].(string)
@@ -133,12 +128,12 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 		}
 
 		// 方向表情符号
-		sideEmoji := "🟢"
+		sideEmoji := "📈"
 		if side == "short" {
-			sideEmoji = "🔴"
+			sideEmoji = "📉"
 		}
 
-		message.WriteString(fmt.Sprintf(`%s **%s** - %s
+		message.WriteString(fmt.Sprintf(`%s %s → %s
 数量: %.4f | 入场: $%.2f
 标记: $%.2f | 盈亏: %.2f USDC (%.2f%%)
 
@@ -163,20 +158,11 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 		}
 	}
 
-	summaryEmoji := "📊"
-	if totalUnrealized > 0 {
-		summaryEmoji = "🟢"
-	} else if totalUnrealized < 0 {
-		summaryEmoji = "🔴"
-	}
-
 	message.WriteString(fmt.Sprintf(`
-**📈 持仓汇总**
+📋 持仓汇总
 • 持仓数量: %d 个
-• 总未实现盈亏: `+"`%.2f USDC`"+`
-
-%s *实时更新，请注意风险控制*`,
-		positionCount, totalUnrealized, summaryEmoji,
+• 总未实现盈亏: %.2f USDC`,
+		positionCount, totalUnrealized,
 	))
 
 	return message.String()

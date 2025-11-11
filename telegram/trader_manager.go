@@ -5,6 +5,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"nofx/config"
 	"nofx/manager"
@@ -109,9 +110,9 @@ func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *T
 	return traderID, nil
 }
 
-// StartTrader 启动交易员
+// StartTrader 启动交易员 - 重构版本，确保状态同步
 func (ttm *TelegramTraderManager) StartTrader(telegramID int64) error {
-	// 获取用户的TG交易员
+	// 1. 获取用户的TG交易员
 	traders, err := ttm.db.GetTgTraders(telegramID)
 	if err != nil {
 		return fmt.Errorf("获取交易员失败: %w", err)
@@ -122,35 +123,69 @@ func (ttm *TelegramTraderManager) StartTrader(telegramID int64) error {
 	}
 
 	trader := traders[0]
+
+	// 2. 检查是否已经在运行中（双重检查）
 	if trader.IsRunning {
-		return fmt.Errorf("交易员已经在运行中")
+		// 进一步检查实际的运行状态
+		if traderObj, err := ttm.traderMgr.GetTrader(trader.ID); err == nil {
+			if traderObj.IsRunning() {
+				return fmt.Errorf("交易员已经在运行中")
+			} else {
+				// 数据库显示运行中，但实际已停止，同步状态
+				log.Printf("⚠️ 检测到状态不一致，正在同步数据库状态: %s", trader.Name)
+				ttm.db.UpdateTgTraderStatus(telegramID, trader.ID, false)
+			}
+		}
 	}
 
-	// 启动交易员 - 使用新的GetTgTrader方法
+	// 3. 获取或创建TG交易员实例
 	traderObj, err := ttm.GetTgTrader(trader.ID)
 	if err != nil {
 		return fmt.Errorf("获取TG交易员实例失败: %w", err)
 	}
 
-	// 在goroutine中启动交易员，避免阻塞
+	// 4. 确保TelegramBotManager已设置
+	ttm.setupTelegramBotManagerForTrader(traderObj)
+
+	// 5. 启动交易员（同步等待启动成功）
+	startCh := make(chan error, 1)
 	go func() {
 		if err := traderObj.Run(); err != nil {
 			log.Printf("❌ TG交易员运行失败: %s, 错误: %v", trader.Name, err)
+			startCh <- fmt.Errorf("交易员运行失败: %w", err)
+		} else {
+			startCh <- nil
 		}
 	}()
 
-	// 更新数据库状态
-	if err := ttm.db.UpdateTgTraderStatus(telegramID, trader.ID, true); err != nil {
-		log.Printf("更新TG交易员运行状态失败: %v", err)
+	// 6. 等待一小段时间确保启动成功
+	select {
+	case err := <-startCh:
+		if err != nil {
+			return fmt.Errorf("启动TG交易员失败: %w", err)
+		}
+	case <-time.After(3 * time.Second):
+		// 3秒内没有错误，认为启动成功
+		log.Printf("✅ TG交易员启动成功: %s", trader.Name)
 	}
 
-	log.Printf("✅ 成功启动TG交易员: %s", trader.Name)
+	// 7. 确认启动成功后更新数据库状态
+	if !traderObj.IsRunning() {
+		return fmt.Errorf("交易员启动失败或立即停止")
+	}
+
+	if err := ttm.db.UpdateTgTraderStatus(telegramID, trader.ID, true); err != nil {
+		log.Printf("⚠️ 更新TG交易员运行状态失败: %v", err)
+		// 不返回错误，因为交易员已经实际启动
+	}
+
+	log.Printf("✅ 成功启动TG交易员: %s (数据库和内存状态已同步)", trader.Name)
 	return nil
 }
 
-// StopTrader 停止交易员
+// StopTrader 停止交易员 - 重构版本，确保进程真正停止
 func (ttm *TelegramTraderManager) StopTrader(telegramID int64) error {
-	// 获取用户的TG交易员
+	// 1. 获取用户的TG交易员
 	traders, err := ttm.db.GetTgTraders(telegramID)
 	if err != nil {
 		return fmt.Errorf("获取交易员失败: %w", err)
@@ -161,27 +196,78 @@ func (ttm *TelegramTraderManager) StopTrader(telegramID int64) error {
 	}
 
 	trader := traders[0]
+
+	// 2. 双重检查运行状态
 	if !trader.IsRunning {
-		return fmt.Errorf("交易员未在运行")
+		// 进一步检查实际的运行状态
+		if traderObj, err := ttm.traderMgr.GetTrader(trader.ID); err == nil {
+			if traderObj.IsRunning() {
+				// 数据库显示已停止，但实际还在运行，先同步状态
+				log.Printf("⚠️ 检测到状态不一致，正在同步数据库状态: %s", trader.Name)
+				ttm.db.UpdateTgTraderStatus(telegramID, trader.ID, true)
+			} else {
+				return fmt.Errorf("交易员未在运行")
+			}
+		} else {
+			return fmt.Errorf("交易员未在运行")
+		}
 	}
 
-	// 停止交易员 - 简化实现
-	if _, err := ttm.traderMgr.GetTrader(trader.ID); err == nil {
-		// 交易员存在，已经运行
+	// 3. 获取交易员实例并停止
+	traderObj, err := ttm.traderMgr.GetTrader(trader.ID)
+	if err != nil {
+		// 交易员实例不存在，但数据库显示运行中，直接同步状态
+		log.Printf("⚠️ 交易员实例不存在，正在同步数据库状态: %s", trader.Name)
+		if syncErr := ttm.db.UpdateTgTraderStatus(telegramID, trader.ID, false); syncErr != nil {
+			log.Printf("❌ 同步数据库状态失败: %v", syncErr)
+		}
+		return fmt.Errorf("交易员实例不存在，已同步状态")
 	}
 
-	// 更新数据库状态
-	if err := ttm.db.UpdateTgTraderStatus(telegramID, trader.ID, false); err != nil {
-		log.Printf("更新TG交易员运行状态失败: %v", err)
+	// 4. 调用停止方法
+	log.Printf("⏹️ 正在停止交易员: %s", trader.Name)
+	traderObj.Stop()
+
+	// 5. 等待交易员真正停止（最多等待5秒）
+	stopTimeout := time.After(5 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	stopped := false
+	for {
+		select {
+		case <-ticker.C:
+			if !traderObj.IsRunning() {
+				stopped = true
+				log.Printf("✅ 确认交易员已停止: %s", trader.Name)
+				goto STOPPED
+			}
+		case <-stopTimeout:
+			log.Printf("⚠️ 停止交易员超时: %s", trader.Name)
+			goto STOPPED
+		}
 	}
 
-	log.Printf("✅ 成功停止TG交易员: %s", trader.Name)
-	return nil
+STOPPED:
+	// 6. 更新数据库状态（确保数据库与实际状态同步）
+	currentRunningState := traderObj.IsRunning()
+	if err := ttm.db.UpdateTgTraderStatus(telegramID, trader.ID, currentRunningState); err != nil {
+		log.Printf("⚠️ 更新TG交易员运行状态失败: %v", err)
+		// 如果数据库更新失败，记录但不影响返回结果
+	}
+
+	if stopped && !currentRunningState {
+		log.Printf("✅ 成功停止TG交易员: %s (进程和数据库状态已同步)", trader.Name)
+		return nil
+	} else {
+		log.Printf("⚠️ TG交易员停止可能未完成: %s (当前状态: %v)", trader.Name, currentRunningState)
+		return fmt.Errorf("交易员停止可能未完全成功，请检查状态")
+	}
 }
 
-// GetTraderStatus 获取交易员状态
+// GetTraderStatus 获取交易员状态 - 重构版本，确保状态实时准确
 func (ttm *TelegramTraderManager) GetTraderStatus(telegramID int64) (map[string]interface{}, error) {
-	// 获取用户的TG交易员
+	// 1. 获取用户的TG交易员
 	traders, err := ttm.db.GetTgTraders(telegramID)
 	if err != nil {
 		return map[string]interface{}{
@@ -189,7 +275,7 @@ func (ttm *TelegramTraderManager) GetTraderStatus(telegramID int64) (map[string]
 		}, fmt.Errorf("获取交易员失败: %w", err)
 	}
 
-	// 返回状态，包含has_trader字段
+	// 2. 返回无交易员状态
 	if len(traders) == 0 {
 		return map[string]interface{}{
 			"has_trader": false,
@@ -198,32 +284,80 @@ func (ttm *TelegramTraderManager) GetTraderStatus(telegramID int64) (map[string]
 
 	trader := traders[0]
 
-	status := map[string]interface{}{
-		"has_trader":           true,
-		"id":                  trader.ID,
-		"name":                trader.Name,
-		"is_running":          trader.IsRunning,
-		"initial_balance":     trader.InitialBalance,
-		"scan_interval_minutes": trader.ScanIntervalMinutes,
-		"btc_eth_leverage":    trader.BTCETHLeverage,
-		"altcoin_leverage":    trader.AltcoinLeverage,
-		"created_at":          trader.CreatedAt,
-		"updated_at":          trader.UpdatedAt,
-		"status":              "停止",
-		"prompt_template":     trader.SystemPromptTemplate,
-	}
+	// 3. 获取实际的运行状态（双重验证）
+	actualRunningState := false
+	if traderObj, err := ttm.traderMgr.GetTrader(trader.ID); err == nil {
+		actualRunningState = traderObj.IsRunning()
 
-	if trader.IsRunning {
-		status["status"] = "运行中"
-	}
+		// 检测到状态不一致时自动同步
+		if trader.IsRunning != actualRunningState {
+			log.Printf("⚠️ 检测到状态不一致，数据库: %v, 实际: %v, 正在同步: %s",
+				trader.IsRunning, actualRunningState, trader.Name)
 
-	// 如果交易员在运行中，获取更多信息
-	if trader.IsRunning {
-		if _, err := ttm.traderMgr.GetTrader(trader.ID); err == nil {
-			// 简化实现，不调用具体方法
-			status["current_balance"] = "运行中"
-			status["positions_count"] = "N/A"
+			// 同步数据库状态
+			if syncErr := ttm.db.UpdateTgTraderStatus(telegramID, trader.ID, actualRunningState); syncErr != nil {
+				log.Printf("❌ 同步状态失败: %v", syncErr)
+			} else {
+				log.Printf("✅ 状态同步成功: %s", trader.Name)
+				// 更新本地变量
+				trader.IsRunning = actualRunningState
+			}
 		}
+	} else {
+		// 交易员实例不存在，说明已停止
+		if trader.IsRunning {
+			log.Printf("⚠️ 交易员实例不存在但数据库显示运行中，正在同步: %s", trader.Name)
+			if syncErr := ttm.db.UpdateTgTraderStatus(telegramID, trader.ID, false); syncErr != nil {
+				log.Printf("❌ 同步状态失败: %v", syncErr)
+			} else {
+				trader.IsRunning = false
+			}
+		}
+		actualRunningState = false
+	}
+
+	// 4. 构建状态返回
+	status := map[string]interface{}{
+		"has_trader":             true,
+		"id":                    trader.ID,
+		"name":                  trader.Name,
+		"is_running":            actualRunningState, // 使用实际运行状态
+		"initial_balance":       trader.InitialBalance,
+		"scan_interval_minutes": trader.ScanIntervalMinutes,
+		"btc_eth_leverage":      trader.BTCETHLeverage,
+		"altcoin_leverage":      trader.AltcoinLeverage,
+		"created_at":            trader.CreatedAt,
+		"updated_at":            trader.UpdatedAt,
+		"status":                "停止",
+		"prompt_template":       trader.SystemPromptTemplate,
+	}
+
+	if actualRunningState {
+		status["status"] = "运行中"
+
+		// 5. 如果确实在运行中，获取更多实时信息
+		if traderObj, err := ttm.traderMgr.GetTrader(trader.ID); err == nil {
+			// 获取实时余额和持仓信息（如果交易员支持）
+			if balance := traderObj.GetCurrentBalance(); balance > 0 {
+				status["current_balance"] = fmt.Sprintf("%.2f", balance)
+			} else {
+				status["current_balance"] = "运行中"
+			}
+
+			if positions := traderObj.GetPositionsCount(); positions >= 0 {
+				status["positions_count"] = positions
+			} else {
+				status["positions_count"] = "N/A"
+			}
+
+			// 添加运行时长信息
+			if startTime := traderObj.GetStartTime(); !startTime.IsZero() {
+				status["running_duration"] = time.Since(startTime).String()
+			}
+		}
+	} else {
+		status["current_balance"] = "已停止"
+		status["positions_count"] = "0"
 	}
 
 	return status, nil

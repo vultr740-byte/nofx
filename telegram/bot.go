@@ -356,18 +356,19 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 	// 生成充值消息
 	depositMsg := fmt.Sprintf(`💰 USDC 充值地址
 
+` + "```" + `
 %s
+` + "```" + `
 
 📋 充值说明:
 • 支持资产: USDC
 • 网络: Arbitrum One
-• 最小充值: 1 USDC
+• 最小充值: 20 USDC
 • 到账时间: 通常 2-5 分钟
 
 ⚠️ 注意事项:
 • 请勿充值其他资产到该地址
-• 充值后可在 /balance 中查看余额
-• 如有疑问请联系客服`, walletAddr)
+• 充值后可在 /balance 中查看余额`, walletAddr)
 
 	tbm.sendMessage(chatID, depositMsg)
 }
