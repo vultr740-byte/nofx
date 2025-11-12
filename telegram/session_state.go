@@ -24,9 +24,14 @@ const (
 
 // PromptTemplate 提示词模板配置
 type PromptTemplate struct {
-	Name        string
-	DisplayName string
-	Description string
+	Name                string
+	DisplayName         string
+	PlainName           string
+	Description         string
+	RiskLevel           string
+	BTCETHLeverage      int
+	AltcoinLeverage     int
+	ScanIntervalMinutes int
 }
 
 // TraderConfig 交易员配置
@@ -157,24 +162,44 @@ func (us *UserSession) isExpired() bool {
 func GetAvailablePromptTemplates() []PromptTemplate {
 	return []PromptTemplate{
 		{
-			Name:        "default",
-			DisplayName: "🔄 默认策略",
-			Description: "平衡风险和收益，适合新手用户",
+			Name:                "Hansen",
+			DisplayName:         "🛡️ 纪律趋势策略",
+			PlainName:           "纪律趋势策略",
+			Description:         "顺势低频、强调资金保全与长持的稳健模型",
+			RiskLevel:           "保守",
+			BTCETHLeverage:      3,
+			AltcoinLeverage:     2,
+			ScanIntervalMinutes: 60,
 		},
 		{
-			Name:        "Hansen",
-			DisplayName: "🔥 激进策略",
-			Description: "追求高收益，承担较高风险",
+			Name:                "default",
+			DisplayName:         "⚖️ 平衡动量策略",
+			PlainName:           "平衡动量策略",
+			Description:         "日内动量 + 严格风控的均衡型逻辑",
+			RiskLevel:           "标准",
+			BTCETHLeverage:      5,
+			AltcoinLeverage:     3,
+			ScanIntervalMinutes: 30,
 		},
 		{
-			Name:        "nof1",
-			DisplayName: "🛡️ 保守策略",
-			Description: "注重资金安全，稳健交易",
+			Name:                "nof1",
+			DisplayName:         "🔧 技术突破策略",
+			PlainName:           "技术突破策略",
+			Description:         "中高频技术共振 + 严格止损的突破型逻辑",
+			RiskLevel:           "中等",
+			BTCETHLeverage:      10,
+			AltcoinLeverage:     5,
+			ScanIntervalMinutes: 15,
 		},
 		{
-			Name:        "taro_long_prompts",
-			DisplayName: "🧠 高级策略",
-			Description: "专业交易逻辑，适合有经验的用户",
+			Name:                "taro_long_prompts",
+			DisplayName:         "🧠 多周期专家策略",
+			PlainName:           "多周期专家策略",
+			Description:         "高频多周期结构分析 + 主动止盈的专业模型",
+			RiskLevel:           "激进",
+			BTCETHLeverage:      12,
+			AltcoinLeverage:     8,
+			ScanIntervalMinutes: 5,
 		},
 	}
 }
@@ -192,7 +217,7 @@ func GetBalanceOptions() []float64 {
 // GetLeverageOptions 获取杠杆倍数选项
 func GetLeverageOptions() map[string][]int {
 	return map[string][]int{
-		"BTC/ETH":   {1, 2, 3, 5, 7, 10},
+		"BTC/ETH": {1, 2, 3, 5, 7, 10},
 		"山寨币":     {1, 2, 3, 4, 5},
 	}
 }

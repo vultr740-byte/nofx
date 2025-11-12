@@ -1,9 +1,14 @@
 package config
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base32"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,10 +17,11 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "modernc.org/sqlite"
 )
 
 // DatabaseInterface 定义了数据库实现需要提供的方法集合
@@ -73,7 +79,7 @@ type DatabaseInterface interface {
 
 // Database 配置数据库
 type Database struct {
-	db           *sql.DB
+	db            *sql.DB
 	cryptoService *crypto.CryptoService
 	usePostgreSQL bool // 是否使用 PostgreSQL (Supabase)
 }
@@ -523,7 +529,7 @@ func (d *Database) createSQLiteTables() error {
 		`ALTER TABLE exchanges ADD COLUMN aster_user TEXT DEFAULT ''`,
 		`ALTER TABLE exchanges ADD COLUMN aster_signer TEXT DEFAULT ''`,
 		`ALTER TABLE exchanges ADD COLUMN aster_private_key TEXT DEFAULT ''`,
-		`ALTER TABLE exchanges ADD COLUMN custom_exchange_name TEXT DEFAULT ''`,       // 自定义交易所名称
+		`ALTER TABLE exchanges ADD COLUMN custom_exchange_name TEXT DEFAULT ''`, // 自定义交易所名称
 		`ALTER TABLE traders ADD COLUMN custom_prompt TEXT DEFAULT ''`,
 		`ALTER TABLE traders ADD COLUMN override_base_prompt BOOLEAN DEFAULT 0`,
 		`ALTER TABLE traders ADD COLUMN is_cross_margin BOOLEAN DEFAULT 1`,             // 默认为全仓模式
@@ -845,12 +851,12 @@ type ExchangeConfig struct {
 	// Reference: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/nonces-and-api-wallets
 	HyperliquidWalletAddr string `json:"hyperliquidWalletAddr"` // Main Wallet Address (holds funds, never expose private key)
 	// Aster 特定字段
-	AsterUser       string    `json:"asterUser"`
-	AsterSigner     string    `json:"asterSigner"`
-	AsterPrivateKey string    `json:"asterPrivateKey"`
-	CustomExchangeName string  `json:"customExchangeName"` // 用户自定义交易所名称
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	AsterUser          string    `json:"asterUser"`
+	AsterSigner        string    `json:"asterSigner"`
+	AsterPrivateKey    string    `json:"asterPrivateKey"`
+	CustomExchangeName string    `json:"customExchangeName"` // 用户自定义交易所名称
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // TraderRecord 交易员配置（数据库实体）
@@ -879,7 +885,7 @@ type TraderRecord struct {
 // TgTraderRecord TG交易员记录
 type TgTraderRecord struct {
 	ID                   string    `json:"id"`
-	TgUserID             int64     `json:"tg_user_id"`        // TG用户ID
+	TgUserID             int64     `json:"tg_user_id"` // TG用户ID
 	Name                 string    `json:"name"`
 	AIModelID            string    `json:"ai_model_id"`
 	ExchangeID           string    `json:"exchange_id"`
@@ -1383,12 +1389,12 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 		if err != nil {
 			return nil, err
 		}
-		
+
 		// 解密敏感字段
 		exchange.APIKey = d.decryptSensitiveData(exchange.APIKey)
 		exchange.SecretKey = d.decryptSensitiveData(exchange.SecretKey)
 		exchange.AsterPrivateKey = d.decryptSensitiveData(exchange.AsterPrivateKey)
-		
+
 		exchanges = append(exchanges, &exchange)
 	}
 
@@ -2089,13 +2095,13 @@ func (d *Database) encryptSensitiveData(plaintext string) string {
 	if d.cryptoService == nil || plaintext == "" {
 		return plaintext
 	}
-	
+
 	encrypted, err := d.cryptoService.EncryptForStorage(plaintext)
 	if err != nil {
 		log.Printf("⚠️ 加密失败: %v", err)
 		return plaintext // 返回明文作为降级处理
 	}
-	
+
 	return encrypted
 }
 
@@ -2104,19 +2110,229 @@ func (d *Database) decryptSensitiveData(encrypted string) string {
 	if d.cryptoService == nil || encrypted == "" {
 		return encrypted
 	}
-	
+
 	// 如果不是加密格式，直接返回
 	if !d.cryptoService.IsEncryptedStorageValue(encrypted) {
 		return encrypted
 	}
-	
+
 	decrypted, err := d.cryptoService.DecryptFromStorage(encrypted)
 	if err != nil {
 		log.Printf("⚠️ 解密失败: %v", err)
 		return encrypted // 返回加密文本作为降级处理
 	}
-	
+
 	return decrypted
+}
+
+const secretValuePrefix = "SEC:v1:"
+
+type secretCipher struct {
+	once sync.Once
+	key  []byte
+	err  error
+}
+
+var tgSecretCipher secretCipher
+
+func (sc *secretCipher) loadKey() error {
+	sc.once.Do(func() {
+		keyStr := strings.TrimSpace(os.Getenv("SECRET_ENCRYPTION_KEY"))
+		if keyStr == "" {
+			sc.err = fmt.Errorf("SECRET_ENCRYPTION_KEY not set")
+			return
+		}
+
+		if key, ok := decodeKeyMaterial(keyStr); ok {
+			sc.key = key
+			return
+		}
+
+		sum := sha256.Sum256([]byte(keyStr))
+		key := make([]byte, len(sum))
+		copy(key, sum[:])
+		sc.key = key
+	})
+	return sc.err
+}
+
+func decodeKeyMaterial(value string) ([]byte, bool) {
+	decoders := []func(string) ([]byte, error){
+		base64.StdEncoding.DecodeString,
+		base64.RawStdEncoding.DecodeString,
+		func(s string) ([]byte, error) { return hex.DecodeString(s) },
+	}
+
+	for _, decoder := range decoders {
+		if decoded, err := decoder(value); err == nil {
+			switch len(decoded) {
+			case 16, 24, 32:
+				return decoded, true
+			default:
+				sum := sha256.Sum256(decoded)
+				key := make([]byte, len(sum))
+				copy(key, sum[:])
+				return key, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func (sc *secretCipher) encrypt(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if err := sc.loadKey(); err != nil {
+		return value, err
+	}
+
+	block, err := aes.NewCipher(sc.key)
+	if err != nil {
+		return value, err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return value, err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return value, err
+	}
+
+	ciphertext := gcm.Seal(nil, nonce, []byte(value), nil)
+
+	return secretValuePrefix +
+		base64.StdEncoding.EncodeToString(nonce) + ":" +
+		base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+func (sc *secretCipher) decrypt(value string) (string, error) {
+	if value == "" || !strings.HasPrefix(value, secretValuePrefix) {
+		return value, nil
+	}
+
+	if err := sc.loadKey(); err != nil {
+		return value, err
+	}
+
+	payload := strings.TrimPrefix(value, secretValuePrefix)
+	parts := strings.SplitN(payload, ":", 2)
+	if len(parts) != 2 {
+		return value, fmt.Errorf("invalid secret payload format")
+	}
+
+	nonce, err := base64.StdEncoding.DecodeString(parts[0])
+	if err != nil {
+		return value, err
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(parts[1])
+	if err != nil {
+		return value, err
+	}
+
+	block, err := aes.NewCipher(sc.key)
+	if err != nil {
+		return value, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return value, err
+	}
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return value, err
+	}
+	return string(plaintext), nil
+}
+
+func (d *Database) encryptSecretValue(plaintext string) string {
+	if plaintext == "" {
+		return ""
+	}
+	encrypted, err := tgSecretCipher.encrypt(plaintext)
+	if err != nil {
+		log.Printf("⚠️ SECRET_ENCRYPTION_KEY 加密失败: %v", err)
+		return plaintext
+	}
+	return encrypted
+}
+
+func (d *Database) decryptSecretValue(encrypted string) string {
+	if encrypted == "" {
+		return ""
+	}
+	decrypted, err := tgSecretCipher.decrypt(encrypted)
+	if err != nil {
+		log.Printf("⚠️ SECRET_ENCRYPTION_KEY 解密失败: %v", err)
+		return encrypted
+	}
+	return decrypted
+}
+
+func (d *Database) marshalSessionDataWithSecret(sessionData interface{}) (json.RawMessage, error) {
+	if sessionData == nil {
+		sessionData = map[string]interface{}{}
+	}
+
+	var payload map[string]interface{}
+	switch v := sessionData.(type) {
+	case map[string]interface{}:
+		payload = cloneMap(v)
+	case json.RawMessage:
+		if err := json.Unmarshal(v, &payload); err != nil {
+			return nil, err
+		}
+	default:
+		bytes, err := json.Marshal(sessionData)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(bytes, &payload); err != nil {
+			return nil, err
+		}
+	}
+
+	if payload == nil {
+		payload = make(map[string]interface{})
+	}
+
+	if key, ok := payload["agent_key"].(string); ok && key != "" {
+		payload["agent_key"] = d.encryptSecretValue(key)
+	}
+
+	return json.Marshal(payload)
+}
+
+func cloneMap(src map[string]interface{}) map[string]interface{} {
+	dst := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func (d *Database) decryptSessionDataRaw(raw json.RawMessage) json.RawMessage {
+	if raw == nil || len(raw) == 0 {
+		return raw
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return raw
+	}
+
+	if key, ok := payload["agent_key"].(string); ok && key != "" {
+		payload["agent_key"] = d.decryptSecretValue(key)
+	}
+
+	result, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return json.RawMessage(result)
 }
 
 // TGUser 数据库相关实现
@@ -2201,7 +2417,7 @@ func (d *Database) CreateTGUserTable() error {
 // CreateTGUser 创建 Telegram 用户
 func (d *Database) CreateTGUser(telegramID int64, username, firstName string, chatID int64, languageCode string) error {
 	sessionData := map[string]interface{}{}
-	sessionDataJSON, err := json.Marshal(sessionData)
+	sessionDataJSON, err := d.marshalSessionDataWithSecret(sessionData)
 	if err != nil {
 		return fmt.Errorf("序列化 session_data 失败: %w", err)
 	}
@@ -2273,6 +2489,8 @@ func (d *Database) GetTGUserByTelegramID(telegramID int64) (interface{}, error) 
 		}
 	}
 
+	sessionData = d.decryptSessionDataRaw(sessionData)
+
 	user := map[string]interface{}{
 		"id":                   id,
 		"telegram_id":          telegramID,
@@ -2333,6 +2551,8 @@ func (d *Database) GetTGUserByChatID(chatID int64) (interface{}, error) {
 		}
 	}
 
+	sessionData = d.decryptSessionDataRaw(sessionData)
+
 	user := map[string]interface{}{
 		"id":                   id,
 		"telegram_id":          telegramID,
@@ -2354,7 +2574,7 @@ func (d *Database) GetTGUserByChatID(chatID int64) (interface{}, error) {
 
 // UpdateTGUserSession 更新用户会话数据
 func (d *Database) UpdateTGUserSession(telegramID int64, sessionData interface{}) error {
-	sessionDataJSON, err := json.Marshal(sessionData)
+	sessionDataJSON, err := d.marshalSessionDataWithSecret(sessionData)
 	if err != nil {
 		return fmt.Errorf("序列化 session_data 失败: %w", err)
 	}
@@ -2443,6 +2663,8 @@ func (d *Database) EnsureUserInUsersTable(userID string) error {
 
 // CreateTgTrader 创建TG交易员
 func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) error {
+	encryptedAPIKey := d.encryptSecretValue(traderRecord.AIModelAPIKey)
+
 	if d.usePostgreSQL {
 		query := `
 			INSERT INTO tg_traders (
@@ -2462,7 +2684,7 @@ func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) 
 			traderRecord.TradingSymbols, traderRecord.UseCoinPool, traderRecord.UseOITop,
 			traderRecord.CustomPrompt, traderRecord.OverrideBasePrompt, traderRecord.IsCrossMargin,
 			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.SystemPromptTemplate,
-			traderRecord.AIModelAPIKey,
+			encryptedAPIKey,
 		)
 		return err
 	} else {
@@ -2484,7 +2706,7 @@ func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) 
 			traderRecord.TradingSymbols, traderRecord.UseCoinPool, traderRecord.UseOITop,
 			traderRecord.CustomPrompt, traderRecord.OverrideBasePrompt, traderRecord.IsCrossMargin,
 			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.SystemPromptTemplate,
-			traderRecord.AIModelAPIKey,
+			encryptedAPIKey,
 		)
 		return err
 	}
@@ -2500,7 +2722,7 @@ func (d *Database) GetTgTraders(tgUserID int64) ([]TgTraderRecord, error) {
 				   btc_eth_leverage, altcoin_leverage, trading_symbols,
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
-				   system_prompt_template, created_at, updated_at
+				   system_prompt_template, ai_model_api_key, created_at, updated_at
 			FROM tg_traders
 			WHERE tg_user_id = $1
 			ORDER BY created_at DESC
@@ -2512,7 +2734,7 @@ func (d *Database) GetTgTraders(tgUserID int64) ([]TgTraderRecord, error) {
 				   btc_eth_leverage, altcoin_leverage, trading_symbols,
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
-				   system_prompt_template, created_at, updated_at
+				   system_prompt_template, ai_model_api_key, created_at, updated_at
 			FROM tg_traders
 			WHERE tg_user_id = ?
 			ORDER BY created_at DESC
@@ -2535,11 +2757,13 @@ func (d *Database) GetTgTraders(tgUserID int64) ([]TgTraderRecord, error) {
 			&trader.TradingSymbols, &trader.UseCoinPool, &trader.UseOITop,
 			&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.IsCrossMargin,
 			&trader.UseDefaultCoins, &trader.CustomCoins, &trader.SystemPromptTemplate,
-			&trader.CreatedAt, &trader.UpdatedAt,
+			&trader.AIModelAPIKey, &trader.CreatedAt, &trader.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("扫描tg_traders行失败: %w", err)
 		}
+
+		trader.AIModelAPIKey = d.decryptSecretValue(trader.AIModelAPIKey)
 		traders = append(traders, trader)
 	}
 
@@ -2662,7 +2886,7 @@ func (d *Database) GetTgTraderConfig(tgUserID int64, traderID string) (*TgTrader
 				   btc_eth_leverage, altcoin_leverage, trading_symbols,
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
-				   system_prompt_template, created_at, updated_at
+				   system_prompt_template, ai_model_api_key, created_at, updated_at
 			FROM tg_traders
 			WHERE tg_user_id = $1 AND id = $2
 		`
@@ -2673,7 +2897,7 @@ func (d *Database) GetTgTraderConfig(tgUserID int64, traderID string) (*TgTrader
 				   btc_eth_leverage, altcoin_leverage, trading_symbols,
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
-				   system_prompt_template, created_at, updated_at
+				   system_prompt_template, ai_model_api_key, created_at, updated_at
 			FROM tg_traders
 			WHERE tg_user_id = ? AND id = ?
 		`
@@ -2687,7 +2911,7 @@ func (d *Database) GetTgTraderConfig(tgUserID int64, traderID string) (*TgTrader
 		&trader.TradingSymbols, &trader.UseCoinPool, &trader.UseOITop,
 		&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.IsCrossMargin,
 		&trader.UseDefaultCoins, &trader.CustomCoins, &trader.SystemPromptTemplate,
-		&trader.CreatedAt, &trader.UpdatedAt,
+		&trader.AIModelAPIKey, &trader.CreatedAt, &trader.UpdatedAt,
 	)
 
 	if err != nil {
@@ -2697,6 +2921,7 @@ func (d *Database) GetTgTraderConfig(tgUserID int64, traderID string) (*TgTrader
 		return nil, fmt.Errorf("获取TG交易员配置失败: %w", err)
 	}
 
+	trader.AIModelAPIKey = d.decryptSecretValue(trader.AIModelAPIKey)
 	return &trader, nil
 }
 

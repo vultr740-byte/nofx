@@ -60,5 +60,6 @@ rsa_key*
 
 # 加密相关
 DATA_ENCRYPTION_KEY=*
+SECRET_ENCRYPTION_KEY=*
 *.enc
 .vercel

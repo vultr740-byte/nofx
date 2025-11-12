@@ -10,22 +10,22 @@ import (
 	"time"
 	"unicode/utf8"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/ethereum/go-ethereum/crypto"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"nofx/config"
 	"nofx/manager"
 )
 
 // TelegramBotManager Telegram Bot 管理器
 type TelegramBotManager struct {
-	bot           *tgbotapi.BotAPI
-	db            config.DatabaseInterface
-	hlService     *HyperliquidService
-	debug         bool
-	testnet       bool
-	traderMgr     *manager.TraderManager
-	tgTraderMgr   *TelegramTraderManager
-	configWizard  *ConfigWizard
+	bot          *tgbotapi.BotAPI
+	db           config.DatabaseInterface
+	hlService    *HyperliquidService
+	debug        bool
+	testnet      bool
+	traderMgr    *manager.TraderManager
+	tgTraderMgr  *TelegramTraderManager
+	configWizard *ConfigWizard
 }
 
 // NewTelegramBotManager 创建 Telegram Bot 管理器
@@ -249,13 +249,13 @@ func (tbm *TelegramBotManager) handleBalance(update tgbotapi.Update) {
 	// 获取用户信息
 	user, err := tbm.db.GetTGUserByTelegramID(telegramID)
 	if err != nil {
-		tbm.sendMessage(chatID, "❌ 请先使用 /start 创建 Hyperliquid 账号")
+		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
 		return
 	}
 
 	// 检查是否有 Hyperliquid 账号
 	if !tbm.hasHyperliquidAccount(user) {
-		tbm.sendMessage(chatID, "❌ 请先使用 /start 创建 Hyperliquid 账号")
+		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
 		return
 	}
 
@@ -290,13 +290,13 @@ func (tbm *TelegramBotManager) handlePositions(update tgbotapi.Update) {
 	// 获取用户信息
 	user, err := tbm.db.GetTGUserByTelegramID(telegramID)
 	if err != nil {
-		tbm.sendMessage(chatID, "❌ 请先使用 /start 创建 Hyperliquid 账号")
+		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
 		return
 	}
 
 	// 检查是否有 Hyperliquid 账号
 	if !tbm.hasHyperliquidAccount(user) {
-		tbm.sendMessage(chatID, "❌ 请先使用 /start 创建 Hyperliquid 账号")
+		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
 		return
 	}
 
@@ -332,7 +332,7 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 	user, err := tbm.db.GetTGUserByTelegramID(telegramID)
 	if err != nil {
 		log.Printf("获取用户信息失败 %d: %v", telegramID, err)
-		tbm.sendMessage(chatID, "❌ 请先使用 /start 创建 Hyperliquid 账号")
+		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
 		return
 	}
 
@@ -343,7 +343,7 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 	log.Printf("用户 %d 是否有 Hyperliquid 账号: %v", telegramID, hasAccount)
 
 	if !hasAccount {
-		tbm.sendMessage(chatID, "❌ 请先使用 /start 创建 Hyperliquid 账号")
+		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
 		return
 	}
 
@@ -497,6 +497,49 @@ func (tbm *TelegramBotManager) sendMessage(chatID int64, text string) {
 	}
 }
 
+// sendMessageWithInlineKeyboard 发送带内联键盘的消息
+func (tbm *TelegramBotManager) sendMessageWithInlineKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) {
+	log.Printf("🔍 [DEBUG] 检查消息UTF-8编码 (ChatID: %d, 长度: %d)", chatID, len(text))
+	if !utf8.ValidString(text) {
+		log.Printf("❌ [DEBUG] 消息包含无效UTF-8字符！")
+		text = strings.ToValidUTF8(text, "�")
+		log.Printf("✅ [DEBUG] 已清理无效UTF-8字符，使用清理后的消息")
+	} else {
+		log.Printf("✅ [DEBUG] 消息UTF-8编码有效")
+	}
+
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = keyboard
+
+	log.Printf("📤 准备发送带键盘的消息到 ChatID %d: %s", chatID, text)
+
+	if _, err := tbm.bot.Send(msg); err != nil {
+		if strings.Contains(err.Error(), "can't parse entities") {
+			log.Printf("⚠️ Markdown格式解析失败，发送纯文本消息 (ChatID: %d)", chatID)
+			msg.ParseMode = ""
+			if _, err2 := tbm.bot.Send(msg); err2 != nil {
+				log.Printf("❌ 发送消息失败 (ChatID: %d): %v", chatID, err2)
+			} else {
+				log.Printf("✅ 带键盘消息发送成功 (ChatID: %d)", chatID)
+			}
+		} else if strings.Contains(err.Error(), "text must be encoded in UTF-8") {
+			log.Printf("⚠️ UTF-8编码错误，强制清理消息 (ChatID: %d)", chatID)
+			msg.Text = strings.ToValidUTF8(text, "�")
+			msg.ParseMode = ""
+			if _, err2 := tbm.bot.Send(msg); err2 != nil {
+				log.Printf("❌ 发送消息失败 (ChatID: %d): %v", chatID, err2)
+			} else {
+				log.Printf("✅ 带键盘消息发送成功 (ChatID: %d)", chatID)
+			}
+		} else {
+			log.Printf("❌ 发送带键盘消息失败 (ChatID: %d): %v", chatID, err)
+		}
+	} else {
+		log.Printf("✅ 带键盘消息发送成功 (ChatID: %d)", chatID)
+	}
+}
+
 // generateHyperliquidAccount 生成 Hyperliquid 账号
 func (tbm *TelegramBotManager) generateHyperliquidAccount() (agentKey, walletAddr string, err error) {
 	// 1. 生成 Agent Private Key
@@ -594,7 +637,7 @@ func (tbm *TelegramBotManager) handleCreateTrader(update tgbotapi.Update) {
 	// 检查用户是否已存在
 	_, err := tbm.db.GetTGUserByTelegramID(telegramID)
 	if err != nil {
-		tbm.sendMessage(chatID, "❌ 请先使用 /start 创建 Hyperliquid 账号")
+		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
 		return
 	}
 
@@ -626,7 +669,7 @@ func (tbm *TelegramBotManager) handleStartTrader(update tgbotapi.Update) {
 	// 检查用户是否已存在
 	_, err := tbm.db.GetTGUserByTelegramID(telegramID)
 	if err != nil {
-		tbm.sendMessage(chatID, "❌ 请先使用 /start 创建 Hyperliquid 账号")
+		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
 		return
 	}
 
@@ -652,7 +695,7 @@ func (tbm *TelegramBotManager) handleStopTrader(update tgbotapi.Update) {
 	// 检查用户是否已存在
 	_, err := tbm.db.GetTGUserByTelegramID(telegramID)
 	if err != nil {
-		tbm.sendMessage(chatID, "❌ 请先使用 /start 创建 Hyperliquid 账号")
+		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
 		return
 	}
 
@@ -704,7 +747,7 @@ func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 	// 检查用户是否已存在
 	_, err := tbm.db.GetTGUserByTelegramID(telegramID)
 	if err != nil {
-		tbm.sendMessage(chatID, "❌ 请先使用 /start 创建 Hyperliquid 账号")
+		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
 		return
 	}
 
@@ -768,13 +811,20 @@ func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 		}
 	}
 
-	traderStatusMsg += fmt.Sprintf(`
+	buttonText := "▶️ 启动交易员"
+	buttonAction := "start_trader"
+	if status["is_running"].(bool) {
+		buttonText = "⏹️ 停止交易员"
+		buttonAction = "stop_trader"
+	}
 
-💡 *控制命令:*
-/start_trader - 启动交易员
-/stop_trader - 停止交易员`)
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(buttonText, fmt.Sprintf("%s|%d", buttonAction, telegramID)),
+		),
+	)
 
-	tbm.sendMessage(chatID, traderStatusMsg)
+	tbm.sendMessageWithInlineKeyboard(chatID, traderStatusMsg, keyboard)
 }
 
 // getPromptDisplayName 获取提示词显示名称
@@ -912,6 +962,10 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 
 	// 处理不同的动作
 	switch action {
+	case "start_trader":
+		tbm.handleStartTraderCallback(callback, chatID, telegramID)
+	case "stop_trader":
+		tbm.handleStopTraderCallback(callback, chatID, telegramID)
 	case "stop_with_close":
 		tbm.handleStopWithClose(callback, chatID, telegramID)
 	case "stop_only":
@@ -920,6 +974,68 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		log.Printf("❌ 未知动作: %s", action)
 		tbm.answerCallbackQuery(callback.ID, "未知操作")
 	}
+}
+
+func (tbm *TelegramBotManager) handleStartTraderCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	tbm.answerCallbackQuery(callback.ID, "▶️ 正在启动交易员...")
+
+	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
+		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
+		return
+	}
+
+	if err := tbm.tgTraderMgr.StartTrader(telegramID); err != nil {
+		if err.Error() == "交易员已经在运行中" {
+			tbm.sendMessage(chatID, "✅ 交易员已经在运行中！使用 /trader_status 查看运行状态")
+		} else {
+			tbm.sendMessage(chatID, fmt.Sprintf("❌ 启动交易员失败: %v", err))
+		}
+		return
+	}
+
+	tbm.sendMessage(chatID, "🚀 交易员启动成功！使用 /trader_status 查看运行状态")
+}
+
+func (tbm *TelegramBotManager) handleStopTraderCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	tbm.answerCallbackQuery(callback.ID, "⏹️ 正在检查交易员状态...")
+
+	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
+		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
+		return
+	}
+
+	status, err := tbm.tgTraderMgr.GetTraderStatus(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 获取交易员状态失败: %v", err))
+		return
+	}
+
+	if !status["has_trader"].(bool) {
+		tbm.sendMessage(chatID, "❌ 您还没有创建交易员，请先使用 /create_trader 创建交易员")
+		return
+	}
+
+	if !status["is_running"].(bool) {
+		tbm.sendMessage(chatID, "✅ 交易员已经停止")
+		return
+	}
+
+	hasPositions, positionCount, err := tbm.tgTraderMgr.CheckPositionsBeforeStop(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 检查仓位失败: %v", err))
+		return
+	}
+
+	if !hasPositions {
+		if err := tbm.tgTraderMgr.StopTrader(telegramID); err != nil {
+			tbm.sendMessage(chatID, fmt.Sprintf("❌ 停止交易员失败: %v", err))
+			return
+		}
+		tbm.sendMessage(chatID, "⏹️ 交易员已停止")
+		return
+	}
+
+	tbm.sendStopConfirmationMessage(chatID, telegramID, positionCount)
 }
 
 // handleStopWithClose 处理平仓并停止

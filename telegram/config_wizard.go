@@ -11,8 +11,8 @@ import (
 
 // ConfigWizard 配置向导
 type ConfigWizard struct {
-	ttm         *TelegramTraderManager
-	tgBotMgr    interface{} // TelegramBotManager引用，用于删除消息
+	ttm      *TelegramTraderManager
+	tgBotMgr interface{} // TelegramBotManager引用，用于删除消息
 }
 
 // NewConfigWizard 创建配置向导
@@ -32,7 +32,7 @@ func (cw *ConfigWizard) StartWizard(telegramID int64) (string, error) {
 	log.Printf("🔍 StartWizard: Starting wizard for telegramID=%d", telegramID)
 	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
 	log.Printf("🔍 StartWizard: Retrieved session, current state=%s", session.State)
-	session.State = StateQuickSetup  // 直接进入快速配置模式
+	session.State = StateQuickSetup // 直接进入快速配置模式
 	session.TraderConfig = &TraderConfig{}
 	log.Printf("🔍 StartWizard: Set session state to %s", session.State)
 
@@ -296,9 +296,9 @@ func (cw *ConfigWizard) validateDeepSeekAPIKey(apiKey string) bool {
 	// 检查是否只包含有效字符
 	for _, char := range apiKey {
 		if !((char >= 'a' && char <= 'z') ||
-			 (char >= 'A' && char <= 'Z') ||
-			 (char >= '0' && char <= '9') ||
-			 char == '-') {
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '-') {
 			return false
 		}
 	}
@@ -482,19 +482,10 @@ func (cw *ConfigWizard) getPromptDisplayNameClean(templateName string) string {
 	templates := GetAvailablePromptTemplates()
 	for _, template := range templates {
 		if template.Name == templateName {
-			// 直接返回纯文字名称，避免任何特殊字符
-			switch template.Name {
-			case "default":
-				return "默认策略"
-			case "Hansen":
-				return "激进策略"
-			case "nof1":
-				return "保守策略"
-			case "taro_long_prompts":
-				return "高级策略"
-			default:
-				return template.Name
+			if template.PlainName != "" {
+				return template.PlainName
 			}
+			return template.DisplayName
 		}
 	}
 	return templateName
@@ -507,75 +498,44 @@ func (cw *ConfigWizard) getLeverageByRiskLevel(riskLevel string) (int, int) {
 
 // getQuickSetupMessage 获取快速配置的消息
 func (cw *ConfigWizard) getQuickSetupMessage() string {
-	return `🤖 选择交易策略：
+	templates := GetAvailablePromptTemplates()
+	var builder strings.Builder
+	builder.WriteString("🤖 选择交易策略：\n\n")
 
-1. 🛡️ 长期保守策略 (Hansen)
-   • 杠杆：BTC/ETH 3x，山寨币 2x
-   • 决策周期：60分钟
-   • Prompt: Hansen
+	for i, template := range templates {
+		builder.WriteString(fmt.Sprintf("%d. %s (%s)\n", i+1, template.DisplayName, template.Name))
+		builder.WriteString(fmt.Sprintf("   • 杠杆：BTC/ETH %dx，山寨币 %dx\n", template.BTCETHLeverage, template.AltcoinLeverage))
+		builder.WriteString(fmt.Sprintf("   • 决策周期：%d分钟\n", template.ScanIntervalMinutes))
+		if template.Description != "" {
+			builder.WriteString(fmt.Sprintf("   • 特点：%s\n", template.Description))
+		}
+		builder.WriteString(fmt.Sprintf("   • Prompt: %s\n\n", template.Name))
+	}
 
-2. ⚖️ 平衡策略 (default)
-   • 杠杆：BTC/ETH 5x，山寨币 3x
-   • 决策周期：30分钟
-   • Prompt: default
-
-3. 🔧 技术策略 (nof1)
-   • 杠杆：BTC/ETH 10x，山寨币 5x
-   • 决策周期：15分钟
-   • Prompt: nof1
-
-4. 🧠 专业策略 (taro_long_prompts)
-   • 杠杆：BTC/ETH 12x，山寨币 8x
-   • 决策周期：5分钟
-   • Prompt: taro_long_prompts
-
-请选择 1-4：`
+	builder.WriteString(fmt.Sprintf("请选择 1-%d：", len(templates)))
+	return builder.String()
 }
 
 // processQuickSetupInput 处理快速配置输入
 func (cw *ConfigWizard) processQuickSetupInput(telegramID int64, input string) (string, bool, error) {
 	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
+	templates := GetAvailablePromptTemplates()
 
 	choice, err := cw.ttm.ParseIntInput(input)
 	if err != nil {
-		return cw.getQuickSetupMessage() + "\n\n❌ 请输入有效的数字 (1-4)", false, nil
+		return cw.getQuickSetupMessage() + fmt.Sprintf("\n\n❌ 请输入有效的数字 (1-%d)", len(templates)), false, nil
 	}
 
-	if choice < 1 || choice > 4 {
-		return cw.getQuickSetupMessage() + "\n\n❌ 请选择有效的选项 (1-4)", false, nil
+	if choice < 1 || choice > len(templates) {
+		return cw.getQuickSetupMessage() + fmt.Sprintf("\n\n❌ 请选择有效的选项 (1-%d)", len(templates)), false, nil
 	}
 
-	// 根据选择设置智能默认配置
-	switch choice {
-	case 1: // 长期保守策略 (Hansen)
-		session.TraderConfig.PromptTemplate = "Hansen"
-		session.TraderConfig.InitialBalance = 0.0
-		session.TraderConfig.RiskLevel = "保守"
-		session.TraderConfig.BTCETHLeverage = 3
-		session.TraderConfig.AltcoinLeverage = 2
-		session.TraderConfig.ScanIntervalMinutes = 60
-	case 2: // 平衡策略 (default)
-		session.TraderConfig.PromptTemplate = "default"
-		session.TraderConfig.InitialBalance = 0.0
-		session.TraderConfig.RiskLevel = "标准"
-		session.TraderConfig.BTCETHLeverage = 5
-		session.TraderConfig.AltcoinLeverage = 3
-		session.TraderConfig.ScanIntervalMinutes = 30
-	case 3: // 技术策略 (nof1)
-		session.TraderConfig.PromptTemplate = "nof1"
-		session.TraderConfig.InitialBalance = 0.0
-		session.TraderConfig.RiskLevel = "中等"
-		session.TraderConfig.BTCETHLeverage = 10
-		session.TraderConfig.AltcoinLeverage = 5
-		session.TraderConfig.ScanIntervalMinutes = 15
-	case 4: // 专业策略 (taro_long_prompts)
-		session.TraderConfig.PromptTemplate = "taro_long_prompts"
-		session.TraderConfig.InitialBalance = 0.0
-		session.TraderConfig.RiskLevel = "激进"
-		session.TraderConfig.BTCETHLeverage = 12
-		session.TraderConfig.AltcoinLeverage = 8
-		session.TraderConfig.ScanIntervalMinutes = 5
-	}
+	selected := templates[choice-1]
+	session.TraderConfig.PromptTemplate = selected.Name
+	session.TraderConfig.RiskLevel = selected.RiskLevel
+	session.TraderConfig.BTCETHLeverage = selected.BTCETHLeverage
+	session.TraderConfig.AltcoinLeverage = selected.AltcoinLeverage
+	session.TraderConfig.ScanIntervalMinutes = selected.ScanIntervalMinutes
 
 	session.State = StateSettingAPIKey
 	cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
