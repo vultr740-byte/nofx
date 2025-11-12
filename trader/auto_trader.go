@@ -251,8 +251,8 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 	// 设置默认系统提示词模板
 	systemPromptTemplate := config.SystemPromptTemplate
 	if systemPromptTemplate == "" {
-		// feature/partial-close-dynamic-tpsl 分支默认使用 adaptive（支持动态止盈止损）
-		systemPromptTemplate = "adaptive"
+		// 默认使用 default 提示词模板
+		systemPromptTemplate = "default"
 	}
 
 	return &AutoTrader{
@@ -349,13 +349,13 @@ func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) s
 		statusEmoji = "❌"
 	}
 
-	msg := fmt.Sprintf(`%s **AI决策报告** - %s
+	msg := fmt.Sprintf(`%s AI决策报告 - %s
 
-📊 **周期信息**
+📊 周期信息
 • 决策时间: %s
 • 周期编号: #%d
 
-🤖 **AI思维链**`,
+🤖 AI思维链`,
 		statusEmoji,
 		at.name,
 		record.Timestamp.Format("2006-01-02 15:04:05"),
@@ -376,12 +376,12 @@ func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) s
 	// 添加决策信息
 	// ⚠️ 重要：DecisionJSON在存储时已经通过decodeUnicodeEscapes处理过，无需重复解码
 	if record.DecisionJSON != "" {
-		msg += fmt.Sprintf("\n\n📋 **决策JSON**\n```json\n%s\n```", record.DecisionJSON)
+		msg += fmt.Sprintf("\n\n📋 决策JSON\n```json\n%s\n```", record.DecisionJSON)
 	}
 
 	// 添加执行结果
 	if len(record.Decisions) > 0 {
-		msg += "\n\n⚡ **执行结果**"
+		msg += "\n\n⚡ 执行结果"
 		for _, decision := range record.Decisions {
 			decisionStatus := "❌"
 			if decision.Success {
@@ -395,7 +395,7 @@ func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) s
 	}
 
 	// 添加账户状态
-	msg += fmt.Sprintf("\n\n💰 **账户状态**")
+	msg += fmt.Sprintf("\n\n💰 账户状态")
 	msg += fmt.Sprintf("\n• 总余额: %.2f USDT", record.AccountState.TotalBalance)
 	msg += fmt.Sprintf("\n• 可用余额: %.2f USDT", record.AccountState.AvailableBalance)
 	if record.AccountState.PositionCount > 0 {
@@ -424,10 +424,10 @@ func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) s
 		safeError = strings.ReplaceAll(safeError, "\x0F", "")
 		// 更多控制字符可以根据需要添加...
 
-		msg += fmt.Sprintf("\n\n⚠️ **错误信息**: %s", safeError)
+		msg += fmt.Sprintf("\n\n⚠️ 错误信息: %s", safeError)
 	}
 
-	msg += fmt.Sprintf("\n\n🤖 *由 %s 自动推送*", at.name)
+	msg += fmt.Sprintf("\n\n🤖 由 %s 自动推送", at.name)
 
 	return msg
 }
@@ -466,10 +466,25 @@ func (at *AutoTrader) Run() error {
 
 			// 更新数据库中的初始余额
 			if db, ok := at.database.(config.DatabaseInterface); ok {
-				if err := db.UpdateTraderInitialBalance(at.userID, at.id, at.initialBalance); err != nil {
-					log.Printf("⚠️ [%s] 更新数据库初始余额失败: %v", at.name, err)
+				// 检查是否为TG交易员（userID为数字字符串）
+				if isTGTrader(at.userID) {
+					// TG交易员使用专门的方法
+					if tgUserID, err := strconv.ParseInt(at.userID, 10, 64); err == nil {
+						if err := db.UpdateTgTraderInitialBalance(tgUserID, at.id, at.initialBalance); err != nil {
+							log.Printf("⚠️ [%s] 更新TG交易员数据库初始余额失败: %v", at.name, err)
+						} else {
+							log.Printf("✅ [%s] 已更新TG交易员数据库初始余额", at.name)
+						}
+					} else {
+						log.Printf("⚠️ [%s] TG用户ID解析失败: %v", at.name, err)
+					}
 				} else {
-					log.Printf("✅ [%s] 已更新数据库初始余额", at.name)
+					// 普通交易员使用原方法
+					if err := db.UpdateTraderInitialBalance(at.userID, at.id, at.initialBalance); err != nil {
+						log.Printf("⚠️ [%s] 更新数据库初始余额失败: %v", at.name, err)
+					} else {
+						log.Printf("✅ [%s] 已更新数据库初始余额", at.name)
+					}
 				}
 			}
 		} else {
@@ -526,6 +541,110 @@ func (at *AutoTrader) Stop() {
 
 	at.monitorWg.Wait()     // 等待监控goroutine结束
 	log.Println("⏹ 自动交易系统停止")
+}
+
+// StopWithPositionsClose 停止自动交易并平掉所有仓位
+func (at *AutoTrader) StopWithPositionsClose() ([]string, error) {
+	if !at.isRunning {
+		return nil, fmt.Errorf("交易员未运行")
+	}
+
+	var closeResults []string
+	var hasError bool
+
+	// 1. 先获取所有仓位
+	positions, err := at.trader.GetPositions()
+	if err != nil {
+		log.Printf("❌ 获取仓位失败: %v", err)
+		return nil, fmt.Errorf("获取仓位失败: %w", err)
+	}
+
+	// 2. 如果有仓位，逐一平仓
+	if len(positions) > 0 {
+		log.Printf("🔄 发现 %d 个仓位，开始平仓...", len(positions))
+
+		for _, position := range positions {
+			symbol, ok := position["symbol"].(string)
+			if !ok {
+				continue
+			}
+
+			// 提取仓位数量 - 优先使用 Szi 字段（Hyperliquid实际仓位数量）
+			var size float64
+			if szi, ok := position["Szi"].(string); ok && szi != "" {
+				if parsedSize, err := strconv.ParseFloat(szi, 64); err == nil {
+					size = parsedSize
+					log.Printf("✅ 从 Szi 字段提取 %s 仓位数量: %f", symbol, size)
+				} else {
+					log.Printf("⚠️ Szi 字段解析失败: %v", err)
+				}
+			}
+
+			// 如果 Szi 字段无效，尝试其他字段
+			if size == 0 {
+				size, _ = position["quantity"].(float64)
+			}
+			if size == 0 {
+				size, _ = position["size"].(float64)
+			}
+			if size == 0 {
+				size, _ = position["positionAmt"].(float64)
+			}
+
+			positionValue, _ := position["markPrice"].(float64)
+
+			// 跳过仓位为0的
+			if size == 0 {
+				log.Printf("⚠️ %s 仓位为0，跳过", symbol)
+				continue
+			}
+
+			log.Printf("🔄 平仓处理: %s (仓位: %.6f, 价值: %.2f)", symbol, size, positionValue)
+
+			// 创建平仓决策记录
+			actionRecord := &logger.DecisionAction{
+				Action:     "close_position",
+				Symbol:     symbol,
+				Quantity:   math.Abs(size),
+				Timestamp:  time.Now(),
+							}
+
+			// 根据仓位方向执行平仓
+			if size > 0 {
+				// 多头仓位，执行平多
+				err = at.executeCloseLongWithRecord(nil, actionRecord)
+			} else {
+				// 空头仓位，执行平空
+				err = at.executeCloseShortWithRecord(nil, actionRecord)
+			}
+
+			if err != nil {
+				errorMsg := fmt.Sprintf("❌ 平仓失败 %s: %v", symbol, err)
+				log.Printf(errorMsg)
+				closeResults = append(closeResults, errorMsg)
+				hasError = true
+			} else {
+				successMsg := fmt.Sprintf("✅ 平仓成功 %s", symbol)
+				log.Printf(successMsg)
+				closeResults = append(closeResults, successMsg)
+			}
+		}
+
+		// 等待平仓操作完成
+		time.Sleep(2 * time.Second)
+	} else {
+		log.Printf("✅ 无未平仓合约，直接停止交易")
+	}
+
+	// 3. 停止交易
+	at.Stop()
+
+	// 4. 返回平仓结果
+	if hasError {
+		return closeResults, fmt.Errorf("部分仓位平仓失败")
+	}
+
+	return closeResults, nil
 }
 
 // autoSyncBalanceIfNeeded 自动同步余额（每10分钟检查一次，变化>5%才更新）
@@ -1159,17 +1278,25 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, ac
 
 // executeCloseLongWithRecord 执行平多仓并记录详细信息
 func (at *AutoTrader) executeCloseLongWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
-	log.Printf("  🔄 平多仓: %s", decision.Symbol)
+	// 处理 decision 为 nil 的情况，使用 actionRecord.Symbol
+	var symbol string
+	if decision != nil {
+		symbol = decision.Symbol
+	} else {
+		symbol = actionRecord.Symbol
+	}
+
+	log.Printf("  🔄 平多仓: %s", symbol)
 
 	// 获取当前价格
-	marketData, err := market.Get(decision.Symbol)
+	marketData, err := market.Get(symbol)
 	if err != nil {
 		return err
 	}
 	actionRecord.Price = marketData.CurrentPrice
 
 	// 平仓
-	order, err := at.trader.CloseLong(decision.Symbol, 0) // 0 = 全部平仓
+	order, err := at.trader.CloseLong(symbol, 0) // 0 = 全部平仓
 	if err != nil {
 		return err
 	}
@@ -1185,17 +1312,25 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *decision.Decision, ac
 
 // executeCloseShortWithRecord 执行平空仓并记录详细信息
 func (at *AutoTrader) executeCloseShortWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
-	log.Printf("  🔄 平空仓: %s", decision.Symbol)
+	// 处理 decision 为 nil 的情况，使用 actionRecord.Symbol
+	var symbol string
+	if decision != nil {
+		symbol = decision.Symbol
+	} else {
+		symbol = actionRecord.Symbol
+	}
+
+	log.Printf("  🔄 平空仓: %s", symbol)
 
 	// 获取当前价格
-	marketData, err := market.Get(decision.Symbol)
+	marketData, err := market.Get(symbol)
 	if err != nil {
 		return err
 	}
 	actionRecord.Price = marketData.CurrentPrice
 
 	// 平仓
-	order, err := at.trader.CloseShort(decision.Symbol, 0) // 0 = 全部平仓
+	order, err := at.trader.CloseShort(symbol, 0) // 0 = 全部平仓
 	if err != nil {
 		return err
 	}
@@ -1490,7 +1625,30 @@ func (at *AutoTrader) GetStartTime() time.Time {
 
 // GetCurrentBalance 获取当前余额（简化实现，返回0表示运行中）
 func (at *AutoTrader) GetCurrentBalance() float64 {
-	// 简化实现，实际项目中可以通过交易器接口获取真实余额
+	// 检查trader是否可用
+	if at.trader == nil {
+		return 0
+	}
+
+	// 获取余额信息
+	balanceInfo, err := at.trader.GetBalance()
+	if err != nil {
+		return 0
+	}
+
+	// 提取可用余额，使用与AutoTrader启动时相同的解析逻辑
+	if availableBalance, ok := balanceInfo["available_balance"].(float64); ok && availableBalance > 0 {
+		return availableBalance
+	} else if availableBalance, ok := balanceInfo["availableBalance"].(float64); ok && availableBalance > 0 {
+		return availableBalance
+	} else if totalBalance, ok := balanceInfo["balance"].(float64); ok && totalBalance > 0 {
+		return totalBalance
+	} else if totalEquity, ok := balanceInfo["total_equity"].(float64); ok && totalEquity > 0 {
+		return totalEquity
+	} else if accountValue, ok := balanceInfo["accountValue"].(float64); ok && accountValue > 0 {
+		return accountValue
+	}
+
 	return 0
 }
 
@@ -1941,4 +2099,12 @@ func (at *AutoTrader) ClearPeakPnLCache(symbol, side string) {
 
 	posKey := symbol + "_" + side
 	delete(at.peakPnLCache, posKey)
+}
+
+// isTGTrader 检查是否为TG交易员（通过检查userID是否为纯数字）
+func isTGTrader(userID string) bool {
+	// TG交易员的userID是纯数字字符串（Telegram用户ID）
+	// 普通交易员的userID是UUID格式（包含连字符）
+	_, err := strconv.ParseInt(userID, 10, 64)
+	return err == nil
 }

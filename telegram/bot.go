@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -60,6 +61,9 @@ func NewTelegramBotManager(token string, db config.DatabaseInterface, debug bool
 	// 设置TelegramBotManager引用到TelegramTraderManager，用于推送决策
 	tgTraderMgr.SetTelegramBotManager(tgBotMgr)
 
+	// 设置TelegramBotManager引用到ConfigWizard，用于删除API KEY消息
+	configWizard.SetTelegramBotManager(tgBotMgr)
+
 	return tgBotMgr, nil
 }
 
@@ -79,6 +83,9 @@ func (tbm *TelegramBotManager) Start() {
 		if update.Message != nil {
 			log.Printf("收到消息 [%s] %s", update.Message.From.UserName, update.Message.Text)
 			tbm.handleMessage(update)
+		} else if update.CallbackQuery != nil {
+			log.Printf("收到回调查询 [%s]", update.CallbackQuery.From.UserName)
+			tbm.handleCallbackQuery(update)
 		}
 	}
 }
@@ -144,7 +151,7 @@ func (tbm *TelegramBotManager) handleStart(update tgbotapi.Update) {
 	if err == nil {
 		// 用户已存在，检查是否有 Hyperliquid 账号
 		if tbm.hasHyperliquidAccount(user) {
-			msg := fmt.Sprintf("👋 欢迎回来，%s！\n\n您的 Hyperliquid 账号已创建完成。\n\n💡 *可用命令:*\n/balance - 查看余额\n/positions - 查看持仓\n/deposit - 获取充值地址", firstName)
+			msg := fmt.Sprintf("👋 欢迎回来，%s！\n\n您的 Hyperliquid 账号已创建完成。\n\n💡 可用命令:\n/deposit - 获取充值地址\n/balance - 查看余额\n/positions - 查看持仓\n/help - 显示此帮助信息", firstName)
 			tbm.sendMessage(chatID, msg)
 			return
 		}
@@ -208,9 +215,7 @@ func (tbm *TelegramBotManager) handleHelp(update tgbotapi.Update) {
 	chatID := update.Message.Chat.ID
 	firstName := update.Message.From.FirstName
 
-	helpMsg := fmt.Sprintf(`🤖 NOFX Hyperliquid Bot 帮助
-
-你好，%s！以下是可用命令：
+	helpMsg := fmt.Sprintf(`你好，%s！以下是可用命令：
 
 📋 基础命令:
 /start - 创建或查看您的 Hyperliquid 账号
@@ -221,20 +226,17 @@ func (tbm *TelegramBotManager) handleHelp(update tgbotapi.Update) {
 /positions - 查看当前持仓信息
 /deposit - 获取 USDC 充值地址
 
-🤖 AI 交易员管理:
-/create_trader - 创建新的 AI 交易员
-/start_trader - 启动交易员开始交易
-/stop_trader - 停止交易员
-/trader_status - 查看交易员运行状态
+🤖 AI Agent 管理:
+/start_trader - 启动 Agent 开始交易
+/stop_trader - 停止 Agent
+/trader_status - 查看 Agent 运行状态
 
 🔒 安全提示:
 请妥善保管您的 Agent Key
 不要将 Agent Key 分享给他人
 Agent Key 仅用于交易操作
 
-💡 *提示: 每个用户只能创建一个交易员*
-
-如有问题，请联系客服。`, firstName)
+💡 提示: 每个用户自动创建一个 Agent`, firstName)
 
 	tbm.sendMessage(chatID, helpMsg)
 }
@@ -354,21 +356,7 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 	}
 
 	// 生成充值消息
-	depositMsg := fmt.Sprintf(`💰 USDC 充值地址
-
-` + "```" + `
-%s
-` + "```" + `
-
-📋 充值说明:
-• 支持资产: USDC
-• 网络: Arbitrum One
-• 最小充值: 20 USDC
-• 到账时间: 通常 2-5 分钟
-
-⚠️ 注意事项:
-• 请勿充值其他资产到该地址
-• 充值后可在 /balance 中查看余额`, walletAddr)
+	depositMsg := fmt.Sprintf("💰 USDC 充值地址\n\n```\n%s\n```\n\n📋 充值说明:\n• 支持资产: USDC\n• 网络: Arbitrum One\n• 最小充值: 20 USDC\n• 到账时间: 通常 2-5 分钟\n\n⚠️ 注意事项:\n• 请勿充值其他资产到该地址\n• 充值后可在 /balance 中查看余额", walletAddr)
 
 	tbm.sendMessage(chatID, depositMsg)
 }
@@ -382,6 +370,12 @@ func (tbm *TelegramBotManager) handleRegularMessage(update tgbotapi.Update) {
 	// 检查是否在配置向导过程中
 	session := tbm.tgTraderMgr.GetSessionManager().GetOrCreateSession(telegramID)
 	if session.State != StateIdle {
+		// 如果正在输入API KEY，保存消息ID以便后续删除
+		if session.State == StateSettingAPIKey {
+			tbm.tgTraderMgr.GetSessionManager().UpdateLastMessageID(telegramID, update.Message.MessageID)
+			log.Printf("🔍 保存API KEY消息ID: %d (用户: %d)", update.Message.MessageID, telegramID)
+		}
+
 		// 处理配置向导输入
 		response, isComplete, err := tbm.configWizard.ProcessInput(telegramID, message)
 		if err != nil {
@@ -411,7 +405,11 @@ func (tbm *TelegramBotManager) setupCommands() {
 	commands := []tgbotapi.BotCommand{
 		{
 			Command:     "start",
-			Description: "🚀 创建或查看 Hyperliquid 账号",
+			Description: "🚀 开始",
+		},
+		{
+			Command:     "deposit",
+			Description: "💳 充值",
 		},
 		{
 			Command:     "balance",
@@ -422,24 +420,20 @@ func (tbm *TelegramBotManager) setupCommands() {
 			Description: "📊 查看当前持仓",
 		},
 		{
-			Command:     "deposit",
-			Description: "💳 获取 USDC 充值地址",
-		},
-		{
 			Command:     "create_trader",
-			Description: "🤖 创建 AI 交易员",
+			Description: "🤖 创建 Agent",
 		},
 		{
 			Command:     "start_trader",
-			Description: "🚀 启动交易员",
+			Description: "▶️ 启动 Agent",
 		},
 		{
 			Command:     "stop_trader",
-			Description: "⏹️ 停止交易员",
+			Description: "⏹️ 停止 Agent",
 		},
 		{
 			Command:     "trader_status",
-			Description: "📊 交易员状态",
+			Description: "👁️ 查看 Agent",
 		},
 		{
 			Command:     "help",
@@ -457,13 +451,47 @@ func (tbm *TelegramBotManager) setupCommands() {
 
 // sendMessage 发送消息
 func (tbm *TelegramBotManager) sendMessage(chatID int64, text string) {
+	// UTF-8编码验证（参考PushDecisionToUser的实现）
+	log.Printf("🔍 [DEBUG] 检查消息UTF-8编码 (ChatID: %d, 长度: %d)", chatID, len(text))
+	if !utf8.ValidString(text) {
+		log.Printf("❌ [DEBUG] 消息包含无效UTF-8字符！")
+		// 清理无效字符
+		cleanMsg := strings.ToValidUTF8(text, "�")
+		log.Printf("✅ [DEBUG] 已清理无效UTF-8字符，使用清理后的消息")
+		text = cleanMsg
+	} else {
+		log.Printf("✅ [DEBUG] 消息UTF-8编码有效")
+	}
+
 	msg := tgbotapi.NewMessage(chatID, text)
-	// 暂时移除 Markdown 格式，避免解析错误
+	msg.ParseMode = "Markdown" // 统一使用Markdown格式
 
 	log.Printf("📤 准备发送消息到 ChatID %d: %s", chatID, text)
 
 	if _, err := tbm.bot.Send(msg); err != nil {
-		log.Printf("❌ 发送消息失败 (ChatID: %d): %v", chatID, err)
+		// 如果Markdown格式失败，重试为普通文本
+		if strings.Contains(err.Error(), "can't parse entities") {
+			log.Printf("⚠️ Markdown格式解析失败，发送纯文本消息 (ChatID: %d)", chatID)
+			msg.ParseMode = ""
+			if _, err2 := tbm.bot.Send(msg); err2 != nil {
+				log.Printf("❌ 发送消息失败 (ChatID: %d): %v", chatID, err2)
+			} else {
+				log.Printf("✅ 消息发送成功 (ChatID: %d)", chatID)
+			}
+		} else if strings.Contains(err.Error(), "text must be encoded in UTF-8") {
+			// 如果仍然是UTF-8编码错误，强制清理
+			log.Printf("⚠️ UTF-8编码错误，强制清理消息 (ChatID: %d)", chatID)
+			cleanMsg := strings.ToValidUTF8(text, "�")
+			msg.Text = cleanMsg
+			msg.ParseMode = "" // 使用纯文本
+			if _, err2 := tbm.bot.Send(msg); err2 != nil {
+				log.Printf("❌ 发送消息失败 (ChatID: %d): %v", chatID, err2)
+			} else {
+				log.Printf("✅ 消息发送成功 (ChatID: %d)", chatID)
+			}
+		} else {
+			log.Printf("❌ 发送消息失败 (ChatID: %d): %v", chatID, err)
+		}
 	} else {
 		log.Printf("✅ 消息发送成功 (ChatID: %d)", chatID)
 	}
@@ -628,13 +656,44 @@ func (tbm *TelegramBotManager) handleStopTrader(update tgbotapi.Update) {
 		return
 	}
 
-	// 停止交易员
-	if err := tbm.tgTraderMgr.StopTrader(telegramID); err != nil {
-		tbm.sendMessage(chatID, fmt.Sprintf("❌ 停止交易员失败: %v", err))
+	// 检查交易员状态
+	status, err := tbm.tgTraderMgr.GetTraderStatus(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 获取交易员状态失败: %v", err))
 		return
 	}
 
-	tbm.sendMessage(chatID, "⏹️ 交易员已停止")
+	// 如果交易员不存在，提示用户先创建
+	if !status["has_trader"].(bool) {
+		tbm.sendMessage(chatID, "❌ 您还没有创建交易员，请先使用 /create_trader 创建交易员")
+		return
+	}
+
+	// 如果交易员已经停止，显示友好消息
+	if !status["is_running"].(bool) {
+		tbm.sendMessage(chatID, "✅ 交易员已经停止")
+		return
+	}
+
+	// 检查是否有未平仓位
+	hasPositions, positionCount, err := tbm.tgTraderMgr.CheckPositionsBeforeStop(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 检查仓位失败: %v", err))
+		return
+	}
+
+	// 如果没有仓位，直接停止
+	if !hasPositions {
+		if err := tbm.tgTraderMgr.StopTrader(telegramID); err != nil {
+			tbm.sendMessage(chatID, fmt.Sprintf("❌ 停止交易员失败: %v", err))
+			return
+		}
+		tbm.sendMessage(chatID, "⏹️ 交易员已停止")
+		return
+	}
+
+	// 有仓位，发送确认消息
+	tbm.sendStopConfirmationMessage(chatID, telegramID, positionCount)
 }
 
 // handleTraderStatus 处理 /trader_status 命令
@@ -782,4 +841,181 @@ func (tbm *TelegramBotManager) GetTraderManager() *manager.TraderManager {
 // GetTelegramTraderManager 获取Telegram交易员管理器
 func (tbm *TelegramBotManager) GetTelegramTraderManager() *TelegramTraderManager {
 	return tbm.tgTraderMgr
+}
+
+// sendStopConfirmationMessage 发送停止确认消息
+func (tbm *TelegramBotManager) sendStopConfirmationMessage(chatID int64, telegramID int64, positionCount int) {
+	// 创建内联键盘
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔄 平仓并停止", fmt.Sprintf("stop_with_close|%d", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("⏹️ 仅停止交易", fmt.Sprintf("stop_only|%d", telegramID)),
+		),
+	)
+
+	// 构建确认消息
+	messageText := fmt.Sprintf(`⚠️ **停止交易员确认**
+
+📊 检测到您有 %d 个未平仓位
+
+请选择停止方式：`, positionCount)
+
+	// 发送带有内联键盘的消息
+	msg := tgbotapi.NewMessage(chatID, messageText)
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = keyboard
+
+	if _, err := tbm.bot.Send(msg); err != nil {
+		log.Printf("❌ 发送停止确认消息失败 (ChatID: %d): %v", chatID, err)
+		// 如果内联键盘失败，发送普通消息
+		tbm.sendMessage(chatID, fmt.Sprintf("检测到您有 %d 个未平仓位。请手动确认是否平仓后停止交易员。", positionCount))
+	} else {
+		log.Printf("✅ 发送停止确认消息成功 (ChatID: %d)", chatID)
+	}
+}
+
+// handleCallbackQuery 处理回调查询
+func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
+	callback := update.CallbackQuery
+	if callback == nil {
+		return
+	}
+
+	chatID := callback.Message.Chat.ID
+	userID := callback.From.ID
+	data := callback.Data
+
+	log.Printf("🔍 收到回调查询 (ChatID: %d, UserID: %d, Data: %s)", chatID, userID, data)
+
+	// 解析回调数据
+	parts := strings.Split(data, "|")
+	if len(parts) != 2 {
+		log.Printf("❌ 无效的回调数据格式: %s", data)
+		tbm.answerCallbackQuery(callback.ID, "无效的请求")
+		return
+	}
+
+	action, telegramIDStr := parts[0], parts[1]
+	telegramID, err := strconv.ParseInt(telegramIDStr, 10, 64)
+	if err != nil {
+		log.Printf("❌ 解析用户ID失败: %v", err)
+		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
+		return
+	}
+
+	// 验证用户身份
+	if userID != telegramID {
+		log.Printf("❌ 用户身份验证失败: 请求用户 %d, 目标用户 %d", userID, telegramID)
+		tbm.answerCallbackQuery(callback.ID, "权限不足")
+		return
+	}
+
+	// 处理不同的动作
+	switch action {
+	case "stop_with_close":
+		tbm.handleStopWithClose(callback, chatID, telegramID)
+	case "stop_only":
+		tbm.handleStopOnly(callback, chatID, telegramID)
+	default:
+		log.Printf("❌ 未知动作: %s", action)
+		tbm.answerCallbackQuery(callback.ID, "未知操作")
+	}
+}
+
+// handleStopWithClose 处理平仓并停止
+func (tbm *TelegramBotManager) handleStopWithClose(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	// 先回答回调，显示"正在处理"
+	tbm.answerCallbackQuery(callback.ID, "🔄 正在平仓并停止交易员...")
+
+	// 执行平仓并停止
+	closeResults, err := tbm.tgTraderMgr.StopTraderWithPositions(telegramID)
+	if err != nil {
+		errorMsg := fmt.Sprintf("❌ 平仓并停止交易员失败: %v", err)
+		tbm.sendMessage(chatID, errorMsg)
+
+		// 编辑原消息显示错误
+		tbm.editCallbackMessage(callback.Message.MessageID, chatID, "❌ 操作失败: "+err.Error())
+		return
+	}
+
+	// 构建成功消息
+	var successMsg strings.Builder
+
+	if len(closeResults) > 0 {
+		// 有仓位被平仓的情况
+		successMsg.WriteString("✅ 交易员已停止，仓位平仓完成\n\n")
+		successMsg.WriteString("📋 平仓结果:\n")
+		for i, result := range closeResults {
+			successMsg.WriteString(fmt.Sprintf("%d. %s\n", i+1, result))
+		}
+		successMsg.WriteString("\n⏹️ 交易员已完全停止运行")
+	} else {
+		// 无需平仓的情况 - 无未平仓合约
+		successMsg.WriteString("✅ 交易员已停止\n\n")
+		successMsg.WriteString("ℹ️ 无未平仓合约，交易员已安全停止")
+	}
+
+	// 发送成功消息
+	tbm.sendMessage(chatID, successMsg.String())
+
+	// 编辑原消息显示成功
+	if len(closeResults) > 0 {
+		tbm.editCallbackMessage(callback.Message.MessageID, chatID, "✅ 已成功平仓并停止交易员")
+	} else {
+		tbm.editCallbackMessage(callback.Message.MessageID, chatID, "✅ 交易员已安全停止（无未平仓合约）")
+	}
+}
+
+// handleStopOnly 处理仅停止交易
+func (tbm *TelegramBotManager) handleStopOnly(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	// 先回答回调，显示"正在处理"
+	tbm.answerCallbackQuery(callback.ID, "⏹️ 正在停止交易员...")
+
+	// 仅停止交易员，不平仓
+	err := tbm.tgTraderMgr.StopTrader(telegramID)
+	if err != nil {
+		errorMsg := fmt.Sprintf("❌ 停止交易员失败: %v", err)
+		tbm.sendMessage(chatID, errorMsg)
+
+		// 编辑原消息显示错误
+		tbm.editCallbackMessage(callback.Message.MessageID, chatID, "❌ 操作失败: "+err.Error())
+		return
+	}
+
+	// 发送成功消息
+	successMsg := "⏹️ 交易员已停止\n\n" +
+		"⚠️ 重要提醒: 您的未平仓位仍然保留\n" +
+		"• 请密切关注市场变化\n" +
+		"• 可随时手动平仓\n" +
+		"• 使用 /positions 查看当前持仓"
+
+	tbm.sendMessage(chatID, successMsg)
+
+	// 编辑原消息显示成功
+	tbm.editCallbackMessage(callback.Message.MessageID, chatID, "✅ 交易员已停止")
+}
+
+// answerCallbackQuery 回答回调查询
+func (tbm *TelegramBotManager) answerCallbackQuery(callbackID string, text string) {
+	callbackConfig := tgbotapi.NewCallback(callbackID, text)
+	if _, err := tbm.bot.Request(callbackConfig); err != nil {
+		log.Printf("❌ 回答回调查询失败 (CallbackID: %s): %v", callbackID, err)
+	}
+}
+
+// editCallbackMessage 编辑回调消息
+func (tbm *TelegramBotManager) editCallbackMessage(messageID int, chatID int64, text string) {
+	editConfig := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	editConfig.ParseMode = "Markdown"
+
+	if _, err := tbm.bot.Request(editConfig); err != nil {
+		// 如果Markdown格式失败，尝试纯文本
+		log.Printf("⚠️ 编辑消息Markdown格式失败，尝试纯文本 (MessageID: %d)", messageID)
+		editConfig.ParseMode = ""
+		if _, err2 := tbm.bot.Request(editConfig); err2 != nil {
+			log.Printf("❌ 编辑回调消息失败 (MessageID: %d): %v", messageID, err2)
+		}
+	} else {
+		log.Printf("✅ 编辑回调消息成功 (MessageID: %d)", messageID)
+	}
 }

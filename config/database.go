@@ -65,6 +65,7 @@ type DatabaseInterface interface {
 	CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) error
 	GetTgTraders(tgUserID int64) ([]TgTraderRecord, error)
 	UpdateTgTraderStatus(tgUserID int64, traderID string, isRunning bool) error
+	UpdateTgTraderInitialBalance(tgUserID int64, traderID string, newBalance float64) error
 	DeleteTgTrader(tgUserID int64, traderID string) error
 	GetTgTraderConfig(tgUserID int64, traderID string) (*TgTraderRecord, error)
 	Close() error
@@ -2450,9 +2451,9 @@ func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) 
 				btc_eth_leverage, altcoin_leverage, trading_symbols,
 				use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				is_cross_margin, use_default_coins, custom_coins,
-				system_prompt_template, created_at, updated_at
+				system_prompt_template, ai_model_api_key, created_at, updated_at
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW()
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW(), NOW()
 			)`
 		_, err := d.db.Exec(query,
 			traderRecord.ID, traderRecord.TgUserID, traderRecord.Name, traderRecord.AIModelID,
@@ -2461,6 +2462,7 @@ func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) 
 			traderRecord.TradingSymbols, traderRecord.UseCoinPool, traderRecord.UseOITop,
 			traderRecord.CustomPrompt, traderRecord.OverrideBasePrompt, traderRecord.IsCrossMargin,
 			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.SystemPromptTemplate,
+			traderRecord.AIModelAPIKey,
 		)
 		return err
 	} else {
@@ -2471,9 +2473,9 @@ func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) 
 				btc_eth_leverage, altcoin_leverage, trading_symbols,
 				use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				is_cross_margin, use_default_coins, custom_coins,
-				system_prompt_template, created_at, updated_at
+				system_prompt_template, ai_model_api_key, created_at, updated_at
 			) VALUES (
-				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 			)`
 		_, err := d.db.Exec(query,
 			traderRecord.ID, traderRecord.TgUserID, traderRecord.Name, traderRecord.AIModelID,
@@ -2482,6 +2484,7 @@ func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) 
 			traderRecord.TradingSymbols, traderRecord.UseCoinPool, traderRecord.UseOITop,
 			traderRecord.CustomPrompt, traderRecord.OverrideBasePrompt, traderRecord.IsCrossMargin,
 			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.SystemPromptTemplate,
+			traderRecord.AIModelAPIKey,
 		)
 		return err
 	}
@@ -2567,6 +2570,44 @@ func (d *Database) UpdateTgTraderStatus(tgUserID int64, traderID string, isRunni
 	result, err := d.db.Exec(query, args...)
 	if err != nil {
 		return fmt.Errorf("更新TG交易员状态失败: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("获取影响行数失败: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("未找到匹配的TG交易员记录")
+	}
+
+	return nil
+}
+
+// UpdateTgTraderInitialBalance 更新TG交易员初始余额
+func (d *Database) UpdateTgTraderInitialBalance(tgUserID int64, traderID string, newBalance float64) error {
+	var query string
+	var args []interface{}
+
+	if d.usePostgreSQL {
+		query = `
+			UPDATE tg_traders
+			SET initial_balance = $1, updated_at = NOW()
+			WHERE tg_user_id = $2 AND id = $3
+		`
+		args = []interface{}{newBalance, tgUserID, traderID}
+	} else {
+		query = `
+			UPDATE tg_traders
+			SET initial_balance = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE tg_user_id = ? AND id = ?
+		`
+		args = []interface{}{newBalance, tgUserID, traderID}
+	}
+
+	result, err := d.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("更新TG交易员初始余额失败: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()

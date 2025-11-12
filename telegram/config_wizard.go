@@ -5,11 +5,14 @@ import (
 	"log"
 	"strconv"
 	"strings"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // ConfigWizard 配置向导
 type ConfigWizard struct {
-	ttm *TelegramTraderManager
+	ttm         *TelegramTraderManager
+	tgBotMgr    interface{} // TelegramBotManager引用，用于删除消息
 }
 
 // NewConfigWizard 创建配置向导
@@ -17,6 +20,11 @@ func NewConfigWizard(ttm *TelegramTraderManager) *ConfigWizard {
 	return &ConfigWizard{
 		ttm: ttm,
 	}
+}
+
+// SetTelegramBotManager 设置TelegramBotManager引用
+func (cw *ConfigWizard) SetTelegramBotManager(tgBotMgr interface{}) {
+	cw.tgBotMgr = tgBotMgr
 }
 
 // StartWizard 开始配置向导（简化版 - 直接进入快速配置）
@@ -52,6 +60,9 @@ func (cw *ConfigWizard) ProcessInput(telegramID int64, input string) (string, bo
 	case StateChoosingPrompt:
 		log.Printf("🔍 Processing prompt template selection for telegramID=%d", telegramID)
 		return cw.processPromptTemplateSelection(telegramID, input)
+	case StateSettingAPIKey:
+		log.Printf("🔍 Processing API KEY input for telegramID=%d", telegramID)
+		return cw.processAPIKeyInput(telegramID, input)
 	case StateSettingBalance:
 		log.Printf("🔍 Processing balance input for telegramID=%d", telegramID)
 		return cw.processBalanceInput(telegramID, input)
@@ -231,6 +242,82 @@ func (cw *ConfigWizard) processIntervalInput(telegramID int64, input string) (st
 	return cw.getConfirmMessage(telegramID), false, nil
 }
 
+// processAPIKeyInput 处理 API KEY 输入
+func (cw *ConfigWizard) processAPIKeyInput(telegramID int64, input string) (string, bool, error) {
+	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
+
+	// 验证 DeepSeek API KEY 格式
+	if !cw.validateDeepSeekAPIKey(input) {
+		return cw.getAPIKeyMessage() + "\n\n❌ API KEY 格式错误！\n• 必须以 'sk-' 开头\n• 总长度至少 20 个字符\n• 只能包含字母、数字和连字符", false, nil
+	}
+
+	// API KEY 验证成功，删除用户的消息以增强安全性
+	if session.LastMessageID != 0 && cw.tgBotMgr != nil {
+		if tgBotMgr, ok := cw.tgBotMgr.(*TelegramBotManager); ok {
+			deleteConfig := tgbotapi.NewDeleteMessage(telegramID, session.LastMessageID)
+			if _, err := tgBotMgr.bot.Request(deleteConfig); err != nil {
+				log.Printf("⚠️ 删除API KEY消息失败 (ChatID: %d, MessageID: %d): %v", telegramID, session.LastMessageID, err)
+			} else {
+				log.Printf("✅ 成功删除API KEY消息 (ChatID: %d, MessageID: %d)", telegramID, session.LastMessageID)
+			}
+		}
+	}
+
+	// 保存 API KEY
+	session.TraderConfig.AIModelAPIKey = input
+	session.State = StateConfirm
+	cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
+
+	return cw.getConfirmMessage(telegramID), false, nil
+}
+
+// getAPIKeyMessage 获取 API KEY 输入消息
+func (cw *ConfigWizard) getAPIKeyMessage() string {
+	return `🔐 创建 AI 交易员 - 输入 API KEY
+
+🔗 获取 API KEY：
+1. 访问 https://platform.deepseek.com/api_keys
+2. 登录并创建新的 API KEY
+3. 复制完整的 API KEY
+
+请直接粘贴您的 DeepSeek API KEY：`
+}
+
+// validateDeepSeekAPIKey 验证 DeepSeek API KEY 格式
+func (cw *ConfigWizard) validateDeepSeekAPIKey(apiKey string) bool {
+	if len(apiKey) < 20 {
+		return false
+	}
+
+	if !strings.HasPrefix(apiKey, "sk-") {
+		return false
+	}
+
+	// 检查是否只包含有效字符
+	for _, char := range apiKey {
+		if !((char >= 'a' && char <= 'z') ||
+			 (char >= 'A' && char <= 'Z') ||
+			 (char >= '0' && char <= '9') ||
+			 char == '-') {
+			return false
+		}
+	}
+
+	return true
+}
+
+// maskAPIKey 隐藏 API KEY 的敏感部分用于显示
+func (cw *ConfigWizard) maskAPIKey(apiKey string) string {
+	if len(apiKey) <= 10 {
+		return apiKey
+	}
+
+	// 显示前3位和后4位，中间用****替代
+	prefix := apiKey[:3]
+	suffix := apiKey[len(apiKey)-4:]
+	return prefix + "****" + suffix
+}
+
 // processConfirmation 处理确认
 func (cw *ConfigWizard) processConfirmation(telegramID int64, input string) (string, bool, error) {
 	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
@@ -243,9 +330,11 @@ func (cw *ConfigWizard) processConfirmation(telegramID int64, input string) (str
 			return fmt.Sprintf("❌ 创建交易员失败: %v", err), true, nil
 		}
 
+		log.Printf("✅ 成功创建交易员: %s", traderName)
+
 		cw.ttm.GetSessionManager().ClearSession(telegramID)
-		return fmt.Sprintf("交易员创建成功！\n\n交易员名称: %s\n初始资金: %.0f USDC\n策略: %s\n\n现在可以使用 /start_trader 启动交易员",
-			traderName, session.TraderConfig.InitialBalance, cw.getPromptDisplayNameClean(session.TraderConfig.PromptTemplate)), true, nil
+		return fmt.Sprintf("交易员创建成功！\n\n交易员名称: %s\n策略: %s\n\n启动后将自动获取账户余额\n现在可以使用 /start_trader 启动交易员",
+			traderName, cw.getPromptDisplayNameClean(session.TraderConfig.PromptTemplate)), true, nil
 	}
 
 	if strings.ToLower(input) == "n" || input == "否" || input == "no" {
@@ -357,15 +446,20 @@ func (cw *ConfigWizard) getConfirmMessage(telegramID int64) string {
 	config := session.TraderConfig
 
 	var message strings.Builder
+	message.WriteString("🤖 创建AI交易员 - 确认配置\n\n")
 
-	message.WriteString("**创建 AI 交易员 - 确认配置**\n\n")
-	message.WriteString("**配置摘要：**\n\n")
+	// 删除"配置摘要"标题，直接显示配置项
 	message.WriteString(fmt.Sprintf("交易策略: %s\n", cw.getPromptDisplayNameClean(config.PromptTemplate)))
-	message.WriteString(fmt.Sprintf("初始资金: %.0f USDC\n", config.InitialBalance))
+	// 删除初始资金行
 	message.WriteString(fmt.Sprintf("风险级别: %s\n", config.RiskLevel))
 	message.WriteString(fmt.Sprintf("BTC/ETH杠杆: %d倍\n", config.BTCETHLeverage))
 	message.WriteString(fmt.Sprintf("山寨币杠杆: %d倍\n", config.AltcoinLeverage))
-	message.WriteString(fmt.Sprintf("扫描间隔: %d 分钟\n", config.ScanIntervalMinutes))
+	message.WriteString(fmt.Sprintf("决策周期: %d分钟\n", config.ScanIntervalMinutes))
+
+	// API KEY隐藏显示
+	if config.AIModelAPIKey != "" {
+		message.WriteString(fmt.Sprintf("DeepSeek API KEY: %s\n", cw.maskAPIKey(config.AIModelAPIKey)))
+	}
 
 	message.WriteString("\n确认创建交易员吗？ (y/n)")
 
@@ -413,21 +507,29 @@ func (cw *ConfigWizard) getLeverageByRiskLevel(riskLevel string) (int, int) {
 
 // getQuickSetupMessage 获取快速配置的消息
 func (cw *ConfigWizard) getQuickSetupMessage() string {
-	return `🤖 创建AI交易员 - 选择您的交易风格：
+	return `🤖 选择交易策略：
 
-1. 🛡️ 保守策略（新手推荐）
-   • 资金：1000 USDC • 杠杆：BTC/ETH 2x，山寨币 1x • 扫描：15分钟
-   • 特点：资金安全第一，低风险低收益
+1. 🛡️ 长期保守策略 (Hansen)
+   • 杠杆：BTC/ETH 3x，山寨币 2x
+   • 决策周期：60分钟
+   • Prompt: Hansen
 
-2. 🔄 默认策略（平衡选择）
-   • 资金：1000 USDC • 杠杆：BTC/ETH 5x，山寨币 3x • 扫描：5分钟
-   • 特点：平衡风险和收益，适合大多数用户
+2. ⚖️ 平衡策略 (default)
+   • 杠杆：BTC/ETH 5x，山寨币 3x
+   • 决策周期：30分钟
+   • Prompt: default
 
-3. 🔥 激进策略（高级用户）
-   • 资金：500 USDC  • 杠杆：BTC/ETH 8x，山寨币 5x • 扫描：3分钟
-   • 特点：追求高收益，承担较高风险
+3. 🔧 技术策略 (nof1)
+   • 杠杆：BTC/ETH 10x，山寨币 5x
+   • 决策周期：15分钟
+   • Prompt: nof1
 
-请选择 1-3：`
+4. 🧠 专业策略 (taro_long_prompts)
+   • 杠杆：BTC/ETH 12x，山寨币 8x
+   • 决策周期：5分钟
+   • Prompt: taro_long_prompts
+
+请选择 1-4：`
 }
 
 // processQuickSetupInput 处理快速配置输入
@@ -436,40 +538,47 @@ func (cw *ConfigWizard) processQuickSetupInput(telegramID int64, input string) (
 
 	choice, err := cw.ttm.ParseIntInput(input)
 	if err != nil {
-		return cw.getQuickSetupMessage() + "\n\n❌ 请输入有效的数字 (1-3)", false, nil
+		return cw.getQuickSetupMessage() + "\n\n❌ 请输入有效的数字 (1-4)", false, nil
 	}
 
-	if choice < 1 || choice > 3 {
-		return cw.getQuickSetupMessage() + "\n\n❌ 请选择有效的选项 (1-3)", false, nil
+	if choice < 1 || choice > 4 {
+		return cw.getQuickSetupMessage() + "\n\n❌ 请选择有效的选项 (1-4)", false, nil
 	}
 
 	// 根据选择设置智能默认配置
 	switch choice {
-	case 1: // 保守策略
-		session.TraderConfig.PromptTemplate = "nof1"           // 保守策略
-		session.TraderConfig.InitialBalance = 1000.0
+	case 1: // 长期保守策略 (Hansen)
+		session.TraderConfig.PromptTemplate = "Hansen"
+		session.TraderConfig.InitialBalance = 0.0
 		session.TraderConfig.RiskLevel = "保守"
-		session.TraderConfig.BTCETHLeverage = 2
-		session.TraderConfig.AltcoinLeverage = 1
-		session.TraderConfig.ScanIntervalMinutes = 15
-	case 2: // 默认策略
-		session.TraderConfig.PromptTemplate = "default"        // 默认策略
-		session.TraderConfig.InitialBalance = 1000.0
+		session.TraderConfig.BTCETHLeverage = 3
+		session.TraderConfig.AltcoinLeverage = 2
+		session.TraderConfig.ScanIntervalMinutes = 60
+	case 2: // 平衡策略 (default)
+		session.TraderConfig.PromptTemplate = "default"
+		session.TraderConfig.InitialBalance = 0.0
 		session.TraderConfig.RiskLevel = "标准"
 		session.TraderConfig.BTCETHLeverage = 5
 		session.TraderConfig.AltcoinLeverage = 3
-		session.TraderConfig.ScanIntervalMinutes = 5
-	case 3: // 激进策略
-		session.TraderConfig.PromptTemplate = "Hansen"         // 激进策略
-		session.TraderConfig.InitialBalance = 500.0
-		session.TraderConfig.RiskLevel = "激进"
-		session.TraderConfig.BTCETHLeverage = 8
+		session.TraderConfig.ScanIntervalMinutes = 30
+	case 3: // 技术策略 (nof1)
+		session.TraderConfig.PromptTemplate = "nof1"
+		session.TraderConfig.InitialBalance = 0.0
+		session.TraderConfig.RiskLevel = "中等"
+		session.TraderConfig.BTCETHLeverage = 10
 		session.TraderConfig.AltcoinLeverage = 5
-		session.TraderConfig.ScanIntervalMinutes = 3
+		session.TraderConfig.ScanIntervalMinutes = 15
+	case 4: // 专业策略 (taro_long_prompts)
+		session.TraderConfig.PromptTemplate = "taro_long_prompts"
+		session.TraderConfig.InitialBalance = 0.0
+		session.TraderConfig.RiskLevel = "激进"
+		session.TraderConfig.BTCETHLeverage = 12
+		session.TraderConfig.AltcoinLeverage = 8
+		session.TraderConfig.ScanIntervalMinutes = 5
 	}
 
-	session.State = StateConfirm
+	session.State = StateSettingAPIKey
 	cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
 
-	return cw.getConfirmMessage(telegramID), false, nil
+	return cw.getAPIKeyMessage(), false, nil
 }

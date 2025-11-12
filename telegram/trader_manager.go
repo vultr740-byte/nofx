@@ -20,6 +20,7 @@ type TelegramTraderManager struct {
 	traderMgr  *manager.TraderManager
 	sessionMgr *SessionManager
 	tgBotMgr   interface{} // TelegramBotManager引用，用于推送决策
+	testnet    bool
 }
 
 // NewTelegramTraderManager 创建 Telegram 交易员管理器
@@ -28,6 +29,7 @@ func NewTelegramTraderManager(db config.DatabaseInterface, traderMgr *manager.Tr
 		db:         db,
 		traderMgr:  traderMgr,
 		sessionMgr: NewSessionManager(),
+		testnet:    true, // TG交易员默认使用测试网
 	}
 }
 
@@ -65,26 +67,21 @@ func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *T
 
 	// 生成交易员配置
 	traderID := uuid.New().String()
-	userID := fmt.Sprintf("%d", telegramID)
 
-	// 获取默认AI模型和交易所配置
-	aiModel, err := ttm.getDefaultAIModel(userID)
-	if err != nil {
-		return "", fmt.Errorf("获取默认AI模型失败: %w", err)
-	}
+	// 使用固定的AI模型ID和交易所ID（TG交易员只支持DeepSeek + Hyperliquid）
+	aiModelID := "deepseek" // 固定使用deepseek模型ID
+	exchangeID := "hyperliquid" // 固定使用Hyperliquid交易所
 
-	exchange, err := ttm.getDefaultExchange(userID)
-	if err != nil {
-		return "", fmt.Errorf("获取默认交易所配置失败: %w", err)
-	}
+	log.Printf("✅ 使用DeepSeek AI模型: %s", aiModelID)
+	log.Printf("✅ 使用Hyperliquid交易所: %s", exchangeID)
 
 	// 创建TG交易员记录
 	tgTraderRecord := &config.TgTraderRecord{
 		ID:                traderID,
 		TgUserID:         telegramID,
-		Name:             fmt.Sprintf("AI交易员-%s", traderID[:8]),
-		AIModelID:        aiModel.ID,
-		ExchangeID:       exchange.ID,
+		Name:             "AI交易员",
+		AIModelID:        aiModelID,
+		ExchangeID:       exchangeID,
 		InitialBalance:   traderConfig.InitialBalance,
 		ScanIntervalMinutes: traderConfig.ScanIntervalMinutes,
 		IsRunning:        false,
@@ -99,6 +96,7 @@ func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *T
 		UseDefaultCoins:  true,
 		CustomCoins:      "",
 		SystemPromptTemplate: traderConfig.PromptTemplate,
+		AIModelAPIKey:     traderConfig.AIModelAPIKey,
 	}
 
 	// 保存到数据库
@@ -106,8 +104,8 @@ func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *T
 		return "", fmt.Errorf("创建TG交易员失败: %w", err)
 	}
 
-	log.Printf("✅ 成功创建TG交易员: %s", traderID)
-	return traderID, nil
+	log.Printf("✅ 成功创建TG交易员: %s", tgTraderRecord.Name)
+	return tgTraderRecord.Name, nil
 }
 
 // StartTrader 启动交易员 - 重构版本，确保状态同步
@@ -181,6 +179,93 @@ func (ttm *TelegramTraderManager) StartTrader(telegramID int64) error {
 
 	log.Printf("✅ 成功启动TG交易员: %s (数据库和内存状态已同步)", trader.Name)
 	return nil
+}
+
+// CheckPositionsBeforeStop 停止前检查仓位 - 复用 /positions 查询逻辑
+func (ttm *TelegramTraderManager) CheckPositionsBeforeStop(telegramID int64) (bool, int, error) {
+	// 检查 TelegramBotManager 是否已设置
+	if ttm.tgBotMgr == nil {
+		return false, 0, fmt.Errorf("TelegramBotManager未设置")
+	}
+
+	// 类型断言获取 TelegramBotManager
+	tgBotMgr, ok := ttm.tgBotMgr.(*TelegramBotManager)
+	if !ok {
+		return false, 0, fmt.Errorf("TelegramBotManager类型断言失败")
+	}
+
+	// 获取用户信息 (复用 /positions 的逻辑)
+	user, err := tgBotMgr.db.GetTGUserByTelegramID(telegramID)
+	if err != nil {
+		return false, 0, fmt.Errorf("获取用户信息失败: %w", err)
+	}
+
+	// 检查是否有 Hyperliquid 账号 (复用 /positions 的逻辑)
+	if !tgBotMgr.hasHyperliquidAccount(user) {
+		return false, 0, fmt.Errorf("未找到 Hyperliquid 账号")
+	}
+
+	// 提取 Agent Key 和 Wallet Address (复用 /positions 的逻辑)
+	agentKey, walletAddr, err := tgBotMgr.extractAgentKeyAndWallet(user)
+	if err != nil {
+		return false, 0, fmt.Errorf("提取账号信息失败: %w", err)
+	}
+
+	log.Printf("🔍 复用 /positions 查询逻辑检查仓位 (AgentKey: %s..., Wallet: %s)",
+		agentKey[:min(10, len(agentKey))], walletAddr)
+
+	// 复用 /positions 相同的查询逻辑
+	positionsMsg, err := tgBotMgr.hlService.GetPositions(agentKey, walletAddr, tgBotMgr.testnet)
+	if err != nil {
+		return false, 0, fmt.Errorf("查询持仓失败: %w", err)
+	}
+
+	log.Printf("📋 /positions 查询成功，返回消息长度: %d", len(positionsMsg))
+
+	// 通过解析返回的消息来判断是否有仓位
+	// 如果消息包含 "持仓数量: 0 个" 或类似内容，说明没有仓位
+	hasPositions := true
+	positionCount := 0
+
+	// 检查消息中是否有仓位信息
+	if strings.Contains(positionsMsg, "持仓数量: 0 个") ||
+	   strings.Contains(positionsMsg, "当前持仓\n\n") && len(positionsMsg) < 50 {
+		hasPositions = false
+		positionCount = 0
+		log.Printf("📊 解析 /positions 结果: 无未平仓合约")
+	} else if strings.Contains(positionsMsg, "持仓数量:") {
+		// 尝试从消息中提取持仓数量
+		if idx := strings.Index(positionsMsg, "持仓数量:"); idx != -1 {
+			remaining := positionsMsg[idx+len("持仓数量: "):]
+			if spaceIdx := strings.Index(remaining, " "); spaceIdx != -1 {
+				countStr := remaining[:spaceIdx]
+				if count, err := strconv.Atoi(strings.TrimSpace(countStr)); err == nil {
+					positionCount = count
+					hasPositions = count > 0
+					log.Printf("📊 解析 /positions 结果: 发现 %d 个未平仓合约", positionCount)
+				}
+			}
+		}
+	}
+
+	// 如果解析失败，通过检查消息内容来判断
+	if positionCount == 0 && hasPositions {
+		// 如果包含具体的仓位信息，说明有仓位
+		if strings.Contains(positionsMsg, "→ LONG") ||
+		   strings.Contains(positionsMsg, "→ SHORT") ||
+		   strings.Contains(positionsMsg, "数量:") {
+			hasPositions = true
+			positionCount = 1 // 至少有1个仓位
+			log.Printf("📊 通过内容分析判断: 有未平仓合约")
+		} else {
+			hasPositions = false
+			log.Printf("📊 通过内容分析判断: 无未平仓合约")
+		}
+	}
+
+	log.Printf("✅ 仓位检查完成: 有仓位=%v, 数量=%d", hasPositions, positionCount)
+
+	return hasPositions, positionCount, nil
 }
 
 // StopTrader 停止交易员 - 重构版本，确保进程真正停止
@@ -263,6 +348,40 @@ STOPPED:
 		log.Printf("⚠️ TG交易员停止可能未完成: %s (当前状态: %v)", trader.Name, currentRunningState)
 		return fmt.Errorf("交易员停止可能未完全成功，请检查状态")
 	}
+}
+
+// StopTraderWithPositions 停止交易员并平掉所有仓位
+func (ttm *TelegramTraderManager) StopTraderWithPositions(telegramID int64) ([]string, error) {
+	// 1. 获取用户的TG交易员
+	traders, err := ttm.db.GetTgTraders(telegramID)
+	if err != nil {
+		return nil, fmt.Errorf("获取交易员失败: %w", err)
+	}
+
+	if len(traders) == 0 {
+		return nil, fmt.Errorf("您还没有创建交易员")
+	}
+
+	trader := traders[0]
+
+	// 2. 获取交易员实例
+	traderObj, err := ttm.traderMgr.GetTrader(trader.ID)
+	if err != nil {
+		return nil, fmt.Errorf("获取交易员实例失败: %w", err)
+	}
+
+	// 直接调用带平仓的停止方法
+	closeResults, err := traderObj.StopWithPositionsClose()
+	if err != nil {
+		return closeResults, err
+	}
+
+	// 更新数据库状态
+	if dbErr := ttm.db.UpdateTgTraderStatus(telegramID, trader.ID, false); dbErr != nil {
+		log.Printf("⚠️ 更新TG交易员运行状态失败: %v", dbErr)
+	}
+
+	return closeResults, nil
 }
 
 // GetTraderStatus 获取交易员状态 - 重构版本，确保状态实时准确

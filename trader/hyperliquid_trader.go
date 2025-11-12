@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"strconv"
 	"strings"
 
@@ -248,18 +249,31 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 		return nil, fmt.Errorf("获取持仓失败: %w", err)
 	}
 
+	log.Printf("🔍 [DEBUG] Hyperliquid API返回 %d 个资产持仓", len(accountState.AssetPositions))
+
 	var result []map[string]interface{}
 
 	// 遍历所有持仓
-	for _, assetPos := range accountState.AssetPositions {
+	for i, assetPos := range accountState.AssetPositions {
 		position := assetPos.Position
 
-		// 持仓数量（string类型）
-		posAmt, _ := strconv.ParseFloat(position.Szi, 64)
+		// 记录原始数据用于调试
+		log.Printf("🔍 [DEBUG] 资产持仓 %d: Coin=%s, Szi=%s, PositionValue=%s",
+			i, position.Coin, position.Szi, position.PositionValue)
+
+		// 增强的持仓数量解析
+		posAmt, err := t.parsePositionSzi(position.Szi)
+		if err != nil {
+			log.Printf("❌ 跳过无效持仓 %d: %v", i, err)
+			continue
+		}
 
 		if posAmt == 0 {
-			continue // 跳过无持仓的
+			log.Printf("⚪ 跳过零持仓 %s", position.Coin)
+			continue
 		}
+
+		log.Printf("✅ 发现有效持仓 %s: 数量=%.6f", position.Coin, posAmt)
 
 		posMap := make(map[string]interface{})
 
@@ -267,14 +281,19 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 		symbol := position.Coin + "USDT"
 		posMap["symbol"] = symbol
 
-		// 持仓数量和方向
+		// 持仓数量和方向 - 保留原始符号用于平仓判断
 		if posAmt > 0 {
 			posMap["side"] = "long"
-			posMap["positionAmt"] = posAmt
 		} else {
 			posMap["side"] = "short"
-			posMap["positionAmt"] = -posAmt // 转为正数
 		}
+		posMap["quantity"] = posAmt // 保留原始符号（空头为负数，多头为正数）
+
+		// 为了向后兼容，同时保留positionAmt字段（绝对值）
+		posMap["positionAmt"] = math.Abs(posAmt)
+
+		// 同时保留 Szi 原始值用于调试
+		posMap["Szi"] = position.Szi
 
 		// 价格信息（EntryPx和LiquidationPx是指针类型）
 		var entryPrice, liquidationPx float64
@@ -854,6 +873,24 @@ func convertSymbolToHyperliquid(symbol string) string {
 		return symbol[:len(symbol)-4]
 	}
 	return symbol
+}
+
+// parsePositionSzi 解析持仓数量字符串，增强错误处理
+func (t *HyperliquidTrader) parsePositionSzi(szi string) (float64, error) {
+	// 去除空格和特殊字符
+	szi = strings.TrimSpace(szi)
+	if szi == "" || szi == "0" {
+		return 0, nil
+	}
+
+	// 处理可能的科学计数法
+	posAmt, err := strconv.ParseFloat(szi, 64)
+	if err != nil {
+		log.Printf("⚠️ 解析持仓数量失败: %s, 错误: %v", szi, err)
+		return 0, fmt.Errorf("解析持仓数量失败: %w", err)
+	}
+
+	return posAmt, nil
 }
 
 // absFloat 返回浮点数的绝对值

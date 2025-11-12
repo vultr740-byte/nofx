@@ -13,6 +13,7 @@ const (
 	StateIdle            SessionState = "idle"             // 空闲状态
 	StateCreatingTrader  SessionState = "creating_trader"  // 创建交易员中
 	StateChoosingPrompt  SessionState = "choosing_prompt"  // 选择提示词模板
+	StateSettingAPIKey   SessionState = "setting_api_key"  // 设置 API KEY
 	StateSettingBalance  SessionState = "setting_balance"  // 设置初始资金
 	StateSettingRisk     SessionState = "setting_risk"     // 设置风险级别
 	StateSettingLeverage SessionState = "setting_leverage" // 设置杠杆倍数
@@ -37,6 +38,7 @@ type TraderConfig struct {
 	BTCETHLeverage      int
 	AltcoinLeverage     int
 	ScanIntervalMinutes int
+	AIModelAPIKey       string // AI 模型 API KEY (对应数据库中的 ai_model_api_key 字段)
 	// 预留扩展字段
 	CustomParams map[string]interface{}
 }
@@ -48,6 +50,7 @@ type UserSession struct {
 	TraderConfig  *TraderConfig
 	LastActivity  time.Time
 	ExpiresAt     time.Time
+	LastMessageID int // 存储最后一条消息的ID，用于删除
 }
 
 // SessionManager 会话管理器
@@ -111,6 +114,17 @@ func (sm *SessionManager) UpdateTraderConfig(telegramID int64, config *TraderCon
 		session.TraderConfig = config
 		session.LastActivity = time.Now()
 		session.ExpiresAt = time.Now().Add(30 * time.Minute)
+	}
+}
+
+// UpdateLastMessageID 更新最后一条消息的ID
+func (sm *SessionManager) UpdateLastMessageID(telegramID int64, messageID int) {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+
+	if session, exists := sm.sessions[telegramID]; exists {
+		session.LastMessageID = messageID
+		session.LastActivity = time.Now()
 	}
 }
 
