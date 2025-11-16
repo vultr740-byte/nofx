@@ -7,19 +7,19 @@ import (
 
 // TelegramBotConfig Telegram Bot 配置（用于交互式 Bot）
 type TelegramBotConfig struct {
-	BotToken       string `json:"bot_token"`
-	Debug          bool   `json:"debug"`
-	Enabled        bool   `json:"enabled"`
-	HyperliquidTestnet bool `json:"hyperliquid_testnet"`
+	BotToken           string `json:"bot_token"`
+	Debug              bool   `json:"debug"`
+	Enabled            bool   `json:"enabled"`
+	HyperliquidTestnet bool   `json:"hyperliquid_testnet"`
 }
 
 // LoadTelegramBotConfig 加载 Telegram Bot 配置
 func LoadTelegramBotConfig() *TelegramBotConfig {
 	config := &TelegramBotConfig{
-		BotToken:          getEnvOrDefault("TELEGRAM_BOT_TOKEN", ""),
-		Debug:             getEnvOrDefault("TELEGRAM_DEBUG", "false") == "true",
-		Enabled:           getEnvOrDefault("TELEGRAM_ENABLED", "false") == "true",
-		HyperliquidTestnet: getEnvOrDefault("TELEGRAM_HYPERLIQUID_TESTNET", "true") == "true", // 默认使用测试网
+		BotToken:           getEnvOrDefault("TELEGRAM_BOT_TOKEN", ""),
+		Debug:              getEnvOrDefault("TELEGRAM_DEBUG", "false") == "true",
+		Enabled:            getEnvOrDefault("TELEGRAM_ENABLED", "true") == "true",
+		HyperliquidTestnet: getEnvOrDefault("HYPERLIQUID_TESTNET", "false") == "true",
 	}
 
 	if config.Enabled && config.BotToken == "" {

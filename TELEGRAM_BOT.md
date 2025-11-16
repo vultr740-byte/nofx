@@ -24,12 +24,9 @@ NOFX Telegram Bot 是一个基于 Telegram 的 Hyperliquid 交易机器人，提
 
 ### 2. 配置环境变量
 
-在 `.env` 文件中添加以下配置：
+在 `.env` 中填入 Bot Token（服务默认开启 Telegram Bot）：
 
 ```env
-# 启用 Telegram Bot
-TELEGRAM_ENABLED=true
-
 # 设置 Bot Token（从 BotFather 获取）
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token-here
 
@@ -133,7 +130,6 @@ docker compose up -d
 
 1. **Bot 无响应**
    - 检查 `TELEGRAM_BOT_TOKEN` 是否正确
-   - 确认 `TELEGRAM_ENABLED=true`
    - 查看服务器日志
 
 2. **查询失败**
