@@ -50,21 +50,25 @@ type PositionSnapshot struct {
 
 // DecisionAction 决策动作
 type DecisionAction struct {
-	Action    string    `json:"action"`    // open_long, open_short, close_long, close_short, update_stop_loss, update_take_profit, partial_close
-	Symbol    string    `json:"symbol"`    // 币种
-	Quantity  float64   `json:"quantity"`  // 数量（部分平仓时使用）
-	Leverage  int       `json:"leverage"`  // 杠杆（开仓时）
-	Price     float64   `json:"price"`     // 执行价格
-	OrderID   int64     `json:"order_id"`  // 订单ID
-	Timestamp time.Time `json:"timestamp"` // 执行时间
-	Success   bool      `json:"success"`   // 是否成功
-	Error     string    `json:"error"`     // 错误信息
+	Action     string    `json:"action"`    // open_long, open_short, close_long, close_short, update_stop_loss, update_take_profit, partial_close
+	Symbol     string    `json:"symbol"`    // 币种
+	Quantity   float64   `json:"quantity"`  // 数量（部分平仓时使用）
+	Leverage   int       `json:"leverage"`  // 杠杆（开仓时）
+	Price      float64   `json:"price"`     // 执行价格
+	OrderID    int64     `json:"order_id"`  // 订单ID
+	Timestamp  time.Time `json:"timestamp"` // 执行时间
+	Success    bool      `json:"success"`   // 是否成功
+	Error      string    `json:"error"`     // 错误信息
+	StopLoss   *float64  `json:"stop_loss,omitempty"`
+	TakeProfit *float64  `json:"take_profit,omitempty"`
 }
 
 // DecisionLogger 决策日志记录器
 type DecisionLogger struct {
-	logDir      string
-	cycleNumber int
+	logDir          string
+	cycleNumber     int
+	lastSharpeRatio float64
+	hasSharpeRatio  bool
 }
 
 // NewDecisionLogger 创建决策日志记录器
@@ -335,6 +339,9 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 		SymbolStats:  make(map[string]*SymbolPerformance),
 	}
 
+	// 用于夏普比率的真实交易收益率
+	var sharpeReturns []float64
+
 	// 追踪持仓状态：symbol_side -> {side, openPrice, openTime, quantity, leverage}
 	openPositions := make(map[string]map[string]interface{})
 
@@ -506,6 +513,10 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 							analysis.RecentTrades = append(analysis.RecentTrades, outcome)
 							analysis.TotalTrades++ // 🔧 只在完全平倉時計數
 
+							if marginUsed > 0 {
+								sharpeReturns = append(sharpeReturns, accumulatedPnL/marginUsed)
+							}
+
 							// 分类交易
 							if accumulatedPnL > 0 {
 								analysis.WinningTrades++
@@ -565,6 +576,10 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 
 						analysis.RecentTrades = append(analysis.RecentTrades, outcome)
 						analysis.TotalTrades++
+
+						if marginUsed > 0 {
+							sharpeReturns = append(sharpeReturns, totalPnL/marginUsed)
+						}
 
 						// 分类交易
 						if totalPnL > 0 {
@@ -656,76 +671,60 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 		}
 	}
 
-	// 计算夏普比率（需要至少2个数据点）
-	analysis.SharpeRatio = l.calculateSharpeRatio(records)
+	// 计算夏普比率：仅当存在真实交易收益率时更新，否则保持上一次的值
+	if len(sharpeReturns) > 0 {
+		analysis.SharpeRatio = calculateSharpeRatioFromReturns(sharpeReturns)
+		l.lastSharpeRatio = analysis.SharpeRatio
+		l.hasSharpeRatio = true
+	} else if l.hasSharpeRatio {
+		analysis.SharpeRatio = l.lastSharpeRatio
+	} else {
+		analysis.SharpeRatio = 0
+	}
 
 	return analysis, nil
 }
 
-// calculateSharpeRatio 计算夏普比率
-// 基于账户净值的变化计算风险调整后收益
-func (l *DecisionLogger) calculateSharpeRatio(records []*DecisionRecord) float64 {
-	if len(records) < 2 {
-		return 0.0
-	}
-
-	// 提取每个周期的账户净值
-	// 注意：TotalBalance字段实际存储的是TotalEquity（账户总净值）
-	// TotalUnrealizedProfit字段实际存储的是TotalPnL（相对初始余额的盈亏）
-	var equities []float64
-	for _, record := range records {
-		// 直接使用TotalBalance，因为它已经是完整的账户净值
-		equity := record.AccountState.TotalBalance
-		if equity > 0 {
-			equities = append(equities, equity)
-		}
-	}
-
-	if len(equities) < 2 {
-		return 0.0
-	}
-
-	// 计算周期收益率（period returns）
-	var returns []float64
-	for i := 1; i < len(equities); i++ {
-		if equities[i-1] > 0 {
-			periodReturn := (equities[i] - equities[i-1]) / equities[i-1]
-			returns = append(returns, periodReturn)
-		}
-	}
-
+// calculateSharpeRatioFromReturns 根据收益率序列计算夏普比率
+func calculateSharpeRatioFromReturns(returns []float64) float64 {
 	if len(returns) == 0 {
 		return 0.0
 	}
 
-	// 计算平均收益率
-	sumReturns := 0.0
+	validReturns := make([]float64, 0, len(returns))
 	for _, r := range returns {
+		if math.IsNaN(r) || math.IsInf(r, 0) {
+			continue
+		}
+		validReturns = append(validReturns, r)
+	}
+
+	if len(validReturns) == 0 {
+		return 0.0
+	}
+
+	sumReturns := 0.0
+	for _, r := range validReturns {
 		sumReturns += r
 	}
-	meanReturn := sumReturns / float64(len(returns))
+	meanReturn := sumReturns / float64(len(validReturns))
 
-	// 计算收益率标准差
 	sumSquaredDiff := 0.0
-	for _, r := range returns {
+	for _, r := range validReturns {
 		diff := r - meanReturn
 		sumSquaredDiff += diff * diff
 	}
-	variance := sumSquaredDiff / float64(len(returns))
+	variance := sumSquaredDiff / float64(len(validReturns))
 	stdDev := math.Sqrt(variance)
 
-	// 避免除以零
 	if stdDev == 0 {
 		if meanReturn > 0 {
-			return 999.0 // 无波动的正收益
+			return 999.0
 		} else if meanReturn < 0 {
-			return -999.0 // 无波动的负收益
+			return -999.0
 		}
 		return 0.0
 	}
 
-	// 计算夏普比率（假设无风险利率为0）
-	// 注：直接返回周期级别的夏普比率（非年化），正常范围 -2 到 +2
-	sharpeRatio := meanReturn / stdDev
-	return sharpeRatio
+	return meanReturn / stdDev
 }

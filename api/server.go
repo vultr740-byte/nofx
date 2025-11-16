@@ -184,7 +184,7 @@ func (s *Server) handleGetSystemConfig(c *gin.Context) {
 	}
 	if len(defaultCoins) == 0 {
 		// 使用硬编码的默认币种
-		defaultCoins = []string{"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "HYPEUSDT"}
+		defaultCoins = []string{"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "HYPEUSDT", "SUIUSDT"}
 	}
 
 	// 获取杠杆配置
@@ -399,12 +399,12 @@ type CreateTraderRequest struct {
 }
 
 type CreateModelConfigRequest struct {
-	ModelName        string `json:"model_name" binding:"required"`
-	ProviderName     string `json:"provider_name" binding:"required"`
-	APIKey           string `json:"api_key" binding:"required"`
-	CustomAPIURL     string `json:"custom_api_url"`
-	CustomModelName  string `json:"custom_model_name"`
-	Enabled          bool   `json:"enabled"`
+	ModelName       string `json:"model_name" binding:"required"`
+	ProviderName    string `json:"provider_name" binding:"required"`
+	APIKey          string `json:"api_key" binding:"required"`
+	CustomAPIURL    string `json:"custom_api_url"`
+	CustomModelName string `json:"custom_model_name"`
+	Enabled         bool   `json:"enabled"`
 }
 
 type ModelConfig struct {
@@ -422,19 +422,19 @@ type SafeModelConfig struct {
 	Name            string `json:"name"`
 	Provider        string `json:"provider"`
 	Enabled         bool   `json:"enabled"`
-	CustomAPIURL    string `json:"customApiUrl"`        // 自定义API URL（通常不敏感）
-	CustomModelName string `json:"customModelName"`     // 自定义模型名（不敏感）
+	CustomAPIURL    string `json:"customApiUrl"`    // 自定义API URL（通常不敏感）
+	CustomModelName string `json:"customModelName"` // 自定义模型名（不敏感）
 }
 
 type ExchangeConfig struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	CustomName       string `json:"customName,omitempty"`
-	Type             string `json:"type"` // "cex" or "dex"
-	Enabled          bool   `json:"enabled"`
-	APIKey           string `json:"apiKey,omitempty"`
-	SecretKey        string `json:"secretKey,omitempty"`
-	Testnet          bool   `json:"testnet,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	CustomName string `json:"customName,omitempty"`
+	Type       string `json:"type"` // "cex" or "dex"
+	Enabled    bool   `json:"enabled"`
+	APIKey     string `json:"apiKey,omitempty"`
+	SecretKey  string `json:"secretKey,omitempty"`
+	Testnet    bool   `json:"testnet,omitempty"`
 }
 
 // SafeExchangeConfig 安全的交易所配置结构（不包含敏感信息）
@@ -446,14 +446,14 @@ type SafeExchangeConfig struct {
 	Enabled               bool   `json:"enabled"`
 	Testnet               bool   `json:"testnet,omitempty"`
 	HyperliquidWalletAddr string `json:"hyperliquidWalletAddr"` // Hyperliquid钱包地址（不敏感）
-	AsterUser             string `json:"asterUser"`              // Aster用户名（不敏感）
-	AsterSigner           string `json:"asterSigner"`            // Aster签名者（不敏感）
+	AsterUser             string `json:"asterUser"`             // Aster用户名（不敏感）
+	AsterSigner           string `json:"asterSigner"`           // Aster签名者（不敏感）
 }
 
 type UpdateModelConfigRequest struct {
 	Models map[string]struct {
 		Enabled         bool   `json:"enabled"`
-		APIKey          string `json:"api_key,omitempty"`         // 可选，空字符串表示不更新
+		APIKey          string `json:"api_key,omitempty"` // 可选，空字符串表示不更新
 		CustomAPIURL    string `json:"custom_api_url"`
 		CustomModelName string `json:"custom_model_name"`
 	} `json:"models"`
@@ -1295,9 +1295,9 @@ func (s *Server) handleCreateModelConfig(c *gin.Context) {
 
 	log.Printf("✅ 创建新AI模型成功: %s (ID: %s, Provider: %s)", req.ModelName, modelID, req.ProviderName)
 	c.JSON(http.StatusCreated, gin.H{
-		"message": "模型创建成功",
+		"message":  "模型创建成功",
 		"model_id": modelID,
-		"name": req.ModelName,
+		"name":     req.ModelName,
 		"provider": req.ProviderName,
 	})
 }
@@ -1576,10 +1576,10 @@ func (s *Server) handleDebugTrader(c *gin.Context) {
 
 	// 2. 检查AI模型配置
 	debugInfo["ai_model"] = map[string]interface{}{
-		"id":      aiModelCfg.ID,
-		"name":    aiModelCfg.Name,
-		"provider": aiModelCfg.Provider,
-		"enabled": aiModelCfg.Enabled,
+		"id":          aiModelCfg.ID,
+		"name":        aiModelCfg.Name,
+		"provider":    aiModelCfg.Provider,
+		"enabled":     aiModelCfg.Enabled,
 		"has_api_key": aiModelCfg.APIKey != "",
 	}
 
@@ -1670,22 +1670,22 @@ func (s *Server) handleGetTraderConfig(c *gin.Context) {
 	aiModelID := traderConfig.AIModelID
 
 	result := map[string]interface{}{
-		"trader_id":             traderConfig.ID,
-		"trader_name":           traderConfig.Name,
-		"ai_model":              aiModelID,
-		"exchange_id":           traderConfig.ExchangeID,
-		"initial_balance":       traderConfig.InitialBalance,
-		"scan_interval_minutes": traderConfig.ScanIntervalMinutes,
-		"btc_eth_leverage":      traderConfig.BTCETHLeverage,
-		"altcoin_leverage":      traderConfig.AltcoinLeverage,
-		"trading_symbols":       traderConfig.TradingSymbols,
-		"custom_prompt":         traderConfig.CustomPrompt,
-		"override_base_prompt":  traderConfig.OverrideBasePrompt,
+		"trader_id":              traderConfig.ID,
+		"trader_name":            traderConfig.Name,
+		"ai_model":               aiModelID,
+		"exchange_id":            traderConfig.ExchangeID,
+		"initial_balance":        traderConfig.InitialBalance,
+		"scan_interval_minutes":  traderConfig.ScanIntervalMinutes,
+		"btc_eth_leverage":       traderConfig.BTCETHLeverage,
+		"altcoin_leverage":       traderConfig.AltcoinLeverage,
+		"trading_symbols":        traderConfig.TradingSymbols,
+		"custom_prompt":          traderConfig.CustomPrompt,
+		"override_base_prompt":   traderConfig.OverrideBasePrompt,
 		"system_prompt_template": traderConfig.SystemPromptTemplate,
-		"is_cross_margin":       traderConfig.IsCrossMargin,
-		"use_coin_pool":         traderConfig.UseCoinPool,
-		"use_oi_top":            traderConfig.UseOITop,
-		"is_running":            isRunning,
+		"is_cross_margin":        traderConfig.IsCrossMargin,
+		"use_coin_pool":          traderConfig.UseCoinPool,
+		"use_oi_top":             traderConfig.UseOITop,
+		"is_running":             isRunning,
 	}
 
 	c.JSON(http.StatusOK, result)
@@ -2026,7 +2026,6 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
-
 
 // handleLogout 将当前token加入黑名单
 func (s *Server) handleLogout(c *gin.Context) {

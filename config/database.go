@@ -64,7 +64,6 @@ type DatabaseInterface interface {
 	GetAllTGUsers() ([]int64, error)
 	GetTGUserByTelegramID(telegramID int64) (interface{}, error)
 	GetTGUserByChatID(chatID int64) (interface{}, error)
-	UpdateTGUserSession(telegramID int64, sessionData interface{}) error
 	UpdateTGUserAction(telegramID int64, action string) error
 	UpdateTGUserLastInteraction(telegramID int64) error
 	// TG交易员相关方法
@@ -72,6 +71,7 @@ type DatabaseInterface interface {
 	GetTgTraders(tgUserID int64) ([]TgTraderRecord, error)
 	UpdateTgTraderStatus(tgUserID int64, traderID string, isRunning bool) error
 	UpdateTgTraderInitialBalance(tgUserID int64, traderID string, newBalance float64) error
+	UpdateTgTraderAPIConfig(tgUserID int64, traderID string, aiModelID string, apiKey string, aiModel string) error
 	DeleteTgTrader(tgUserID int64, traderID string) error
 	GetTgTraderConfig(tgUserID int64, traderID string) (*TgTraderRecord, error)
 	Close() error
@@ -312,7 +312,6 @@ func (d *Database) createPostgreSQLTables() error {
 			telegram_chat_id BIGINT NOT NULL,
 			language_code VARCHAR(10) DEFAULT 'en',
 			current_action VARCHAR(100) DEFAULT 'idle',
-			session_data JSONB DEFAULT '{}',
 			session_expires_at TIMESTAMPTZ,
 			notification_enabled BOOLEAN DEFAULT TRUE,
 			last_interaction_at TIMESTAMPTZ,
@@ -339,6 +338,39 @@ func (d *Database) createPostgreSQLTables() error {
 			return fmt.Errorf("执行PostgreSQL SQL失败 [%s]: %w", query, err)
 		}
 	}
+
+	alterQueries := []string{
+		`ALTER TABLE exchanges ADD COLUMN IF NOT EXISTS hyperliquid_wallet_addr TEXT DEFAULT ''`,
+		`ALTER TABLE exchanges ADD COLUMN IF NOT EXISTS aster_user TEXT DEFAULT ''`,
+		`ALTER TABLE exchanges ADD COLUMN IF NOT EXISTS aster_signer TEXT DEFAULT ''`,
+		`ALTER TABLE exchanges ADD COLUMN IF NOT EXISTS aster_private_key TEXT DEFAULT ''`,
+		`ALTER TABLE exchanges ADD COLUMN IF NOT EXISTS custom_exchange_name TEXT DEFAULT ''`,
+		`ALTER TABLE traders ADD COLUMN IF NOT EXISTS custom_prompt TEXT DEFAULT ''`,
+		`ALTER TABLE traders ADD COLUMN IF NOT EXISTS override_base_prompt BOOLEAN DEFAULT FALSE`,
+		`ALTER TABLE traders ADD COLUMN IF NOT EXISTS is_cross_margin BOOLEAN DEFAULT TRUE`,
+		`ALTER TABLE traders ADD COLUMN IF NOT EXISTS use_default_coins BOOLEAN DEFAULT TRUE`,
+		`ALTER TABLE traders ADD COLUMN IF NOT EXISTS custom_coins TEXT DEFAULT ''`,
+		`ALTER TABLE traders ADD COLUMN IF NOT EXISTS btc_eth_leverage INTEGER DEFAULT 5`,
+		`ALTER TABLE traders ADD COLUMN IF NOT EXISTS altcoin_leverage INTEGER DEFAULT 5`,
+		`ALTER TABLE traders ADD COLUMN IF NOT EXISTS trading_symbols TEXT DEFAULT ''`,
+		`ALTER TABLE traders ADD COLUMN IF NOT EXISTS use_coin_pool BOOLEAN DEFAULT FALSE`,
+		`ALTER TABLE traders ADD COLUMN IF NOT EXISTS use_oi_top BOOLEAN DEFAULT FALSE`,
+		`ALTER TABLE traders ADD COLUMN IF NOT EXISTS system_prompt_template TEXT DEFAULT 'default'`,
+		`ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS custom_api_url TEXT DEFAULT ''`,
+		`ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS custom_model_name TEXT DEFAULT ''`,
+		`ALTER TABLE tg_traders ADD COLUMN IF NOT EXISTS ai_model_api_url TEXT DEFAULT ''`,
+		`ALTER TABLE tg_traders ADD COLUMN IF NOT EXISTS private_key TEXT DEFAULT ''`,
+		`ALTER TABLE tg_traders ADD COLUMN IF NOT EXISTS wallet_address TEXT DEFAULT ''`,
+	}
+
+	for _, query := range alterQueries {
+		if _, err := d.db.Exec(query); err != nil {
+			log.Printf("⚠️ 执行PostgreSQL ALTER失败: %v", err)
+		}
+	}
+
+	d.migrateLegacyTGSessionData()
+	d.dropTGUserSessionDataColumn()
 
 	return nil
 }
@@ -494,7 +526,6 @@ func (d *Database) createSQLiteTables() error {
 			telegram_chat_id INTEGER NOT NULL,
 			language_code TEXT DEFAULT 'en',
 			current_action TEXT DEFAULT 'idle',
-			session_data TEXT DEFAULT '{}',
 			session_expires_at DATETIME,
 			notification_enabled BOOLEAN DEFAULT 1,
 			last_interaction_at DATETIME,
@@ -543,12 +574,18 @@ func (d *Database) createSQLiteTables() error {
 		`ALTER TABLE traders ADD COLUMN system_prompt_template TEXT DEFAULT 'default'`, // 系统提示词模板名称
 		`ALTER TABLE ai_models ADD COLUMN custom_api_url TEXT DEFAULT ''`,              // 自定义API地址
 		`ALTER TABLE ai_models ADD COLUMN custom_model_name TEXT DEFAULT ''`,           // 自定义模型名称
+		`ALTER TABLE tg_traders ADD COLUMN ai_model_api_url TEXT DEFAULT ''`,
+		`ALTER TABLE tg_traders ADD COLUMN private_key TEXT DEFAULT ''`,
+		`ALTER TABLE tg_traders ADD COLUMN wallet_address TEXT DEFAULT ''`,
 	}
 
 	for _, query := range alterQueries {
 		// 忽略已存在字段的错误
 		d.db.Exec(query)
 	}
+
+	d.migrateLegacyTGSessionData()
+	d.dropTGUserSessionDataColumn()
 
 	// 检查是否需要迁移exchanges表的主键结构
 	err := d.migrateExchangesTable()
@@ -630,16 +667,16 @@ func (d *Database) initDefaultData() error {
 
 	// 初始化系统配置 - 创建所有字段，设置默认值，后续由config.json同步更新
 	systemConfigs := map[string]string{
-		"beta_mode":            "false",                                                                               // 默认关闭内测模式
-		"api_server_port":      "8080",                                                                                // 默认API端口
-		"use_default_coins":    "true",                                                                                // 默认使用内置币种列表
-		"default_coins":        `["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","HYPEUSDT"]`, // 默认币种列表（JSON格式）
-		"max_daily_loss":       "10.0",                                                                                // 最大日损失百分比
-		"max_drawdown":         "20.0",                                                                                // 最大回撤百分比
-		"stop_trading_minutes": "60",                                                                                  // 停止交易时间（分钟）
-		"btc_eth_leverage":     "5",                                                                                   // BTC/ETH杠杆倍数
-		"altcoin_leverage":     "5",                                                                                   // 山寨币杠杆倍数
-		"jwt_secret":           "",                                                                                    // JWT密钥，默认为空，由config.json或系统生成
+		"beta_mode":            "false",                                                          // 默认关闭内测模式
+		"api_server_port":      "8080",                                                           // 默认API端口
+		"use_default_coins":    "true",                                                           // 默认使用内置币种列表
+		"default_coins":        `["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","HYPEUSDT","SUIUSDT"]`, // 默认币种列表（JSON格式）
+		"max_daily_loss":       "10.0",                                                           // 最大日损失百分比
+		"max_drawdown":         "20.0",                                                           // 最大回撤百分比
+		"stop_trading_minutes": "60",                                                             // 停止交易时间（分钟）
+		"btc_eth_leverage":     "5",                                                              // BTC/ETH杠杆倍数
+		"altcoin_leverage":     "5",                                                              // 山寨币杠杆倍数
+		"jwt_secret":           "",                                                               // JWT密钥，默认为空，由config.json或系统生成
 	}
 
 	for key, value := range systemConfigs {
@@ -689,6 +726,10 @@ func (d *Database) createTgTradersTable() error {
 				use_default_coins BOOLEAN DEFAULT TRUE,
 				custom_coins TEXT DEFAULT '',
 				system_prompt_template TEXT DEFAULT 'default',
+				ai_model_api_key TEXT DEFAULT '',
+				ai_model_api_url TEXT DEFAULT '',
+				private_key TEXT DEFAULT '',
+				wallet_address TEXT DEFAULT '',
 				created_at TIMESTAMPTZ DEFAULT NOW(),
 				updated_at TIMESTAMPTZ DEFAULT NOW(),
 				FOREIGN KEY (tg_user_id) REFERENCES tg_users(telegram_id) ON DELETE CASCADE,
@@ -718,6 +759,10 @@ func (d *Database) createTgTradersTable() error {
 				use_default_coins BOOLEAN DEFAULT 1,
 				custom_coins TEXT DEFAULT '',
 				system_prompt_template TEXT DEFAULT 'default',
+				ai_model_api_key TEXT DEFAULT '',
+				ai_model_api_url TEXT DEFAULT '',
+				private_key TEXT DEFAULT '',
+				wallet_address TEXT DEFAULT '',
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 			)
@@ -728,6 +773,146 @@ func (d *Database) createTgTradersTable() error {
 	}
 
 	return nil
+}
+
+func (d *Database) migrateLegacyTGSessionData() {
+	if !d.tableHasColumn("tg_users", "session_data") {
+		return
+	}
+
+	var rows *sql.Rows
+	var err error
+	query := `SELECT telegram_id, session_data FROM tg_users`
+	rows, err = d.db.Query(query)
+	if err != nil {
+		log.Printf("⚠️ 读取旧版 session_data 失败: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	migrated := 0
+	for rows.Next() {
+		var telegramID int64
+		var rawData []byte
+		if err := rows.Scan(&telegramID, &rawData); err != nil {
+			continue
+		}
+		if len(rawData) == 0 {
+			continue
+		}
+
+		var payload map[string]interface{}
+		if err := json.Unmarshal(rawData, &payload); err != nil {
+			continue
+		}
+
+		agentKey, _ := payload["agent_key"].(string)
+		if agentKey == "" {
+			continue
+		}
+		decryptedAgentKey, err := d.decryptSecretValue(agentKey)
+		if err != nil {
+			log.Printf("🚨 CRITICAL: 无法解密Agent密钥，跳过此记录: %v", err)
+			continue
+		}
+		agentKey = decryptedAgentKey
+		if agentKey == "" {
+			continue
+		}
+		walletAddr, _ := payload["wallet_address"].(string)
+
+		encryptedKey, err := d.encryptSecretValue(agentKey)
+		if err != nil {
+			log.Printf("🚨 CRITICAL: 无法加密Agent密钥，跳过此记录: %v", err)
+			continue
+		}
+
+		var updateQuery string
+		var args []interface{}
+		if d.usePostgreSQL {
+			updateQuery = `
+				UPDATE tg_traders
+				SET private_key = CASE WHEN $1 <> '' THEN $1 ELSE private_key END,
+				    wallet_address = CASE WHEN $2 <> '' THEN $2 ELSE wallet_address END
+				WHERE tg_user_id = $3 AND (private_key = '' OR private_key IS NULL)
+			`
+			args = []interface{}{encryptedKey, walletAddr, telegramID}
+		} else {
+			updateQuery = `
+				UPDATE tg_traders
+				SET private_key = CASE WHEN ? <> '' THEN ? ELSE private_key END,
+				    wallet_address = CASE WHEN ? <> '' THEN ? ELSE wallet_address END
+				WHERE tg_user_id = ? AND (private_key = '' OR private_key IS NULL)
+			`
+			args = []interface{}{encryptedKey, encryptedKey, walletAddr, walletAddr, telegramID}
+		}
+
+		if _, err := d.db.Exec(updateQuery, args...); err == nil {
+			migrated++
+		} else {
+			log.Printf("⚠️ 迁移TG交易员私钥失败 (用户 %d): %v", telegramID, err)
+		}
+	}
+
+	if migrated > 0 {
+		log.Printf("🔐 已迁移 %d 个TG交易员的私钥数据", migrated)
+	}
+}
+
+func (d *Database) dropTGUserSessionDataColumn() {
+	if !d.tableHasColumn("tg_users", "session_data") {
+		return
+	}
+
+	var query string
+	if d.usePostgreSQL {
+		query = `ALTER TABLE tg_users DROP COLUMN IF EXISTS session_data`
+	} else {
+		query = `ALTER TABLE tg_users DROP COLUMN session_data`
+	}
+
+	if _, err := d.db.Exec(query); err != nil {
+		log.Printf("⚠️ 删除 tg_users.session_data 失败: %v", err)
+	} else {
+		log.Printf("🗑️ 已删除 tg_users.session_data 列")
+	}
+}
+
+func (d *Database) tableHasColumn(table, column string) bool {
+	if d.usePostgreSQL {
+		var count int
+		err := d.db.QueryRow(`
+			SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_name = $1 AND column_name = $2
+		`, table, column).Scan(&count)
+		if err != nil {
+			return false
+		}
+		return count > 0
+	}
+
+	query := fmt.Sprintf("PRAGMA table_info(%s)", table)
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name string
+		var typ string
+		var notnull interface{}
+		var dfltValue interface{}
+		var pk interface{}
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dfltValue, &pk); err != nil {
+			continue
+		}
+		if strings.EqualFold(name, column) {
+			return true
+		}
+	}
+	return false
 }
 
 // migrateExchangesTable 迁移exchanges表支持多用户
@@ -888,6 +1073,7 @@ type TgTraderRecord struct {
 	TgUserID             int64     `json:"tg_user_id"` // TG用户ID
 	Name                 string    `json:"name"`
 	AIModelID            string    `json:"ai_model_id"`
+	AIModelName          string    `json:"ai_model_name"` // 自定义模型名称
 	ExchangeID           string    `json:"exchange_id"`
 	InitialBalance       float64   `json:"initial_balance"`
 	ScanIntervalMinutes  int       `json:"scan_interval_minutes"`
@@ -904,6 +1090,9 @@ type TgTraderRecord struct {
 	CustomCoins          string    `json:"custom_coins"`
 	SystemPromptTemplate string    `json:"system_prompt_template"`
 	AIModelAPIKey        string    `json:"ai_model_api_key"`
+	AIModelAPIURL        string    `json:"ai_model_api_url"`
+	PrivateKey           string    `json:"private_key"`
+	WalletAddress        string    `json:"wallet_address"`
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
 }
@@ -1141,7 +1330,12 @@ func (d *Database) GetAIModels(userID string) ([]*AIModelConfig, error) {
 			return nil, err
 		}
 		// 解密API Key
-		model.APIKey = d.decryptSensitiveData(model.APIKey)
+		decryptedAPIKey, err := d.decryptSensitiveData(model.APIKey)
+		if err != nil {
+			log.Printf("🚨 CRITICAL: 无法解密API密钥，数据可能已损坏: %v", err)
+			return nil, fmt.Errorf("无法解密API密钥: %w", err)
+		}
+		model.APIKey = decryptedAPIKey
 		models = append(models, &model)
 	}
 
@@ -1166,7 +1360,11 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 
 	if err == nil {
 		// 找到了现有配置（精确匹配 ID），更新它
-		encryptedAPIKey := d.encryptSensitiveData(apiKey)
+		encryptedAPIKey, err := d.encryptSensitiveData(apiKey)
+		if err != nil {
+			log.Printf("🚨 CRITICAL: 无法加密AI模型API密钥，配置将不被保存: %v", err)
+			return fmt.Errorf("无法加密AI模型API密钥: %w", err)
+		}
 		if d.usePostgreSQL {
 			_, err = d.db.Exec(`
 				UPDATE ai_models SET enabled = $1, api_key = $2, custom_api_url = $3, custom_model_name = $4, updated_at = NOW()
@@ -1196,7 +1394,11 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 	if err == nil {
 		// 找到了现有配置（通过 provider 匹配，兼容旧版），更新它
 		log.Printf("⚠️  使用旧版 provider 匹配更新模型: %s -> %s", provider, existingID)
-		encryptedAPIKey := d.encryptSensitiveData(apiKey)
+		encryptedAPIKey, err := d.encryptSensitiveData(apiKey)
+		if err != nil {
+			log.Printf("🚨 CRITICAL: 无法加密AI模型API密钥，配置将不被保存: %v", err)
+			return fmt.Errorf("无法加密AI模型API密钥: %w", err)
+		}
 		if d.usePostgreSQL {
 			_, err = d.db.Exec(`
 				UPDATE ai_models SET enabled = $1, api_key = $2, custom_api_url = $3, custom_model_name = $4, updated_at = NOW()
@@ -1257,7 +1459,11 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 	}
 
 	log.Printf("✓ 创建新的 AI 模型配置: ID=%s, Provider=%s, Name=%s", newModelID, provider, name)
-	encryptedAPIKey := d.encryptSensitiveData(apiKey)
+	encryptedAPIKey, err := d.encryptSensitiveData(apiKey)
+	if err != nil {
+		log.Printf("🚨 CRITICAL: 无法加密AI模型API密钥，配置将不被保存: %v", err)
+		return fmt.Errorf("无法加密AI模型API密钥: %w", err)
+	}
 	if d.usePostgreSQL {
 		_, err = d.db.Exec(`
 			INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url, custom_model_name, created_at, updated_at)
@@ -1391,9 +1597,26 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 		}
 
 		// 解密敏感字段
-		exchange.APIKey = d.decryptSensitiveData(exchange.APIKey)
-		exchange.SecretKey = d.decryptSensitiveData(exchange.SecretKey)
-		exchange.AsterPrivateKey = d.decryptSensitiveData(exchange.AsterPrivateKey)
+		decryptedAPIKey, err := d.decryptSensitiveData(exchange.APIKey)
+		if err != nil {
+			log.Printf("🚨 CRITICAL: 无法解密交易所API密钥，数据可能已损坏: %v", err)
+			return nil, fmt.Errorf("无法解密交易所API密钥: %w", err)
+		}
+		exchange.APIKey = decryptedAPIKey
+
+		decryptedSecretKey, err := d.decryptSensitiveData(exchange.SecretKey)
+		if err != nil {
+			log.Printf("🚨 CRITICAL: 无法解密交易所Secret密钥，数据可能已损坏: %v", err)
+			return nil, fmt.Errorf("无法解密交易所Secret密钥: %w", err)
+		}
+		exchange.SecretKey = decryptedSecretKey
+
+		decryptedAsterPrivateKey, err := d.decryptSensitiveData(exchange.AsterPrivateKey)
+		if err != nil {
+			log.Printf("🚨 CRITICAL: 无法解密Aster私钥，数据可能已损坏: %v", err)
+			return nil, fmt.Errorf("无法解密Aster私钥: %w", err)
+		}
+		exchange.AsterPrivateKey = decryptedAsterPrivateKey
 
 		exchanges = append(exchanges, &exchange)
 	}
@@ -1406,9 +1629,21 @@ func (d *Database) UpdateExchange(userID, exchangeType string, enabled bool, api
 	log.Printf("🔧 UpdateExchange: userID=%s, exchangeType=%s, enabled=%v", userID, exchangeType, enabled)
 
 	// 加密敏感字段
-	encryptedAPIKey := d.encryptSensitiveData(apiKey)
-	encryptedSecretKey := d.encryptSensitiveData(secretKey)
-	encryptedAsterPrivateKey := d.encryptSensitiveData(asterPrivateKey)
+	encryptedAPIKey, err := d.encryptSensitiveData(apiKey)
+	if err != nil {
+		log.Printf("🚨 CRITICAL: 无法加密交易所API密钥，配置将不被保存: %v", err)
+		return fmt.Errorf("无法加密交易所API密钥: %w", err)
+	}
+	encryptedSecretKey, err := d.encryptSensitiveData(secretKey)
+	if err != nil {
+		log.Printf("🚨 CRITICAL: 无法加密交易所Secret密钥，配置将不被保存: %v", err)
+		return fmt.Errorf("无法加密交易所Secret密钥: %w", err)
+	}
+	encryptedAsterPrivateKey, err := d.encryptSensitiveData(asterPrivateKey)
+	if err != nil {
+		log.Printf("🚨 CRITICAL: 无法加密Aster私钥，配置将不被保存: %v", err)
+		return fmt.Errorf("无法加密Aster私钥: %w", err)
+	}
 
 	// 确定交易所的基本信息
 	var name string
@@ -1473,11 +1708,22 @@ func (d *Database) CreateAIModel(userID, id, name, provider string, enabled bool
 // CreateExchange 创建交易所配置
 func (d *Database) CreateExchange(userID, id, name, typ string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) error {
 	// 加密敏感字段
-	encryptedAPIKey := d.encryptSensitiveData(apiKey)
-	encryptedSecretKey := d.encryptSensitiveData(secretKey)
-	encryptedAsterPrivateKey := d.encryptSensitiveData(asterPrivateKey)
+	encryptedAPIKey, err := d.encryptSensitiveData(apiKey)
+	if err != nil {
+		log.Printf("🚨 CRITICAL: 无法加密交易所API密钥，配置将不被保存: %v", err)
+		return fmt.Errorf("无法加密交易所API密钥: %w", err)
+	}
+	encryptedSecretKey, err := d.encryptSensitiveData(secretKey)
+	if err != nil {
+		log.Printf("🚨 CRITICAL: 无法加密交易所Secret密钥，配置将不被保存: %v", err)
+		return fmt.Errorf("无法加密交易所Secret密钥: %w", err)
+	}
+	encryptedAsterPrivateKey, err := d.encryptSensitiveData(asterPrivateKey)
+	if err != nil {
+		log.Printf("🚨 CRITICAL: 无法加密Aster私钥，配置将不被保存: %v", err)
+		return fmt.Errorf("无法加密Aster私钥: %w", err)
+	}
 
-	var err error
 	if d.usePostgreSQL {
 		_, err = d.db.Exec(`
 			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key)
@@ -2091,38 +2337,49 @@ func (d *Database) SetCryptoService(cs *crypto.CryptoService) {
 }
 
 // encryptSensitiveData 加密敏感数据用于存储
-func (d *Database) encryptSensitiveData(plaintext string) string {
-	if d.cryptoService == nil || plaintext == "" {
-		return plaintext
+func (d *Database) encryptSensitiveData(plaintext string) (string, error) {
+	if plaintext == "" {
+		return "", nil
+	}
+
+	if d.cryptoService == nil {
+		log.Printf("🚨 CRITICAL: 加密服务未初始化，无法加密敏感数据")
+		return "", fmt.Errorf("加密服务未初始化")
 	}
 
 	encrypted, err := d.cryptoService.EncryptForStorage(plaintext)
 	if err != nil {
-		log.Printf("⚠️ 加密失败: %v", err)
-		return plaintext // 返回明文作为降级处理
+		log.Printf("🚨 CRITICAL: 敏感数据加密失败，数据将不被保存: %v", err)
+		return "", fmt.Errorf("敏感数据加密失败: %w", err)
 	}
 
-	return encrypted
+	return encrypted, nil
 }
 
 // decryptSensitiveData 解密敏感数据
-func (d *Database) decryptSensitiveData(encrypted string) string {
-	if d.cryptoService == nil || encrypted == "" {
-		return encrypted
+func (d *Database) decryptSensitiveData(encrypted string) (string, error) {
+	if encrypted == "" {
+		return "", nil
 	}
 
-	// 如果不是加密格式，直接返回
+	if d.cryptoService == nil {
+		log.Printf("🚨 CRITICAL: 解密服务未初始化，无法解密敏感数据")
+		return "", fmt.Errorf("解密服务未初始化")
+	}
+
+	// 如果不是加密格式，可能是旧数据，需要特殊处理
 	if !d.cryptoService.IsEncryptedStorageValue(encrypted) {
-		return encrypted
+		log.Printf("🚨 WARNING: 检测到未加密的敏感数据，这可能是安全风险")
+		return "", fmt.Errorf("检测到未加密的敏感数据，系统安全可能受损")
 	}
 
 	decrypted, err := d.cryptoService.DecryptFromStorage(encrypted)
 	if err != nil {
-		log.Printf("⚠️ 解密失败: %v", err)
-		return encrypted // 返回加密文本作为降级处理
+		log.Printf("🚨 CRITICAL: 敏感数据解密失败，数据可能已损坏: %v", err)
+		return "", fmt.Errorf("敏感数据解密失败: %w", err)
 	}
 
-	return decrypted
+	return decrypted, nil
 }
 
 const secretValuePrefix = "SEC:v1:"
@@ -2248,91 +2505,28 @@ func (sc *secretCipher) decrypt(value string) (string, error) {
 	return string(plaintext), nil
 }
 
-func (d *Database) encryptSecretValue(plaintext string) string {
+func (d *Database) encryptSecretValue(plaintext string) (string, error) {
 	if plaintext == "" {
-		return ""
+		return "", nil
 	}
 	encrypted, err := tgSecretCipher.encrypt(plaintext)
 	if err != nil {
-		log.Printf("⚠️ SECRET_ENCRYPTION_KEY 加密失败: %v", err)
-		return plaintext
+		log.Printf("🚨 CRITICAL: Telegram密钥加密失败，数据将不被保存: %v", err)
+		return "", fmt.Errorf("Telegram密钥加密失败: %w", err)
 	}
-	return encrypted
+	return encrypted, nil
 }
 
-func (d *Database) decryptSecretValue(encrypted string) string {
+func (d *Database) decryptSecretValue(encrypted string) (string, error) {
 	if encrypted == "" {
-		return ""
+		return "", nil
 	}
 	decrypted, err := tgSecretCipher.decrypt(encrypted)
 	if err != nil {
-		log.Printf("⚠️ SECRET_ENCRYPTION_KEY 解密失败: %v", err)
-		return encrypted
+		log.Printf("🚨 CRITICAL: Telegram密钥解密失败，数据可能已损坏: %v", err)
+		return "", fmt.Errorf("Telegram密钥解密失败: %w", err)
 	}
-	return decrypted
-}
-
-func (d *Database) marshalSessionDataWithSecret(sessionData interface{}) (json.RawMessage, error) {
-	if sessionData == nil {
-		sessionData = map[string]interface{}{}
-	}
-
-	var payload map[string]interface{}
-	switch v := sessionData.(type) {
-	case map[string]interface{}:
-		payload = cloneMap(v)
-	case json.RawMessage:
-		if err := json.Unmarshal(v, &payload); err != nil {
-			return nil, err
-		}
-	default:
-		bytes, err := json.Marshal(sessionData)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(bytes, &payload); err != nil {
-			return nil, err
-		}
-	}
-
-	if payload == nil {
-		payload = make(map[string]interface{})
-	}
-
-	if key, ok := payload["agent_key"].(string); ok && key != "" {
-		payload["agent_key"] = d.encryptSecretValue(key)
-	}
-
-	return json.Marshal(payload)
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
-func (d *Database) decryptSessionDataRaw(raw json.RawMessage) json.RawMessage {
-	if raw == nil || len(raw) == 0 {
-		return raw
-	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return raw
-	}
-
-	if key, ok := payload["agent_key"].(string); ok && key != "" {
-		payload["agent_key"] = d.decryptSecretValue(key)
-	}
-
-	result, err := json.Marshal(payload)
-	if err != nil {
-		return raw
-	}
-	return json.RawMessage(result)
+	return decrypted, nil
 }
 
 // TGUser 数据库相关实现
@@ -2350,7 +2544,6 @@ func (d *Database) CreateTGUserTable() error {
 			telegram_chat_id BIGINT NOT NULL,
 			language_code VARCHAR(10) DEFAULT 'en',
 			current_action VARCHAR(100) DEFAULT 'idle',
-			session_data JSONB DEFAULT '{}',
 			session_expires_at TIMESTAMPTZ,
 			notification_enabled BOOLEAN DEFAULT TRUE,
 			last_interaction_at TIMESTAMPTZ,
@@ -2381,7 +2574,6 @@ func (d *Database) CreateTGUserTable() error {
 			telegram_chat_id INTEGER NOT NULL,
 			language_code TEXT DEFAULT 'en',
 			current_action TEXT DEFAULT 'idle',
-			session_data TEXT DEFAULT '{}',
 			session_expires_at DATETIME,
 			notification_enabled BOOLEAN DEFAULT 1,
 			last_interaction_at DATETIME,
@@ -2416,29 +2608,24 @@ func (d *Database) CreateTGUserTable() error {
 
 // CreateTGUser 创建 Telegram 用户
 func (d *Database) CreateTGUser(telegramID int64, username, firstName string, chatID int64, languageCode string) error {
-	sessionData := map[string]interface{}{}
-	sessionDataJSON, err := d.marshalSessionDataWithSecret(sessionData)
-	if err != nil {
-		return fmt.Errorf("序列化 session_data 失败: %w", err)
-	}
-
 	var query string
+	var err error
 	if d.usePostgreSQL {
 		query = `
 			INSERT INTO tg_users (telegram_id, telegram_username, telegram_first_name, telegram_chat_id,
-			                      language_code, current_action, session_data, notification_enabled, is_active)
-			VALUES ($1, $2, $3, $4, $5, 'account_created', $6, TRUE, TRUE)
+			                      language_code, current_action, notification_enabled, is_active)
+			VALUES ($1, $2, $3, $4, $5, 'account_created', TRUE, TRUE)
 			RETURNING id
 		`
-		err = d.db.QueryRow(query, telegramID, username, firstName, chatID, languageCode, sessionDataJSON).Scan(new(string))
+		err = d.db.QueryRow(query, telegramID, username, firstName, chatID, languageCode).Scan(new(string))
 	} else {
 		query = `
 			INSERT INTO tg_users (id, telegram_id, telegram_username, telegram_first_name, telegram_chat_id,
-			                      language_code, current_action, session_data, notification_enabled, is_active)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			                      language_code, current_action, notification_enabled, is_active)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`
 		id := fmt.Sprintf("tg_%d_%d", telegramID, time.Now().Unix())
-		_, err = d.db.Exec(query, id, telegramID, username, firstName, chatID, languageCode, "account_created", sessionDataJSON, true, true)
+		_, err = d.db.Exec(query, id, telegramID, username, firstName, chatID, languageCode, "account_created", true, true)
 	}
 
 	if err != nil {
@@ -2452,7 +2639,6 @@ func (d *Database) CreateTGUser(telegramID int64, username, firstName string, ch
 func (d *Database) GetTGUserByTelegramID(telegramID int64) (interface{}, error) {
 	var id, telegramUsername, telegramFirstName, languageCode, currentAction string
 	var telegramChatID int64
-	var sessionData json.RawMessage
 	var notificationEnabled, isActive bool
 	var lastInteractionAt, createdAt, updatedAt time.Time
 
@@ -2460,13 +2646,13 @@ func (d *Database) GetTGUserByTelegramID(telegramID int64) (interface{}, error) 
 	if d.usePostgreSQL {
 		query = `
 			SELECT id, telegram_id, telegram_username, telegram_first_name, telegram_chat_id,
-			       language_code, current_action, session_data, notification_enabled,
+			       language_code, current_action, notification_enabled,
 			       last_interaction_at, is_active, created_at, updated_at
 			FROM tg_users WHERE telegram_id = $1
 		`
 		err := d.db.QueryRow(query, telegramID).Scan(
 			&id, &telegramID, &telegramUsername, &telegramFirstName, &telegramChatID,
-			&languageCode, &currentAction, &sessionData, &notificationEnabled,
+			&languageCode, &currentAction, &notificationEnabled,
 			&lastInteractionAt, &isActive, &createdAt, &updatedAt,
 		)
 		if err != nil {
@@ -2475,21 +2661,19 @@ func (d *Database) GetTGUserByTelegramID(telegramID int64) (interface{}, error) 
 	} else {
 		query = `
 			SELECT id, telegram_id, telegram_username, telegram_first_name, telegram_chat_id,
-			       language_code, current_action, session_data, notification_enabled,
+			       language_code, current_action, notification_enabled,
 			       last_interaction_at, is_active, created_at, updated_at
 			FROM tg_users WHERE telegram_id = ?
 		`
 		err := d.db.QueryRow(query, telegramID).Scan(
 			&id, &telegramID, &telegramUsername, &telegramFirstName, &telegramChatID,
-			&languageCode, &currentAction, &sessionData, &notificationEnabled,
+			&languageCode, &currentAction, &notificationEnabled,
 			&lastInteractionAt, &isActive, &createdAt, &updatedAt,
 		)
 		if err != nil {
 			return nil, err
 		}
 	}
-
-	sessionData = d.decryptSessionDataRaw(sessionData)
 
 	user := map[string]interface{}{
 		"id":                   id,
@@ -2499,7 +2683,6 @@ func (d *Database) GetTGUserByTelegramID(telegramID int64) (interface{}, error) 
 		"telegram_chat_id":     telegramChatID,
 		"language_code":        languageCode,
 		"current_action":       currentAction,
-		"session_data":         sessionData,
 		"notification_enabled": notificationEnabled,
 		"last_interaction_at":  lastInteractionAt,
 		"is_active":            isActive,
@@ -2514,7 +2697,6 @@ func (d *Database) GetTGUserByTelegramID(telegramID int64) (interface{}, error) 
 func (d *Database) GetTGUserByChatID(chatID int64) (interface{}, error) {
 	var id, telegramUsername, telegramFirstName, languageCode, currentAction string
 	var telegramID int64
-	var sessionData json.RawMessage
 	var notificationEnabled, isActive bool
 	var lastInteractionAt, createdAt, updatedAt time.Time
 
@@ -2522,13 +2704,13 @@ func (d *Database) GetTGUserByChatID(chatID int64) (interface{}, error) {
 	if d.usePostgreSQL {
 		query = `
 			SELECT id, telegram_id, telegram_username, telegram_first_name, telegram_chat_id,
-			       language_code, current_action, session_data, notification_enabled,
+			       language_code, current_action, notification_enabled,
 			       last_interaction_at, is_active, created_at, updated_at
 			FROM tg_users WHERE telegram_chat_id = $1
 		`
 		err := d.db.QueryRow(query, chatID).Scan(
 			&id, &telegramID, &telegramUsername, &telegramFirstName, &chatID,
-			&languageCode, &currentAction, &sessionData, &notificationEnabled,
+			&languageCode, &currentAction, &notificationEnabled,
 			&lastInteractionAt, &isActive, &createdAt, &updatedAt,
 		)
 		if err != nil {
@@ -2537,21 +2719,19 @@ func (d *Database) GetTGUserByChatID(chatID int64) (interface{}, error) {
 	} else {
 		query = `
 			SELECT id, telegram_id, telegram_username, telegram_first_name, telegram_chat_id,
-			       language_code, current_action, session_data, notification_enabled,
+			       language_code, current_action, notification_enabled,
 			       last_interaction_at, is_active, created_at, updated_at
 			FROM tg_users WHERE telegram_chat_id = ?
 		`
 		err := d.db.QueryRow(query, chatID).Scan(
 			&id, &telegramID, &telegramUsername, &telegramFirstName, &chatID,
-			&languageCode, &currentAction, &sessionData, &notificationEnabled,
+			&languageCode, &currentAction, &notificationEnabled,
 			&lastInteractionAt, &isActive, &createdAt, &updatedAt,
 		)
 		if err != nil {
 			return nil, err
 		}
 	}
-
-	sessionData = d.decryptSessionDataRaw(sessionData)
 
 	user := map[string]interface{}{
 		"id":                   id,
@@ -2561,7 +2741,6 @@ func (d *Database) GetTGUserByChatID(chatID int64) (interface{}, error) {
 		"telegram_chat_id":     chatID,
 		"language_code":        languageCode,
 		"current_action":       currentAction,
-		"session_data":         sessionData,
 		"notification_enabled": notificationEnabled,
 		"last_interaction_at":  lastInteractionAt,
 		"is_active":            isActive,
@@ -2570,33 +2749,6 @@ func (d *Database) GetTGUserByChatID(chatID int64) (interface{}, error) {
 	}
 
 	return user, nil
-}
-
-// UpdateTGUserSession 更新用户会话数据
-func (d *Database) UpdateTGUserSession(telegramID int64, sessionData interface{}) error {
-	sessionDataJSON, err := d.marshalSessionDataWithSecret(sessionData)
-	if err != nil {
-		return fmt.Errorf("序列化 session_data 失败: %w", err)
-	}
-
-	var query string
-	if d.usePostgreSQL {
-		query = `
-			UPDATE tg_users
-			SET session_data = $1, last_interaction_at = NOW()
-			WHERE telegram_id = $2
-		`
-		_, err = d.db.Exec(query, sessionDataJSON, telegramID)
-	} else {
-		query = `
-			UPDATE tg_users
-			SET session_data = ?, last_interaction_at = CURRENT_TIMESTAMP
-			WHERE telegram_id = ?
-		`
-		_, err = d.db.Exec(query, sessionDataJSON, telegramID)
-	}
-
-	return err
 }
 
 // UpdateTGUserAction 更新用户当前操作
@@ -2663,50 +2815,63 @@ func (d *Database) EnsureUserInUsersTable(userID string) error {
 
 // CreateTgTrader 创建TG交易员
 func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) error {
-	encryptedAPIKey := d.encryptSecretValue(traderRecord.AIModelAPIKey)
+	encryptedAPIKey, err := d.encryptSecretValue(traderRecord.AIModelAPIKey)
+	if err != nil {
+		log.Printf("🚨 CRITICAL: 无法加密AI模型API密钥，交易员将不被创建: %v", err)
+		return fmt.Errorf("无法加密AI模型API密钥: %w", err)
+	}
+	encryptedPrivateKey, err := d.encryptSecretValue(traderRecord.PrivateKey)
+	if err != nil {
+		log.Printf("🚨 CRITICAL: 无法加密私钥，交易员将不被创建: %v", err)
+		return fmt.Errorf("无法加密私钥: %w", err)
+	}
 
 	if d.usePostgreSQL {
 		query := `
 			INSERT INTO tg_traders (
-				id, tg_user_id, name, ai_model_id, exchange_id,
+				id, tg_user_id, name, ai_model_id, ai_model_name, exchange_id,
 				initial_balance, scan_interval_minutes, is_running,
 				btc_eth_leverage, altcoin_leverage, trading_symbols,
 				use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				is_cross_margin, use_default_coins, custom_coins,
-				system_prompt_template, ai_model_api_key, created_at, updated_at
+				system_prompt_template, ai_model_api_key, ai_model_api_url,
+				private_key, wallet_address, created_at, updated_at
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW(), NOW()
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW(), NOW()
 			)`
 		_, err := d.db.Exec(query,
-			traderRecord.ID, traderRecord.TgUserID, traderRecord.Name, traderRecord.AIModelID,
+			traderRecord.ID, traderRecord.TgUserID, traderRecord.Name, traderRecord.AIModelID, traderRecord.AIModelName,
 			traderRecord.ExchangeID, traderRecord.InitialBalance, traderRecord.ScanIntervalMinutes,
 			traderRecord.IsRunning, traderRecord.BTCETHLeverage, traderRecord.AltcoinLeverage,
 			traderRecord.TradingSymbols, traderRecord.UseCoinPool, traderRecord.UseOITop,
 			traderRecord.CustomPrompt, traderRecord.OverrideBasePrompt, traderRecord.IsCrossMargin,
 			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.SystemPromptTemplate,
-			encryptedAPIKey,
+			encryptedAPIKey, traderRecord.AIModelAPIURL,
+			encryptedPrivateKey, traderRecord.WalletAddress,
 		)
 		return err
 	} else {
 		query := `
 			INSERT INTO tg_traders (
-				id, tg_user_id, name, ai_model_id, exchange_id,
+				id, tg_user_id, name, ai_model_id, ai_model_name, exchange_id,
 				initial_balance, scan_interval_minutes, is_running,
 				btc_eth_leverage, altcoin_leverage, trading_symbols,
 				use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				is_cross_margin, use_default_coins, custom_coins,
-				system_prompt_template, ai_model_api_key, created_at, updated_at
+				system_prompt_template, ai_model_api_key, ai_model_api_url,
+				private_key, wallet_address, created_at, updated_at
 			) VALUES (
-				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 			)`
 		_, err := d.db.Exec(query,
-			traderRecord.ID, traderRecord.TgUserID, traderRecord.Name, traderRecord.AIModelID,
+			traderRecord.ID, traderRecord.TgUserID, traderRecord.Name, traderRecord.AIModelID, traderRecord.AIModelName,
 			traderRecord.ExchangeID, traderRecord.InitialBalance, traderRecord.ScanIntervalMinutes,
 			traderRecord.IsRunning, traderRecord.BTCETHLeverage, traderRecord.AltcoinLeverage,
 			traderRecord.TradingSymbols, traderRecord.UseCoinPool, traderRecord.UseOITop,
 			traderRecord.CustomPrompt, traderRecord.OverrideBasePrompt, traderRecord.IsCrossMargin,
 			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.SystemPromptTemplate,
-			encryptedAPIKey,
+			encryptedAPIKey, traderRecord.AIModelAPIURL,
+			encryptedPrivateKey, traderRecord.WalletAddress,
 		)
 		return err
 	}
@@ -2717,24 +2882,34 @@ func (d *Database) GetTgTraders(tgUserID int64) ([]TgTraderRecord, error) {
 	var query string
 	if d.usePostgreSQL {
 		query = `
-			SELECT id, tg_user_id, name, ai_model_id, exchange_id,
+			SELECT id, tg_user_id, name, ai_model_id, COALESCE(ai_model_name, '') AS ai_model_name, exchange_id,
 				   initial_balance, scan_interval_minutes, is_running,
 				   btc_eth_leverage, altcoin_leverage, trading_symbols,
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
-				   system_prompt_template, ai_model_api_key, created_at, updated_at
+				   system_prompt_template,
+				   COALESCE(ai_model_api_key, '') AS ai_model_api_key,
+				   COALESCE(ai_model_api_url, '') AS ai_model_api_url,
+				   COALESCE(private_key, '') AS private_key,
+				   COALESCE(wallet_address, '') AS wallet_address,
+				   created_at, updated_at
 			FROM tg_traders
 			WHERE tg_user_id = $1
 			ORDER BY created_at DESC
 		`
 	} else {
 		query = `
-			SELECT id, tg_user_id, name, ai_model_id, exchange_id,
+			SELECT id, tg_user_id, name, ai_model_id, COALESCE(ai_model_name, '') AS ai_model_name, exchange_id,
 				   initial_balance, scan_interval_minutes, is_running,
 				   btc_eth_leverage, altcoin_leverage, trading_symbols,
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
-				   system_prompt_template, ai_model_api_key, created_at, updated_at
+				   system_prompt_template,
+				   COALESCE(ai_model_api_key, '') AS ai_model_api_key,
+				   COALESCE(ai_model_api_url, '') AS ai_model_api_url,
+				   COALESCE(private_key, '') AS private_key,
+				   COALESCE(wallet_address, '') AS wallet_address,
+				   created_at, updated_at
 			FROM tg_traders
 			WHERE tg_user_id = ?
 			ORDER BY created_at DESC
@@ -2751,19 +2926,30 @@ func (d *Database) GetTgTraders(tgUserID int64) ([]TgTraderRecord, error) {
 	for rows.Next() {
 		var trader TgTraderRecord
 		err := rows.Scan(
-			&trader.ID, &trader.TgUserID, &trader.Name, &trader.AIModelID,
+			&trader.ID, &trader.TgUserID, &trader.Name, &trader.AIModelID, &trader.AIModelName,
 			&trader.ExchangeID, &trader.InitialBalance, &trader.ScanIntervalMinutes,
 			&trader.IsRunning, &trader.BTCETHLeverage, &trader.AltcoinLeverage,
 			&trader.TradingSymbols, &trader.UseCoinPool, &trader.UseOITop,
 			&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.IsCrossMargin,
 			&trader.UseDefaultCoins, &trader.CustomCoins, &trader.SystemPromptTemplate,
-			&trader.AIModelAPIKey, &trader.CreatedAt, &trader.UpdatedAt,
+			&trader.AIModelAPIKey, &trader.AIModelAPIURL, &trader.PrivateKey, &trader.WalletAddress, &trader.CreatedAt, &trader.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("扫描tg_traders行失败: %w", err)
 		}
 
-		trader.AIModelAPIKey = d.decryptSecretValue(trader.AIModelAPIKey)
+		decryptedAPIKey, err := d.decryptSecretValue(trader.AIModelAPIKey)
+		if err != nil {
+			log.Printf("🚨 CRITICAL: 无法解密AI模型API密钥: %v", err)
+			return nil, fmt.Errorf("无法解密AI模型API密钥: %w", err)
+		}
+		trader.AIModelAPIKey = decryptedAPIKey
+		decryptedPrivateKey, err := d.decryptSecretValue(trader.PrivateKey)
+		if err != nil {
+			log.Printf("🚨 CRITICAL: 无法解密私钥: %v", err)
+			return nil, fmt.Errorf("无法解密私钥: %w", err)
+		}
+		trader.PrivateKey = decryptedPrivateKey
 		traders = append(traders, trader)
 	}
 
@@ -2846,6 +3032,56 @@ func (d *Database) UpdateTgTraderInitialBalance(tgUserID int64, traderID string,
 	return nil
 }
 
+// UpdateTgTraderAPIConfig 更新TG交易员AI配置
+func (d *Database) UpdateTgTraderAPIConfig(tgUserID int64, traderID string, aiModelID string, apiKey string, aiModel string) error {
+	encryptedAPIKey, err := d.encryptSecretValue(apiKey)
+	if err != nil {
+		log.Printf("🚨 CRITICAL: 无法加密AI模型API密钥，配置将不被更新: %v", err)
+		return fmt.Errorf("无法加密AI模型API密钥: %w", err)
+	}
+
+	var query string
+	var args []interface{}
+
+	if d.usePostgreSQL {
+		query = `
+			UPDATE tg_traders
+			SET ai_model_id = $1,
+				ai_model_name = $2,
+				ai_model_api_key = $3,
+				updated_at = NOW()
+			WHERE tg_user_id = $4 AND id = $5
+		`
+		args = []interface{}{aiModelID, aiModel, encryptedAPIKey, tgUserID, traderID}
+	} else {
+		query = `
+			UPDATE tg_traders
+			SET ai_model_id = ?,
+				ai_model_name = ?,
+				ai_model_api_key = ?,
+				updated_at = CURRENT_TIMESTAMP
+			WHERE tg_user_id = ? AND id = ?
+		`
+		args = []interface{}{aiModelID, aiModel, encryptedAPIKey, tgUserID, traderID}
+	}
+
+	result, err := d.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("更新TG交易员AI配置失败: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("获取影响行数失败: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("未找到匹配的TG交易员记录")
+	}
+
+	return nil
+}
+
 // DeleteTgTrader 删除TG交易员
 func (d *Database) DeleteTgTrader(tgUserID int64, traderID string) error {
 	var query string
@@ -2881,23 +3117,33 @@ func (d *Database) GetTgTraderConfig(tgUserID int64, traderID string) (*TgTrader
 	var query string
 	if d.usePostgreSQL {
 		query = `
-			SELECT id, tg_user_id, name, ai_model_id, exchange_id,
+			SELECT id, tg_user_id, name, ai_model_id, COALESCE(ai_model_name, '') AS ai_model_name, exchange_id,
 				   initial_balance, scan_interval_minutes, is_running,
 				   btc_eth_leverage, altcoin_leverage, trading_symbols,
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
-				   system_prompt_template, ai_model_api_key, created_at, updated_at
+				   system_prompt_template,
+				   COALESCE(ai_model_api_key, '') AS ai_model_api_key,
+				   COALESCE(ai_model_api_url, '') AS ai_model_api_url,
+				   COALESCE(private_key, '') AS private_key,
+				   COALESCE(wallet_address, '') AS wallet_address,
+				   created_at, updated_at
 			FROM tg_traders
 			WHERE tg_user_id = $1 AND id = $2
 		`
 	} else {
 		query = `
-			SELECT id, tg_user_id, name, ai_model_id, exchange_id,
+			SELECT id, tg_user_id, name, ai_model_id, COALESCE(ai_model_name, '') AS ai_model_name, exchange_id,
 				   initial_balance, scan_interval_minutes, is_running,
 				   btc_eth_leverage, altcoin_leverage, trading_symbols,
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
-				   system_prompt_template, ai_model_api_key, created_at, updated_at
+				   system_prompt_template,
+				   COALESCE(ai_model_api_key, '') AS ai_model_api_key,
+				   COALESCE(ai_model_api_url, '') AS ai_model_api_url,
+				   COALESCE(private_key, '') AS private_key,
+				   COALESCE(wallet_address, '') AS wallet_address,
+				   created_at, updated_at
 			FROM tg_traders
 			WHERE tg_user_id = ? AND id = ?
 		`
@@ -2905,13 +3151,13 @@ func (d *Database) GetTgTraderConfig(tgUserID int64, traderID string) (*TgTrader
 
 	var trader TgTraderRecord
 	err := d.db.QueryRow(query, tgUserID, traderID).Scan(
-		&trader.ID, &trader.TgUserID, &trader.Name, &trader.AIModelID,
+		&trader.ID, &trader.TgUserID, &trader.Name, &trader.AIModelID, &trader.AIModelName,
 		&trader.ExchangeID, &trader.InitialBalance, &trader.ScanIntervalMinutes,
 		&trader.IsRunning, &trader.BTCETHLeverage, &trader.AltcoinLeverage,
 		&trader.TradingSymbols, &trader.UseCoinPool, &trader.UseOITop,
 		&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.IsCrossMargin,
 		&trader.UseDefaultCoins, &trader.CustomCoins, &trader.SystemPromptTemplate,
-		&trader.AIModelAPIKey, &trader.CreatedAt, &trader.UpdatedAt,
+		&trader.AIModelAPIKey, &trader.AIModelAPIURL, &trader.PrivateKey, &trader.WalletAddress, &trader.CreatedAt, &trader.UpdatedAt,
 	)
 
 	if err != nil {
@@ -2921,7 +3167,18 @@ func (d *Database) GetTgTraderConfig(tgUserID int64, traderID string) (*TgTrader
 		return nil, fmt.Errorf("获取TG交易员配置失败: %w", err)
 	}
 
-	trader.AIModelAPIKey = d.decryptSecretValue(trader.AIModelAPIKey)
+	decryptedAPIKey, err := d.decryptSecretValue(trader.AIModelAPIKey)
+		if err != nil {
+			log.Printf("🚨 CRITICAL: 无法解密AI模型API密钥: %v", err)
+			return nil, fmt.Errorf("无法解密AI模型API密钥: %w", err)
+		}
+		trader.AIModelAPIKey = decryptedAPIKey
+	decryptedPrivateKey, err := d.decryptSecretValue(trader.PrivateKey)
+	if err != nil {
+		log.Printf("🚨 CRITICAL: 无法解密私钥: %v", err)
+		return nil, fmt.Errorf("无法解密私钥: %w", err)
+	}
+	trader.PrivateKey = decryptedPrivateKey
 	return &trader, nil
 }
 

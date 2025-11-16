@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"html"
 	"log"
 	"strconv"
 	"strings"
@@ -33,7 +34,9 @@ func (cw *ConfigWizard) StartWizard(telegramID int64) (string, error) {
 	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
 	log.Printf("🔍 StartWizard: Retrieved session, current state=%s", session.State)
 	session.State = StateQuickSetup // 直接进入快速配置模式
-	session.TraderConfig = &TraderConfig{}
+	session.TraderConfig = &TraderConfig{
+		AIProvider: "deepseek",
+	}
 	log.Printf("🔍 StartWizard: Set session state to %s", session.State)
 
 	return cw.getQuickSetupMessage(), nil
@@ -57,6 +60,9 @@ func (cw *ConfigWizard) ProcessInput(telegramID int64, input string) (string, bo
 	case StateQuickSetup:
 		log.Printf("🔍 Processing quick setup selection for telegramID=%d", telegramID)
 		return cw.processQuickSetupInput(telegramID, input)
+	case StateChoosingAIModel:
+		log.Printf("🔍 Processing AI provider selection for telegramID=%d", telegramID)
+		return cw.processAIProviderSelection(telegramID, input)
 	case StateChoosingPrompt:
 		log.Printf("🔍 Processing prompt template selection for telegramID=%d", telegramID)
 		return cw.processPromptTemplateSelection(telegramID, input)
@@ -245,10 +251,10 @@ func (cw *ConfigWizard) processIntervalInput(telegramID int64, input string) (st
 // processAPIKeyInput 处理 API KEY 输入
 func (cw *ConfigWizard) processAPIKeyInput(telegramID int64, input string) (string, bool, error) {
 	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
+	provider := normalizeAIProvider(session.TraderConfig.AIProvider)
 
-	// 验证 DeepSeek API KEY 格式
-	if !cw.validateDeepSeekAPIKey(input) {
-		return cw.getAPIKeyMessage() + "\n\n❌ API KEY 格式错误！\n• 必须以 'sk-' 开头\n• 总长度至少 20 个字符\n• 只能包含字母、数字和连字符", false, nil
+	if !cw.validateAPIKeyForProvider(provider, input) {
+		return cw.getAPIKeyMessage(provider) + "\n\n" + cw.getAPIKeyFormatHint(provider), false, nil
 	}
 
 	// API KEY 验证成功，删除用户的消息以增强安全性
@@ -264,6 +270,7 @@ func (cw *ConfigWizard) processAPIKeyInput(telegramID int64, input string) (stri
 	}
 
 	// 保存 API KEY
+	session.TraderConfig.AIProvider = provider
 	session.TraderConfig.AIModelAPIKey = input
 	session.State = StateConfirm
 	cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
@@ -272,38 +279,51 @@ func (cw *ConfigWizard) processAPIKeyInput(telegramID int64, input string) (stri
 }
 
 // getAPIKeyMessage 获取 API KEY 输入消息
-func (cw *ConfigWizard) getAPIKeyMessage() string {
-	return `🔐 创建 AI 交易员 - 输入 API KEY
+func (cw *ConfigWizard) getAPIKeyMessage(provider string) string {
+	switch normalizeAIProvider(provider) {
+	case "qwen":
+		return `🔐 创建 AI 交易员 - 输入 Qwen API KEY
 
-🔗 获取 API KEY：
+🔗 获取 Qwen API KEY：
+1. 访问 https://dashscope.aliyun.com/api-console
+2. 登录阿里云账号，在「API-KEY 管理」中创建新的 Key
+3. 复制完整的 AccessKey（区分大小写）
+
+请直接粘贴您的 Qwen API KEY：`
+	default:
+		return `🔐 创建 AI 交易员 - 输入 DeepSeek API KEY
+
+🔗 获取 DeepSeek API KEY：
 1. 访问 https://platform.deepseek.com/api_keys
 2. 登录并创建新的 API KEY
 3. 复制完整的 API KEY
 
 请直接粘贴您的 DeepSeek API KEY：`
+	}
+}
+
+func (cw *ConfigWizard) getAPIKeyFormatHint(provider string) string {
+	switch normalizeAIProvider(provider) {
+	case "qwen":
+		return "❌ API KEY 格式错误！\n• 请输入阿里云 DashScope 创建的 AccessKey\n• 至少 15 个字符，可包含字母、数字和符号"
+	default:
+		return "❌ API KEY 格式错误！\n• 请确认复制了完整的 DeepSeek API KEY\n• 支持任意字母、数字或符号组合"
+	}
+}
+
+func (cw *ConfigWizard) validateAPIKeyForProvider(provider, apiKey string) bool {
+	switch normalizeAIProvider(provider) {
+	case "qwen":
+		return len(apiKey) >= 15
+	default:
+		return cw.validateDeepSeekAPIKey(apiKey)
+	}
 }
 
 // validateDeepSeekAPIKey 验证 DeepSeek API KEY 格式
 func (cw *ConfigWizard) validateDeepSeekAPIKey(apiKey string) bool {
-	if len(apiKey) < 20 {
-		return false
-	}
-
-	if !strings.HasPrefix(apiKey, "sk-") {
-		return false
-	}
-
-	// 检查是否只包含有效字符
-	for _, char := range apiKey {
-		if !((char >= 'a' && char <= 'z') ||
-			(char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') ||
-			char == '-') {
-			return false
-		}
-	}
-
-	return true
+	trimmed := strings.TrimSpace(apiKey)
+	return len(trimmed) >= 8
 }
 
 // maskAPIKey 隐藏 API KEY 的敏感部分用于显示
@@ -324,17 +344,33 @@ func (cw *ConfigWizard) processConfirmation(telegramID int64, input string) (str
 
 	if strings.ToLower(input) == "y" || input == "是" || input == "yes" {
 		// 创建交易员
-		traderName, err := cw.ttm.CreateTrader(telegramID, session.TraderConfig)
+		traderRecord, err := cw.ttm.CreateTrader(telegramID, session.TraderConfig)
 		if err != nil {
 			cw.ttm.GetSessionManager().ClearSession(telegramID)
 			return fmt.Sprintf("❌ 创建交易员失败: %v", err), true, nil
 		}
 
-		log.Printf("✅ 成功创建交易员: %s", traderName)
+		log.Printf("✅ 成功创建交易员: %s, 钱包: %s, 私钥: %s", 
+			traderRecord.Name, traderRecord.WalletAddress, maskPrivateKey(traderRecord.PrivateKey))
 
 		cw.ttm.GetSessionManager().ClearSession(telegramID)
-		return fmt.Sprintf("交易员创建成功！\n\n交易员名称: %s\n策略: %s\n\n启动后将自动获取账户余额\n现在可以使用 /start_trader 启动交易员",
-			traderName, cw.getPromptDisplayNameClean(session.TraderConfig.PromptTemplate)), true, nil
+		return fmt.Sprintf(`✅ 交易员创建成功！
+
+📋 配置信息:
+• 交易员名称: %s
+• 交易策略: %s
+• 钱包地址: <code>%s</code>
+
+🔐 安全说明:
+• 私钥已安全加密存储
+• 系统将自动使用私钥进行交易
+
+💡 下一步:
+使用 /start_trader 启动交易员
+使用 /balance 查看账户余额`,
+			html.EscapeString(traderRecord.Name),
+			html.EscapeString(cw.getPromptDisplayNameClean(session.TraderConfig.PromptTemplate)),
+			html.EscapeString(traderRecord.WalletAddress)), true, nil
 	}
 
 	if strings.ToLower(input) == "n" || input == "否" || input == "no" {
@@ -350,8 +386,8 @@ func (cw *ConfigWizard) getPromptTemplateMessage() string {
 	templates := GetAvailablePromptTemplates()
 	var message strings.Builder
 
-	message.WriteString("🤖 **创建 AI 交易员 - 第1步**\n\n")
-	message.WriteString("🎯 **选择交易策略**\n\n")
+	message.WriteString("🤖 <b>创建 AI 交易员 - 第1步</b>\n\n")
+	message.WriteString("🎯 <b>选择交易策略</b>\n\n")
 
 	for i, template := range templates {
 		message.WriteString(fmt.Sprintf("%d. %s\n%s\n\n", i+1, template.DisplayName, template.Description))
@@ -367,8 +403,8 @@ func (cw *ConfigWizard) getBalanceMessage() string {
 	balanceOptions := GetBalanceOptions()
 	var message strings.Builder
 
-	message.WriteString("💰 **创建 AI 交易员 - 第2步**\n\n")
-	message.WriteString("💵 **设置初始资金**\n\n")
+	message.WriteString("💰 <b>创建 AI 交易员 - 第2步</b>\n\n")
+	message.WriteString("💵 <b>设置初始资金</b>\n\n")
 
 	for i, balance := range balanceOptions {
 		message.WriteString(fmt.Sprintf("%d. %.0f USDC\n", i+1, balance))
@@ -385,8 +421,8 @@ func (cw *ConfigWizard) getRiskMessage() string {
 	riskLevels := GetRiskLevels()
 	var message strings.Builder
 
-	message.WriteString("⚖️ **创建 AI 交易员 - 第3步**\n\n")
-	message.WriteString("🎲 **选择风险级别**\n\n")
+	message.WriteString("⚖️ <b>创建 AI 交易员 - 第3步</b>\n\n")
+	message.WriteString("🎲 <b>选择风险级别</b>\n\n")
 
 	riskDescriptions := map[string]string{
 		"保守": "注重资金安全，低风险低收益",
@@ -406,8 +442,8 @@ func (cw *ConfigWizard) getRiskMessage() string {
 func (cw *ConfigWizard) getLeverageMessage() string {
 	var message strings.Builder
 
-	message.WriteString("⚙️ **创建 AI 交易员 - 第4步**\n\n")
-	message.WriteString("🎚️ **设置杠杆倍数**\n\n")
+	message.WriteString("⚙️ <b>创建 AI 交易员 - 第4步</b>\n\n")
+	message.WriteString("🎚️ <b>设置杠杆倍数</b>\n\n")
 	message.WriteString("格式: BTC/ETH杠杆,山寨币杠杆\n")
 	message.WriteString("例如: 5,3 (BTC/ETH 5倍, 山寨币 3倍)\n\n")
 	message.WriteString("建议范围:\n")
@@ -422,8 +458,8 @@ func (cw *ConfigWizard) getIntervalMessage() string {
 	intervalOptions := GetIntervalOptions()
 	var message strings.Builder
 
-	message.WriteString("⏱️ **创建 AI 交易员 - 第5步**\n\n")
-	message.WriteString("🕐 **设置扫描间隔**\n\n")
+	message.WriteString("⏱️ <b>创建 AI 交易员 - 第5步</b>\n\n")
+	message.WriteString("🕐 <b>设置扫描间隔</b>\n\n")
 
 	for i, interval := range intervalOptions {
 		message.WriteString(fmt.Sprintf("%d. %d 分钟", i+1, interval))
@@ -444,12 +480,14 @@ func (cw *ConfigWizard) getIntervalMessage() string {
 func (cw *ConfigWizard) getConfirmMessage(telegramID int64) string {
 	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
 	config := session.TraderConfig
+	providerName := aiProviderDisplayName(config.AIProvider)
 
 	var message strings.Builder
 	message.WriteString("🤖 创建AI交易员 - 确认配置\n\n")
 
 	// 删除"配置摘要"标题，直接显示配置项
 	message.WriteString(fmt.Sprintf("交易策略: %s\n", cw.getPromptDisplayNameClean(config.PromptTemplate)))
+	message.WriteString(fmt.Sprintf("AI 模型: %s\n", providerName))
 	// 删除初始资金行
 	message.WriteString(fmt.Sprintf("风险级别: %s\n", config.RiskLevel))
 	message.WriteString(fmt.Sprintf("BTC/ETH杠杆: %d倍\n", config.BTCETHLeverage))
@@ -458,7 +496,7 @@ func (cw *ConfigWizard) getConfirmMessage(telegramID int64) string {
 
 	// API KEY隐藏显示
 	if config.AIModelAPIKey != "" {
-		message.WriteString(fmt.Sprintf("DeepSeek API KEY: %s\n", cw.maskAPIKey(config.AIModelAPIKey)))
+		message.WriteString(fmt.Sprintf("%s API KEY: %s\n", providerName, cw.maskAPIKey(config.AIModelAPIKey)))
 	}
 
 	message.WriteString("\n确认创建交易员吗？ (y/n)")
@@ -516,6 +554,48 @@ func (cw *ConfigWizard) getQuickSetupMessage() string {
 	return builder.String()
 }
 
+func (cw *ConfigWizard) getAIProviderMessage() string {
+	return `🧠 创建 AI 交易员 - 选择大模型
+
+请选择要使用的 AI 提供商：
+1. DeepSeek（默认，性价比高，推理速度快）
+2. Qwen / 通义千问（由阿里云 DashScope 提供）
+
+请点击下方按钮或回复 1 / 2：`
+}
+
+func (cw *ConfigWizard) processAIProviderSelection(telegramID int64, input string) (string, bool, error) {
+	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
+
+	if provider, ok := detectAIProviderFromInput(input); ok {
+		session.TraderConfig.AIProvider = provider
+		session.State = StateSettingAPIKey
+		cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
+		return cw.getAPIKeyMessage(provider), false, nil
+	}
+
+	choice, err := cw.ttm.ParseIntInput(input)
+	if err != nil {
+		return cw.getAIProviderMessage() + "\n\n❌ 请输入 1 或 2", false, nil
+	}
+
+	var provider string
+	switch choice {
+	case 1:
+		provider = "deepseek"
+	case 2:
+		provider = "qwen"
+	default:
+		return cw.getAIProviderMessage() + "\n\n❌ 请选择有效的选项 (1-2)", false, nil
+	}
+
+	session.TraderConfig.AIProvider = provider
+	session.State = StateSettingAPIKey
+	cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
+
+	return cw.getAPIKeyMessage(provider), false, nil
+}
+
 // processQuickSetupInput 处理快速配置输入
 func (cw *ConfigWizard) processQuickSetupInput(telegramID int64, input string) (string, bool, error) {
 	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
@@ -537,8 +617,32 @@ func (cw *ConfigWizard) processQuickSetupInput(telegramID int64, input string) (
 	session.TraderConfig.AltcoinLeverage = selected.AltcoinLeverage
 	session.TraderConfig.ScanIntervalMinutes = selected.ScanIntervalMinutes
 
-	session.State = StateSettingAPIKey
+	session.State = StateChoosingAIModel
 	cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
 
-	return cw.getAPIKeyMessage(), false, nil
+	return cw.getAIProviderMessage(), false, nil
+}
+
+func detectAIProviderFromInput(input string) (string, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(input))
+	switch normalized {
+	case "1":
+		return "deepseek", true
+	case "2":
+		return "qwen", true
+	}
+
+	// 去掉常见的符号和空格，方便匹配
+	normalized = strings.ReplaceAll(normalized, "（", "(")
+	normalized = strings.ReplaceAll(normalized, "）", ")")
+	normalized = strings.ReplaceAll(normalized, " ", "")
+
+	if strings.Contains(normalized, "deepseek") {
+		return "deepseek", true
+	}
+	if strings.Contains(normalized, "qwen") || strings.Contains(normalized, "通义") || strings.Contains(normalized, "tongyi") {
+		return "qwen", true
+	}
+
+	return "", false
 }

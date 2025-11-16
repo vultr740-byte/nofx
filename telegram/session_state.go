@@ -10,16 +10,20 @@ import (
 type SessionState string
 
 const (
-	StateIdle            SessionState = "idle"             // 空闲状态
-	StateCreatingTrader  SessionState = "creating_trader"  // 创建交易员中
-	StateChoosingPrompt  SessionState = "choosing_prompt"  // 选择提示词模板
-	StateSettingAPIKey   SessionState = "setting_api_key"  // 设置 API KEY
-	StateSettingBalance  SessionState = "setting_balance"  // 设置初始资金
-	StateSettingRisk     SessionState = "setting_risk"     // 设置风险级别
-	StateSettingLeverage SessionState = "setting_leverage" // 设置杠杆倍数
-	StateSettingInterval SessionState = "setting_interval" // 设置扫描间隔
-	StateConfirm         SessionState = "confirm"          // 确认配置
-	StateQuickSetup      SessionState = "quick_setup"      // 快速配置（选择风险级别）
+	StateIdle               SessionState = "idle"                  // 空闲状态
+	StateCreatingTrader     SessionState = "creating_trader"       // 创建交易员中
+	StateChoosingPrompt     SessionState = "choosing_prompt"       // 选择提示词模板
+	StateChoosingAIModel    SessionState = "choosing_ai_model"     // 选择AI模型提供商
+	StateSettingAPIKey      SessionState = "setting_api_key"       // 设置 API KEY
+	StateUpdatingAIProvider SessionState = "updating_ai_provider"  // 更新 AI 提供商
+	StateUpdatingAPIKey     SessionState = "updating_api_key"      // 更新 API KEY
+	StateSettingAIModelName SessionState = "setting_ai_model_name" // 设置自定义模型名称
+	StateSettingBalance     SessionState = "setting_balance"       // 设置初始资金
+	StateSettingRisk        SessionState = "setting_risk"          // 设置风险级别
+	StateSettingLeverage    SessionState = "setting_leverage"      // 设置杠杆倍数
+	StateSettingInterval    SessionState = "setting_interval"      // 设置扫描间隔
+	StateConfirm            SessionState = "confirm"               // 确认配置
+	StateQuickSetup         SessionState = "quick_setup"           // 快速配置（选择风险级别）
 )
 
 // PromptTemplate 提示词模板配置
@@ -43,7 +47,10 @@ type TraderConfig struct {
 	BTCETHLeverage      int
 	AltcoinLeverage     int
 	ScanIntervalMinutes int
+	AIProvider          string // deepseek / qwen
+	AIModelName         string // 自定义模型名称
 	AIModelAPIKey       string // AI 模型 API KEY (对应数据库中的 ai_model_api_key 字段)
+	AIModelAPIURL       string // AI 模型 API URL (对应数据库中的 ai_model_api_url 字段)
 	// 预留扩展字段
 	CustomParams map[string]interface{}
 }
@@ -80,9 +87,11 @@ func (sm *SessionManager) GetOrCreateSession(telegramID int64) *UserSession {
 	if !exists || session.isExpired() {
 		log.Printf("🔍 SessionManager: Creating new session for telegramID=%d (exists=%t, expired=%t)", telegramID, exists, !exists && session != nil && session.isExpired())
 		session = &UserSession{
-			TelegramID:   telegramID,
-			State:        StateIdle,
-			TraderConfig: &TraderConfig{},
+			TelegramID: telegramID,
+			State:      StateIdle,
+			TraderConfig: &TraderConfig{
+				AIProvider: "deepseek",
+			},
 			LastActivity: time.Now(),
 			ExpiresAt:    time.Now().Add(30 * time.Minute), // 30分钟过期
 		}

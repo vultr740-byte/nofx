@@ -1,7 +1,6 @@
 package telegram
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -16,18 +15,28 @@ func NewHyperliquidService() *HyperliquidService {
 	return &HyperliquidService{}
 }
 
-// GetBalance 获取余额并格式化为 Telegram 消息
-func (s *HyperliquidService) GetBalance(agentKey, walletAddr string, testnet bool) (string, error) {
+// FetchBalance 获取原始余额信息，供外层业务复用
+func (s *HyperliquidService) FetchBalance(agentKey, walletAddr string, testnet bool) (map[string]interface{}, error) {
 	// 创建 Hyperliquid 交易器
 	trader, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
 	if err != nil {
-		return "", fmt.Errorf("创建 Hyperliquid 交易器失败: %w", err)
+		return nil, fmt.Errorf("创建 Hyperliquid 交易器失败: %w", err)
 	}
 
 	// 获取余额
 	balance, err := trader.GetBalance()
 	if err != nil {
-		return "", fmt.Errorf("获取余额失败: %w", err)
+		return nil, fmt.Errorf("获取余额失败: %w", err)
+	}
+
+	return balance, nil
+}
+
+// GetBalance 获取余额并格式化为 Telegram 消息
+func (s *HyperliquidService) GetBalance(agentKey, walletAddr string, testnet bool) (string, error) {
+	balance, err := s.FetchBalance(agentKey, walletAddr, testnet)
+	if err != nil {
+		return "", err
 	}
 
 	// 格式化余额信息
@@ -99,11 +108,8 @@ func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}
 // formatPositionsMessage 格式化持仓消息
 func (s *HyperliquidService) formatPositionsMessage(positions []map[string]interface{}) string {
 	if len(positions) == 0 {
-		return `📊 当前持仓
+		return `🕒 暂无持仓
 
-🎯 暂无持仓
-
----
 💡 使用 /deposit 充值资金后即可开始交易`
 	}
 
@@ -166,31 +172,6 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 	))
 
 	return message.String()
-}
-
-// ExtractAgentKeyAndWallet 从 session_data 中提取 Agent Key 和 Wallet Address
-func (s *HyperliquidService) ExtractAgentKeyAndWallet(sessionDataStr string) (agentKey, walletAddr string, err error) {
-	// 解析 JSON
-	var sessionData map[string]interface{}
-	if err := json.Unmarshal([]byte(sessionDataStr), &sessionData); err != nil {
-		return "", "", fmt.Errorf("解析 session_data 失败: %w", err)
-	}
-
-	// 提取 agent_key
-	if key, ok := sessionData["agent_key"].(string); ok {
-		agentKey = key
-	} else {
-		return "", "", fmt.Errorf("未找到 agent_key")
-	}
-
-	// 提取 wallet_address
-	if addr, ok := sessionData["wallet_address"].(string); ok {
-		walletAddr = addr
-	} else {
-		return "", "", fmt.Errorf("未找到 wallet_address")
-	}
-
-	return agentKey, walletAddr, nil
 }
 
 // ValidateAddress 验证地址格式

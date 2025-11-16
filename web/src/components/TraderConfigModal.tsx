@@ -127,9 +127,8 @@ export function TraderConfigModal({
           'ETHUSDT',
           'SOLUSDT',
           'BNBUSDT',
-          'XRPUSDT',
-          'DOGEUSDT',
-          'ADAUSDT',
+          'HYPEUSDT',
+          'SUIUSDT',
         ])
       }
     }

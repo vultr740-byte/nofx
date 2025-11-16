@@ -331,6 +331,75 @@ func (at *AutoTrader) pushDecisionToTelegram(record *logger.DecisionRecord) {
 	}()
 }
 
+// pushTradeExecutionToTelegram 推送单笔交易执行结果（仅TG交易员）
+func (at *AutoTrader) pushTradeExecutionToTelegram(action *logger.DecisionAction) {
+	if action == nil || at.telegramBotManager == nil || !isTGTrader(at.userID) {
+		return
+	}
+
+	// “wait/hold” 已包含在主决策报告中，避免重复推送
+	if action.Action == "wait" || action.Action == "hold" {
+		return
+	}
+
+	type decisionPusher interface {
+		PushDecisionToUser(telegramID int64, decisionMsg string) error
+	}
+
+	tgBotMgr, ok := at.telegramBotManager.(decisionPusher)
+	if !ok {
+		return
+	}
+
+	telegramID, err := strconv.ParseInt(at.userID, 10, 64)
+	if err != nil {
+		return
+	}
+
+	statusEmoji := "✅"
+	statusText := "执行成功"
+	if !action.Success {
+		statusEmoji = "❌"
+		statusText = "执行失败"
+	}
+
+	actionName := strings.ToUpper(strings.ReplaceAll(action.Action, "_", " "))
+	quantity := math.Abs(action.Quantity)
+
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("%s %s\n", statusEmoji, statusText))
+	builder.WriteString(fmt.Sprintf("%s %s\n", actionName, action.Symbol))
+	if quantity > 0 {
+		builder.WriteString(fmt.Sprintf("• 数量: %.4f\n", quantity))
+	}
+	if action.Leverage > 0 {
+		builder.WriteString(fmt.Sprintf("• 杠杆: %dx\n", action.Leverage))
+	}
+	if action.Price > 0 {
+		builder.WriteString(fmt.Sprintf("• 价格: %.4f\n", action.Price))
+	}
+	if !action.Timestamp.IsZero() {
+		builder.WriteString(fmt.Sprintf("🕒 %s\n", action.Timestamp.Format("15:04:05")))
+	}
+	if action.StopLoss != nil {
+		builder.WriteString(fmt.Sprintf("🛡️ 止损: %.4f\n", *action.StopLoss))
+	}
+	if action.TakeProfit != nil {
+		builder.WriteString(fmt.Sprintf("🎯 止盈: %.4f\n", *action.TakeProfit))
+	}
+	if action.Error != "" {
+		builder.WriteString(fmt.Sprintf("⚠️ %s\n", action.Error))
+	}
+
+	message := builder.String()
+
+	go func() {
+		if err := tgBotMgr.PushDecisionToUser(telegramID, message); err != nil {
+			log.Printf("⚠️ 推送交易执行信息到Telegram失败: %v", err)
+		}
+	}()
+}
+
 // formatDecisionForTelegram 格式化AI决策为Telegram消息
 // ⚠️ 重要编码注意事项：
 // 1. Telegram API 要求所有文本必须是有效的UTF-8编码
@@ -338,9 +407,9 @@ func (at *AutoTrader) pushDecisionToTelegram(record *logger.DecisionRecord) {
 // 3. 使用标准ASCII和常见Unicode符号（如 ✅❌📊等）
 // 4. 不要直接复制粘贴系统提示词中的特殊字符（如 \u0026 等转义序列）
 // 5. 如果遇到编码错误，检查：
-//    - 数据源是否包含不可见字符
-//    - 字符串拼接是否正确处理了转义
-//    - 是否有直接从外部源复制的内容
+//   - 数据源是否包含不可见字符
+//   - 字符串拼接是否正确处理了转义
+//   - 是否有直接从外部源复制的内容
 func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) string {
 	var statusEmoji string
 	if record.Success {
@@ -385,7 +454,11 @@ func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) s
 		for _, decision := range record.Decisions {
 			decisionStatus := "❌"
 			if decision.Success {
-				decisionStatus = "✅"
+				if decision.Action == "wait" || decision.Action == "hold" {
+					decisionStatus = "⏳"
+				} else {
+					decisionStatus = "✅"
+				}
 			}
 			msg += fmt.Sprintf("\n%s %s %s", decisionStatus, decision.Symbol, decision.Action)
 			if decision.Error != "" {
@@ -539,7 +612,7 @@ func (at *AutoTrader) Stop() {
 		close(at.stopMonitorCh)
 	}
 
-	at.monitorWg.Wait()     // 等待监控goroutine结束
+	at.monitorWg.Wait() // 等待监控goroutine结束
 	log.Println("⏹ 自动交易系统停止")
 }
 
@@ -603,11 +676,11 @@ func (at *AutoTrader) StopWithPositionsClose() ([]string, error) {
 
 			// 创建平仓决策记录
 			actionRecord := &logger.DecisionAction{
-				Action:     "close_position",
-				Symbol:     symbol,
-				Quantity:   math.Abs(size),
-				Timestamp:  time.Now(),
-							}
+				Action:    "close_position",
+				Symbol:    symbol,
+				Quantity:  math.Abs(size),
+				Timestamp: time.Now(),
+			}
 
 			// 根据仓位方向执行平仓
 			if size > 0 {
@@ -620,12 +693,12 @@ func (at *AutoTrader) StopWithPositionsClose() ([]string, error) {
 
 			if err != nil {
 				errorMsg := fmt.Sprintf("❌ 平仓失败 %s: %v", symbol, err)
-				log.Printf(errorMsg)
+				log.Print(errorMsg)
 				closeResults = append(closeResults, errorMsg)
 				hasError = true
 			} else {
 				successMsg := fmt.Sprintf("✅ 平仓成功 %s", symbol)
-				log.Printf(successMsg)
+				log.Print(successMsg)
 				closeResults = append(closeResults, successMsg)
 			}
 		}
@@ -924,6 +997,7 @@ func (at *AutoTrader) runCycle() error {
 		}
 
 		record.Decisions = append(record.Decisions, actionRecord)
+		at.pushTradeExecutionToTelegram(&record.Decisions[len(record.Decisions)-1])
 	}
 
 	// 9. 保存决策记录
@@ -1140,6 +1214,14 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, act
 	quantity := decision.PositionSizeUSD / marketData.CurrentPrice
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
+	if decision.StopLoss > 0 {
+		sl := decision.StopLoss
+		actionRecord.StopLoss = &sl
+	}
+	if decision.TakeProfit > 0 {
+		tp := decision.TakeProfit
+		actionRecord.TakeProfit = &tp
+	}
 
 	// ⚠️ 保证金验证：防止保证金不足错误（code=-2019）
 	requiredMargin := decision.PositionSizeUSD / float64(decision.Leverage)
@@ -1220,6 +1302,14 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, ac
 	quantity := decision.PositionSizeUSD / marketData.CurrentPrice
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
+	if decision.StopLoss > 0 {
+		sl := decision.StopLoss
+		actionRecord.StopLoss = &sl
+	}
+	if decision.TakeProfit > 0 {
+		tp := decision.TakeProfit
+		actionRecord.TakeProfit = &tp
+	}
 
 	// ⚠️ 保证金验证：防止保证金不足错误（code=-2019）
 	requiredMargin := decision.PositionSizeUSD / float64(decision.Leverage)
@@ -1347,6 +1437,7 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *decision.Decision, a
 // executeUpdateStopLossWithRecord 执行调整止损并记录详细信息
 func (at *AutoTrader) executeUpdateStopLossWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
 	log.Printf("  🎯 调整止损: %s → %.2f", decision.Symbol, decision.NewStopLoss)
+	actionRecord.StopLoss = &decision.NewStopLoss
 
 	// 获取当前价格
 	marketData, err := market.Get(decision.Symbol)
@@ -1431,6 +1522,7 @@ func (at *AutoTrader) executeUpdateStopLossWithRecord(decision *decision.Decisio
 // executeUpdateTakeProfitWithRecord 执行调整止盈并记录详细信息
 func (at *AutoTrader) executeUpdateTakeProfitWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
 	log.Printf("  🎯 调整止盈: %s → %.2f", decision.Symbol, decision.NewTakeProfit)
+	actionRecord.TakeProfit = &decision.NewTakeProfit
 
 	// 获取当前价格
 	marketData, err := market.Get(decision.Symbol)
@@ -1601,6 +1693,40 @@ func (at *AutoTrader) GetAIModel() string {
 // GetExchange 获取交易所
 func (at *AutoTrader) GetExchange() string {
 	return at.exchange
+}
+
+// UpdateAIConfig 动态更新AI提供商、模型与密钥
+func (at *AutoTrader) UpdateAIConfig(provider string, apiKey string, modelName string) {
+	normalized := strings.ToLower(strings.TrimSpace(provider))
+	if normalized == "" {
+		normalized = "deepseek"
+	}
+
+	modelName = strings.TrimSpace(modelName)
+	at.config.CustomModelName = modelName
+
+	if normalized == "qwen" {
+		at.config.UseQwen = true
+		at.config.AIModel = "qwen"
+		at.config.QwenKey = apiKey
+		at.config.DeepSeekKey = ""
+		at.aiModel = "qwen"
+		if at.mcpClient != nil {
+			at.mcpClient.SetQwenAPIKey(apiKey, at.config.CustomAPIURL, at.config.CustomModelName)
+		}
+		log.Printf("🔁 [%s] AI 配置已更新为 Qwen", at.name)
+		return
+	}
+
+	at.config.UseQwen = false
+	at.config.AIModel = "deepseek"
+	at.config.DeepSeekKey = apiKey
+	at.config.QwenKey = ""
+	at.aiModel = "deepseek"
+	if at.mcpClient != nil {
+		at.mcpClient.SetDeepSeekAPIKey(apiKey, at.config.CustomAPIURL, at.config.CustomModelName)
+	}
+	log.Printf("🔁 [%s] AI 配置已更新为 DeepSeek", at.name)
 }
 
 // SetCustomPrompt 设置自定义交易策略prompt

@@ -49,7 +49,7 @@ func New() *Client {
 	return &Client{
 		Provider:  ProviderDeepSeek,
 		BaseURL:   "https://api.deepseek.com/v1",
-		Model:     "deepseek-chat",
+		Model:     "",
 		Timeout:   120 * time.Second, // 增加到120秒，因为AI需要分析大量数据
 		MaxTokens: maxTokens,
 	}
@@ -68,24 +68,10 @@ func (client *Client) SetDeepSeekAPIKey(apiKey string, customURL string, customM
 		log.Printf("🔧 [MCP] DeepSeek 使用默认 BaseURL: %s", client.BaseURL)
 	}
 	if customModel != "" {
-		// 自动修正常见的模型名称错误
-		normalizedModel := customModel
-		switch strings.ToLower(customModel) {
-		case "deepseek":
+		normalizedModel := strings.TrimSpace(customModel)
+		if strings.EqualFold(normalizedModel, "deepseek") {
 			normalizedModel = "deepseek-chat"
 			log.Printf("🔧 [MCP] DeepSeek 自动修正模型名: %s -> %s", customModel, normalizedModel)
-		case "deepseek-coder", "deepseek-chat":
-			// 这些是正确的DeepSeek模型名称，无需修正
-			log.Printf("✅ [MCP] DeepSeek 使用正确的模型名: %s", customModel)
-		default:
-			if !strings.Contains(strings.ToLower(customModel), "deepseek") {
-				log.Printf("⚠️ [MCP] DeepSeek 未知的模型名: %s，尝试使用默认模型", customModel)
-				normalizedModel = "deepseek-chat"
-			} else {
-				// 包含"deepseek"但不是标准名称，也进行修正
-				log.Printf("🔧 [MCP] DeepSeek 非标准模型名: %s，修正为 deepseek-chat", customModel)
-				normalizedModel = "deepseek-chat"
-			}
 		}
 		client.Model = normalizedModel
 		log.Printf("🔧 [MCP] DeepSeek 使用自定义 Model: %s", normalizedModel)
@@ -115,7 +101,7 @@ func (client *Client) SetQwenAPIKey(apiKey string, customURL string, customModel
 		client.Model = customModel
 		log.Printf("🔧 [MCP] Qwen 使用自定义 Model: %s", customModel)
 	} else {
-		client.Model = "qwen3-max"
+		client.Model = "qwen3-30b"
 		log.Printf("🔧 [MCP] Qwen 使用默认 Model: %s", client.Model)
 	}
 	// 打印 API Key 的前后各4位用于验证

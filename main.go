@@ -204,7 +204,6 @@ func main() {
 	useDefaultCoins := useDefaultCoinsStr == "true"
 	apiPortStr, _ := database.GetSystemConfig("api_server_port")
 
-
 	// 设置JWT密钥（优先使用环境变量）
 	jwtSecret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
 	if jwtSecret == "" {
@@ -234,13 +233,13 @@ func main() {
 		// 尝试从JSON解析
 		if err := json.Unmarshal([]byte(defaultCoinsJSON), &defaultCoins); err != nil {
 			log.Printf("⚠️  解析default_coins配置失败: %v，使用硬编码默认值", err)
-			defaultCoins = []string{"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "HYPEUSDT"}
+			defaultCoins = []string{"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "HYPEUSDT", "SUIUSDT"}
 		} else {
 			log.Printf("✓ 从数据库加载默认币种列表（共%d个）: %v", len(defaultCoins), defaultCoins)
 		}
 	} else {
 		// 如果数据库中没有配置，使用硬编码默认值
-		defaultCoins = []string{"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "HYPEUSDT"}
+		defaultCoins = []string{"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "HYPEUSDT", "SUIUSDT"}
 		log.Printf("⚠️  数据库中未配置default_coins，使用硬编码默认值")
 	}
 

@@ -758,47 +758,11 @@ func (tm *TraderManager) LoadTGTradersFromDatabase(database *config.Database) er
 
 // loadTGTraderFromDB 从数据库加载单个TG交易员
 func (tm *TraderManager) loadTGTraderFromDB(database *config.Database, tgTrader *config.TgTraderRecord, tgUserID int64) error {
-	// 获取TG用户的session_data以提取Hyperliquid配置
-	tgUser, err := database.GetTGUserByTelegramID(tgUserID)
-	if err != nil {
-		return fmt.Errorf("获取TG用户信息失败: %w", err)
+	if tgTrader.PrivateKey == "" {
+		return fmt.Errorf("TG交易员缺少私钥")
 	}
-
-	// 将interface{}转换为map
-	userMap, ok := tgUser.(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("用户数据格式错误")
-	}
-
-	sessionDataRaw, ok := userMap["session_data"]
-	if !ok {
-		return fmt.Errorf("未找到session_data")
-	}
-
-	// 解析session_data
-	var sessionDataStr string
-	if str, ok := sessionDataRaw.(string); ok {
-		sessionDataStr = str
-	} else if bytes, ok := sessionDataRaw.([]byte); ok {
-		sessionDataStr = string(bytes)
-	} else {
-		jsonBytes, err := json.Marshal(sessionDataRaw)
-		if err != nil {
-			return fmt.Errorf("解析session_data失败: %w", err)
-		}
-		sessionDataStr = string(jsonBytes)
-	}
-
-	// 解析session_data JSON
-	var sessionData map[string]interface{}
-	if err := json.Unmarshal([]byte(sessionDataStr), &sessionData); err != nil {
-		return fmt.Errorf("解析session_data JSON失败: %w", err)
-	}
-
-	agentKey, ok := sessionData["agent_key"].(string)
-	if !ok || agentKey == "" {
-		return fmt.Errorf("未找到agent_key")
-	}
+	agentKey := tgTrader.PrivateKey
+	walletAddr := tgTrader.WalletAddress
 
 	// 检查交易员是否已经在运行
 	if _, exists := tm.traders[tgTrader.ID]; exists {
@@ -825,7 +789,14 @@ func (tm *TraderManager) loadTGTraderFromDB(database *config.Database, tgTrader 
 			return fmt.Errorf("获取AI模型失败: %w", err)
 		}
 	}
-	aiModelCfg := aiModels[0]
+
+	aiModelCfg := selectAIModelConfigForTG(aiModels, tgTrader.AIModelID)
+	if aiModelCfg == nil {
+		aiModelCfg = aiModels[0]
+		log.Printf("⚠️ 未找到匹配的AI模型(ID=%s)，回退到默认模型: %s (%s)", tgTrader.AIModelID, aiModelCfg.Name, aiModelCfg.Provider)
+	} else {
+		log.Printf("🤖 匹配到TG交易员的AI模型: %s (%s)", aiModelCfg.Name, aiModelCfg.Provider)
+	}
 
 	exchanges, err := database.GetExchanges(userID)
 	if err != nil || len(exchanges) == 0 {
@@ -838,7 +809,7 @@ func (tm *TraderManager) loadTGTraderFromDB(database *config.Database, tgTrader 
 	exchangeCfg := exchanges[0]
 
 	// 使用专门的方法创建TG交易员实例
-	err = tm.createTGTraderInstance(tgTrader, aiModelCfg, exchangeCfg, agentKey, database)
+	err = tm.createTGTraderInstance(tgTrader, aiModelCfg, exchangeCfg, agentKey, walletAddr, database)
 	if err != nil {
 		return fmt.Errorf("创建TG交易员实例失败: %w", err)
 	}
@@ -848,48 +819,107 @@ func (tm *TraderManager) loadTGTraderFromDB(database *config.Database, tgTrader 
 }
 
 // createTGTraderInstance 创建TG交易员实例
-func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord, aiModelCfg *config.AIModelConfig, exchangeCfg *config.ExchangeConfig, agentKey string, database *config.Database) error {
-	// 从 session_data 中提取 wallet address
-	// agentKey 实际上既是私钥也可以派生出钱包地址
-	walletAddr, err := deriveAddressFromPrivateKey(agentKey)
-	if err != nil {
-		log.Printf("⚠️ 无法从私钥派生钱包地址: %v", err)
-		walletAddr = "" // 设为空，让系统处理
+func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord, aiModelCfg *config.AIModelConfig, exchangeCfg *config.ExchangeConfig, agentKey string, walletAddr string, database *config.Database) error {
+	if walletAddr == "" {
+		derivedAddr, err := deriveAddressFromPrivateKey(agentKey)
+		if err != nil {
+			log.Printf("⚠️ 无法从私钥派生钱包地址: %v", err)
+		} else {
+			walletAddr = derivedAddr
+		}
 	}
 
 	log.Printf("🔧 创建TG交易员实例，扫描间隔: %d 分钟", tgTrader.ScanIntervalMinutes)
 
-	// 优先使用TG交易员自己的API KEY，如果为空则使用环境变量
+	provider := normalizeAIProviderID(tgTrader.AIModelID)
+	if provider == "" && aiModelCfg != nil {
+		provider = normalizeAIProviderID(aiModelCfg.Provider)
+	}
+	if provider == "" {
+		provider = "deepseek"
+	}
+	useQwen := provider == "qwen"
+	log.Printf("🤖 TG交易员 %s 将使用 %s 模型", tgTrader.Name, aiProviderDisplayNameInternal(provider))
+
+	// 优先使用TG交易员自己的API KEY，如果为空则使用AI模型配置，最后回退到环境变量
 	var apiKey string
+	var apiURL string
 	if tgTrader.AIModelAPIKey != "" {
 		apiKey = tgTrader.AIModelAPIKey
-		log.Printf("🔑 使用TG交易员自身的API KEY")
-	} else {
-		apiKey = os.Getenv("DEEPSEEK_API_KEY")
-		if apiKey != "" {
-			log.Printf("🔑 使用环境变量DEEPSEEK_API_KEY")
-		} else {
-			log.Printf("⚠️ 未找到AI API KEY，TG交易员可能无法正常工作")
+		log.Printf("🔑 使用TG交易员自定义 %s API KEY", aiProviderDisplayNameInternal(provider))
+	}
+	if tgTrader.AIModelAPIURL != "" {
+		apiURL = strings.TrimSpace(tgTrader.AIModelAPIURL)
+		if apiURL != "" {
+			log.Printf("🌐 使用TG交易员自定义AI API URL: %s", apiURL)
 		}
+	}
+
+	if apiKey == "" && aiModelCfg != nil && aiModelCfg.APIKey != "" {
+		apiKey = aiModelCfg.APIKey
+		log.Printf("🔑 使用系统默认 %s API KEY", aiProviderDisplayNameInternal(provider))
+	}
+
+	if apiURL == "" && aiModelCfg != nil && aiModelCfg.CustomAPIURL != "" {
+		apiURL = strings.TrimSpace(aiModelCfg.CustomAPIURL)
+		if apiURL != "" {
+			log.Printf("🌐 使用系统默认AI API URL: %s", apiURL)
+		}
+	}
+
+	if apiKey == "" {
+		if useQwen {
+			apiKey = os.Getenv("QWEN_API_KEY")
+			if apiKey != "" {
+				log.Printf("🔑 使用环境变量QWEN_API_KEY")
+			}
+		} else {
+			apiKey = os.Getenv("DEEPSEEK_API_KEY")
+			if apiKey != "" {
+				log.Printf("🔑 使用环境变量DEEPSEEK_API_KEY")
+			}
+		}
+	}
+
+	if apiKey == "" {
+		log.Printf("⚠️ 未找到 %s API KEY，TG交易员可能无法正常工作", aiProviderDisplayNameInternal(provider))
+	}
+
+	customModelName := strings.TrimSpace(tgTrader.AIModelName)
+	if customModelName != "" {
+		log.Printf("🧠 使用TG交易员自定义模型名称: %s", customModelName)
+	} else if aiModelCfg != nil && aiModelCfg.CustomModelName != "" {
+		customModelName = aiModelCfg.CustomModelName
+		log.Printf("🧠 使用系统自定义模型名称: %s", customModelName)
+	}
+
+	var deepSeekKey, qwenKey string
+	if useQwen {
+		qwenKey = apiKey
+	} else {
+		deepSeekKey = apiKey
 	}
 
 	// 创建AutoTrader实例
 	trader, err := trader.NewAutoTrader(
 		trader.AutoTraderConfig{
-			ID:                     tgTrader.ID,
-			Name:                   tgTrader.Name,
-			InitialBalance:         tgTrader.InitialBalance,
-			ScanInterval:           time.Duration(tgTrader.ScanIntervalMinutes) * time.Minute,
-			AIModel:                "deepseek", // TG交易员默认使用deepseek
+			ID:                    tgTrader.ID,
+			Name:                  tgTrader.Name,
+			InitialBalance:        tgTrader.InitialBalance,
+			ScanInterval:          time.Duration(tgTrader.ScanIntervalMinutes) * time.Minute,
+			AIModel:               provider,
 			Exchange:              "hyperliquid",
-			HyperliquidPrivateKey:  agentKey,
-			HyperliquidWalletAddr:  walletAddr,
+			HyperliquidPrivateKey: agentKey,
+			HyperliquidWalletAddr: walletAddr,
 			HyperliquidTestnet:    true,
-			DeepSeekKey:           apiKey,
-			UseQwen:                false,
+			DeepSeekKey:           deepSeekKey,
+			QwenKey:               qwenKey,
+			CustomAPIURL:          apiURL,
+			CustomModelName:       customModelName,
+			UseQwen:               useQwen,
 			// 添加杠杆配置
-			BTCETHLeverage:        tgTrader.BTCETHLeverage,
-			AltcoinLeverage:       tgTrader.AltcoinLeverage,
+			BTCETHLeverage:  tgTrader.BTCETHLeverage,
+			AltcoinLeverage: tgTrader.AltcoinLeverage,
 		},
 		database,
 		fmt.Sprintf("%d", tgTrader.TgUserID), // TG用户ID作为UserID
@@ -915,6 +945,72 @@ func (tm *TraderManager) LoadAllTraders(database *config.Database) error {
 	// 复用现有的 LoadTradersFromDatabase 方法，它已经加载了所有用户的交易员
 	log.Printf("📋 公共接口：加载所有用户的交易员")
 	return tm.LoadTradersFromDatabase(database)
+}
+
+// selectAIModelConfigForTG 根据TG交易员配置选择合适的AI模型
+func selectAIModelConfigForTG(models []*config.AIModelConfig, aiModelID string) *config.AIModelConfig {
+	targetID := strings.TrimSpace(aiModelID)
+	if targetID != "" {
+		for _, model := range models {
+			if model != nil && strings.EqualFold(model.ID, targetID) {
+				return model
+			}
+		}
+	}
+
+	targetProvider := normalizeAIProviderID(aiModelID)
+	if targetProvider != "" {
+		for _, model := range models {
+			if model == nil {
+				continue
+			}
+			if normalizeAIProviderID(model.Provider) == targetProvider {
+				return model
+			}
+		}
+	}
+
+	return nil
+}
+
+// normalizeAIProviderID 归一化AI提供商标识
+func normalizeAIProviderID(value string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	switch trimmed {
+	case "qwen", "qianwen", "tongyi", "通义", "通義":
+		return "qwen"
+	case "deepseek", "deepseek-chat", "deepseekcoder":
+		return "deepseek"
+	default:
+		return trimmed
+	}
+}
+
+// aiProviderDisplayNameInternal 返回用于日志展示的提供商名称
+func aiProviderDisplayNameInternal(provider string) string {
+	switch normalizeAIProviderID(provider) {
+	case "qwen":
+		return "Qwen"
+	case "deepseek":
+		return "DeepSeek"
+	default:
+		if provider == "" {
+			return "自定义AI"
+		}
+		return capitalizeProviderName(provider)
+	}
+}
+
+func capitalizeProviderName(provider string) string {
+	runes := []rune(provider)
+	if len(runes) == 0 {
+		return provider
+	}
+	first := strings.ToUpper(string(runes[0]))
+	if len(runes) == 1 {
+		return first
+	}
+	return first + string(runes[1:])
 }
 
 // LoadUserTraders 为特定用户加载交易员到内存

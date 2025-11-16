@@ -56,56 +56,102 @@ func (ttm *TelegramTraderManager) setupTelegramBotManagerForTrader(traderObj *tr
 }
 
 // CreateTrader 创建交易员
-func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *TraderConfig) (string, error) {
-	// 检查用户是否已有交易员
+func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *TraderConfig) (*config.TgTraderRecord, error) {
 	existingTraders, err := ttm.db.GetTgTraders(telegramID)
 	if err != nil {
 		log.Printf("获取现有交易员失败: %v", err)
-	} else if len(existingTraders) > 0 {
-		return "", fmt.Errorf("您已经创建过交易员了，每个用户只能创建一个交易员")
 	}
 
-	// 生成交易员配置
 	traderID := uuid.New().String()
 
-	// 使用固定的AI模型ID和交易所ID（TG交易员只支持DeepSeek + Hyperliquid）
-	aiModelID := "deepseek" // 固定使用deepseek模型ID
+	agentKey, walletAddr, err := generateHyperliquidAccount()
+	if err != nil {
+		return nil, fmt.Errorf("生成 Hyperliquid 账号失败: %w", err)
+	}
+
+	provider := normalizeAIProvider(traderConfig.AIProvider)
+	aiModelID := provider
 	exchangeID := "hyperliquid" // 固定使用Hyperliquid交易所
 
-	log.Printf("✅ 使用DeepSeek AI模型: %s", aiModelID)
+	log.Printf("✅ 使用%s AI模型: %s", aiProviderDisplayName(provider), aiModelID)
 	log.Printf("✅ 使用Hyperliquid交易所: %s", exchangeID)
+
+	traderName := fmt.Sprintf("AI交易员 #%d", len(existingTraders)+1)
+	if traderConfig.CustomParams != nil {
+		if nameVal, ok := traderConfig.CustomParams["name"].(string); ok && strings.TrimSpace(nameVal) != "" {
+			traderName = strings.TrimSpace(nameVal)
+		}
+	}
 
 	// 创建TG交易员记录
 	tgTraderRecord := &config.TgTraderRecord{
-		ID:                traderID,
-		TgUserID:         telegramID,
-		Name:             "AI交易员",
-		AIModelID:        aiModelID,
-		ExchangeID:       exchangeID,
-		InitialBalance:   traderConfig.InitialBalance,
-		ScanIntervalMinutes: traderConfig.ScanIntervalMinutes,
-		IsRunning:        false,
-		BTCETHLeverage:   traderConfig.BTCETHLeverage,
-		AltcoinLeverage:  traderConfig.AltcoinLeverage,
-		TradingSymbols:   "",
-		UseCoinPool:      true,
-		UseOITop:         false,
-		CustomPrompt:     "",
-		OverrideBasePrompt: false,
-		IsCrossMargin:    true,
-		UseDefaultCoins:  true,
-		CustomCoins:      "",
+		ID:                   traderID,
+		TgUserID:             telegramID,
+		Name:                 traderName,
+		AIModelID:            aiModelID,
+		AIModelName:          traderConfig.AIModelName,
+		ExchangeID:           exchangeID,
+		InitialBalance:       traderConfig.InitialBalance,
+		ScanIntervalMinutes:  traderConfig.ScanIntervalMinutes,
+		IsRunning:            false,
+		BTCETHLeverage:       traderConfig.BTCETHLeverage,
+		AltcoinLeverage:      traderConfig.AltcoinLeverage,
+		TradingSymbols:       "",
+		UseCoinPool:          true,
+		UseOITop:             false,
+		CustomPrompt:         "",
+		OverrideBasePrompt:   false,
+		IsCrossMargin:        true,
+		UseDefaultCoins:      true,
+		CustomCoins:          "",
 		SystemPromptTemplate: traderConfig.PromptTemplate,
-		AIModelAPIKey:     traderConfig.AIModelAPIKey,
+		AIModelAPIKey:        traderConfig.AIModelAPIKey,
+		AIModelAPIURL:        traderConfig.AIModelAPIURL,
+		PrivateKey:           agentKey,
+		WalletAddress:        walletAddr,
 	}
 
 	// 保存到数据库
 	if err := ttm.db.CreateTgTrader(telegramID, tgTraderRecord); err != nil {
-		return "", fmt.Errorf("创建TG交易员失败: %w", err)
+		return nil, fmt.Errorf("创建TG交易员失败: %w", err)
 	}
 
 	log.Printf("✅ 成功创建TG交易员: %s", tgTraderRecord.Name)
-	return tgTraderRecord.Name, nil
+	return tgTraderRecord, nil
+}
+
+// UpdateTraderAPIConfig 更新交易员的AI提供商与API KEY
+func (ttm *TelegramTraderManager) UpdateTraderAPIConfig(telegramID int64, provider string, apiKey string, modelName string) (*config.TgTraderRecord, error) {
+	provider = normalizeAIProvider(provider)
+	modelName = strings.TrimSpace(modelName)
+
+	traders, err := ttm.db.GetTgTraders(telegramID)
+	if err != nil {
+		return nil, fmt.Errorf("获取交易员失败: %w", err)
+	}
+	if len(traders) == 0 {
+		return nil, fmt.Errorf("您还没有创建交易员，请先使用 /create_trader 创建")
+	}
+
+	traderRecord := traders[0]
+	if err := ttm.db.UpdateTgTraderAPIConfig(telegramID, traderRecord.ID, provider, apiKey, modelName); err != nil {
+		return nil, err
+	}
+
+	traderRecord.AIModelID = provider
+	traderRecord.AIModelAPIKey = apiKey
+	if modelName != "" {
+		traderRecord.AIModelName = modelName
+	}
+
+	if ttm.traderMgr != nil {
+		if traderObj, err := ttm.traderMgr.GetTrader(traderRecord.ID); err == nil {
+			traderObj.UpdateAIConfig(provider, apiKey, traderRecord.AIModelName)
+			log.Printf("🔁 已同步内存中的交易员 %s 的 AI 配置", traderRecord.Name)
+		}
+	}
+
+	return &traderRecord, nil
 }
 
 // StartTrader 启动交易员 - 重构版本，确保状态同步
@@ -194,25 +240,19 @@ func (ttm *TelegramTraderManager) CheckPositionsBeforeStop(telegramID int64) (bo
 		return false, 0, fmt.Errorf("TelegramBotManager类型断言失败")
 	}
 
-	// 获取用户信息 (复用 /positions 的逻辑)
-	user, err := tgBotMgr.db.GetTGUserByTelegramID(telegramID)
-	if err != nil {
-		return false, 0, fmt.Errorf("获取用户信息失败: %w", err)
-	}
-
 	// 检查是否有 Hyperliquid 账号 (复用 /positions 的逻辑)
-	if !tgBotMgr.hasHyperliquidAccount(user) {
+	if !tgBotMgr.hasHyperliquidAccount(telegramID) {
 		return false, 0, fmt.Errorf("未找到 Hyperliquid 账号")
 	}
 
 	// 提取 Agent Key 和 Wallet Address (复用 /positions 的逻辑)
-	agentKey, walletAddr, err := tgBotMgr.extractAgentKeyAndWallet(user)
+	agentKey, walletAddr, err := tgBotMgr.extractAgentKeyAndWallet(telegramID)
 	if err != nil {
 		return false, 0, fmt.Errorf("提取账号信息失败: %w", err)
 	}
 
-	log.Printf("🔍 复用 /positions 查询逻辑检查仓位 (AgentKey: %s..., Wallet: %s)",
-		agentKey[:min(10, len(agentKey))], walletAddr)
+	log.Printf("🔍 复用 /positions 查询逻辑检查仓位 (AgentKey: %s, Wallet: %s)",
+		maskPrivateKey(agentKey), walletAddr)
 
 	// 复用 /positions 相同的查询逻辑
 	positionsMsg, err := tgBotMgr.hlService.GetPositions(agentKey, walletAddr, tgBotMgr.testnet)
@@ -229,7 +269,7 @@ func (ttm *TelegramTraderManager) CheckPositionsBeforeStop(telegramID int64) (bo
 
 	// 检查消息中是否有仓位信息
 	if strings.Contains(positionsMsg, "持仓数量: 0 个") ||
-	   strings.Contains(positionsMsg, "当前持仓\n\n") && len(positionsMsg) < 50 {
+		strings.Contains(positionsMsg, "当前持仓\n\n") && len(positionsMsg) < 50 {
 		hasPositions = false
 		positionCount = 0
 		log.Printf("📊 解析 /positions 结果: 无未平仓合约")
@@ -252,8 +292,8 @@ func (ttm *TelegramTraderManager) CheckPositionsBeforeStop(telegramID int64) (bo
 	if positionCount == 0 && hasPositions {
 		// 如果包含具体的仓位信息，说明有仓位
 		if strings.Contains(positionsMsg, "→ LONG") ||
-		   strings.Contains(positionsMsg, "→ SHORT") ||
-		   strings.Contains(positionsMsg, "数量:") {
+			strings.Contains(positionsMsg, "→ SHORT") ||
+			strings.Contains(positionsMsg, "数量:") {
 			hasPositions = true
 			positionCount = 1 // 至少有1个仓位
 			log.Printf("📊 通过内容分析判断: 有未平仓合约")
@@ -437,7 +477,7 @@ func (ttm *TelegramTraderManager) GetTraderStatus(telegramID int64) (map[string]
 
 	// 4. 构建状态返回
 	status := map[string]interface{}{
-		"has_trader":             true,
+		"has_trader":            true,
 		"id":                    trader.ID,
 		"name":                  trader.Name,
 		"is_running":            actualRunningState, // 使用实际运行状态
