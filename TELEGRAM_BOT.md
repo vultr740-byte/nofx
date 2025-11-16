@@ -55,6 +55,7 @@ docker compose up -d
 | `/balance` | 余额查询 | 查看现货和合约余额 |
 | `/positions` | 持仓查询 | 查看当前持仓信息 |
 | `/deposit` | 充值地址 | 获取 USDC 充值地址 |
+| `/settings` | ⚙️ 设置 | 导出 Agent 私钥等操作 |
 | `/set_api_key` | 配置 AI 密钥 | 切换 DeepSeek/Qwen 并更新 API KEY |
 
 ### 使用流程
@@ -89,6 +90,7 @@ docker compose up -d
 - ⚠️ Agent Wallet 余额应保持在 0 USDC 附近
 - ⚠️ 主钱包资金安全，请勿暴露私钥
 - ⚠️ 如有疑问，请通过官方渠道联系客服
+- ⚠️ 如需备份 Agent 私钥，可在 `/settings` 中导出，复制后请立即删除聊天记录
 
 ## 💰 充值说明
 

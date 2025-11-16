@@ -55,13 +55,21 @@ func (ttm *TelegramTraderManager) setupTelegramBotManagerForTrader(traderObj *tr
 	log.Printf("✅ 已为交易员启用Telegram决策推送功能")
 }
 
-// CreateTrader 创建交易员
-func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *TraderConfig) (*config.TgTraderRecord, error) {
-	existingTraders, err := ttm.db.GetTgTraders(telegramID)
+// EnsureTraderAccount 确保用户已经分配了Hyperliquid账号（仅生成钱包，不配置策略）
+func (ttm *TelegramTraderManager) EnsureTraderAccount(telegramID int64) (*config.TgTraderRecord, error) {
+	traders, err := ttm.db.GetTgTraders(telegramID)
 	if err != nil {
-		log.Printf("获取现有交易员失败: %v", err)
+		return nil, fmt.Errorf("获取交易员失败: %w", err)
+	}
+	if len(traders) > 0 {
+		return &traders[0], nil
 	}
 
+	return ttm.createTraderSkeleton(telegramID, len(traders)+1)
+}
+
+// createTraderSkeleton 只创建钱包账户，等待 /create_trader 完成配置
+func (ttm *TelegramTraderManager) createTraderSkeleton(telegramID int64, index int) (*config.TgTraderRecord, error) {
 	traderID := uuid.New().String()
 
 	agentKey, walletAddr, err := generateHyperliquidAccount()
@@ -69,31 +77,82 @@ func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *T
 		return nil, fmt.Errorf("生成 Hyperliquid 账号失败: %w", err)
 	}
 
-	provider := normalizeAIProvider(traderConfig.AIProvider)
-	aiModelID := provider
-	exchangeID := "hyperliquid" // 固定使用Hyperliquid交易所
-
-	log.Printf("✅ 使用%s AI模型: %s", aiProviderDisplayName(provider), aiModelID)
-	log.Printf("✅ 使用Hyperliquid交易所: %s", exchangeID)
-
-	traderName := fmt.Sprintf("AI交易员 #%d", len(existingTraders)+1)
-	if traderConfig.CustomParams != nil {
-		if nameVal, ok := traderConfig.CustomParams["name"].(string); ok && strings.TrimSpace(nameVal) != "" {
-			traderName = strings.TrimSpace(nameVal)
-		}
-	}
-
-	// 创建TG交易员记录
-	tgTraderRecord := &config.TgTraderRecord{
+	traderName := fmt.Sprintf("AI交易员 #%d", index)
+	skeleton := &config.TgTraderRecord{
 		ID:                   traderID,
 		TgUserID:             telegramID,
 		Name:                 traderName,
-		AIModelID:            aiModelID,
+		AIModelID:            "deepseek",
+		AIModelName:          "",
+		ExchangeID:           "hyperliquid",
+		InitialBalance:       0,
+		ScanIntervalMinutes:  0,
+		IsRunning:            false,
+		IsConfigured:         false,
+		BTCETHLeverage:       0,
+		AltcoinLeverage:      0,
+		TradingSymbols:       "",
+		UseCoinPool:          true,
+		UseOITop:             false,
+		CustomPrompt:         "",
+		OverrideBasePrompt:   false,
+		IsCrossMargin:        true,
+		UseDefaultCoins:      true,
+		CustomCoins:          "",
+		SystemPromptTemplate: "",
+		AIModelAPIKey:        "",
+		AIModelAPIURL:        "",
+		PrivateKey:           agentKey,
+		WalletAddress:        walletAddr,
+	}
+
+	if err := ttm.db.CreateTgTrader(telegramID, skeleton); err != nil {
+		return nil, fmt.Errorf("创建TG交易员基础账户失败: %w", err)
+	}
+
+	log.Printf("✅ 已为用户 %d 生成 Hyperliquid 钱包: %s", telegramID, walletAddr)
+	return skeleton, nil
+}
+
+func (ttm *TelegramTraderManager) findPendingTrader(traders []config.TgTraderRecord) *config.TgTraderRecord {
+	for i := range traders {
+		if !traders[i].IsConfigured {
+			return &traders[i]
+		}
+	}
+	return nil
+}
+
+func (ttm *TelegramTraderManager) determineTraderName(defaultName string, traderConfig *TraderConfig) string {
+	if traderConfig != nil && traderConfig.CustomParams != nil {
+		if nameVal, ok := traderConfig.CustomParams["name"].(string); ok && strings.TrimSpace(nameVal) != "" {
+			return strings.TrimSpace(nameVal)
+		}
+	}
+	if strings.TrimSpace(defaultName) != "" {
+		return strings.TrimSpace(defaultName)
+	}
+	return "AI交易员"
+}
+
+func (ttm *TelegramTraderManager) buildConfiguredTraderRecord(telegramID int64, defaultName string, traderConfig *TraderConfig) *config.TgTraderRecord {
+	provider := normalizeAIProvider(traderConfig.AIProvider)
+	traderName := ttm.determineTraderName(defaultName, traderConfig)
+	templateName := traderConfig.PromptTemplate
+	if templateName == "" {
+		templateName = "default"
+	}
+
+	return &config.TgTraderRecord{
+		TgUserID:             telegramID,
+		Name:                 traderName,
+		AIModelID:            provider,
 		AIModelName:          traderConfig.AIModelName,
-		ExchangeID:           exchangeID,
+		ExchangeID:           "hyperliquid",
 		InitialBalance:       traderConfig.InitialBalance,
 		ScanIntervalMinutes:  traderConfig.ScanIntervalMinutes,
 		IsRunning:            false,
+		IsConfigured:         true,
 		BTCETHLeverage:       traderConfig.BTCETHLeverage,
 		AltcoinLeverage:      traderConfig.AltcoinLeverage,
 		TradingSymbols:       "",
@@ -104,20 +163,54 @@ func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *T
 		IsCrossMargin:        true,
 		UseDefaultCoins:      true,
 		CustomCoins:          "",
-		SystemPromptTemplate: traderConfig.PromptTemplate,
+		SystemPromptTemplate: templateName,
 		AIModelAPIKey:        traderConfig.AIModelAPIKey,
 		AIModelAPIURL:        traderConfig.AIModelAPIURL,
-		PrivateKey:           agentKey,
-		WalletAddress:        walletAddr,
+	}
+}
+
+// CreateTrader 创建交易员
+func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *TraderConfig) (*config.TgTraderRecord, error) {
+	existingTraders, err := ttm.db.GetTgTraders(telegramID)
+	if err != nil {
+		log.Printf("获取现有交易员失败: %v", err)
 	}
 
-	// 保存到数据库
-	if err := ttm.db.CreateTgTrader(telegramID, tgTraderRecord); err != nil {
+	if pending := ttm.findPendingTrader(existingTraders); pending != nil {
+		configuredTrader := ttm.buildConfiguredTraderRecord(telegramID, pending.Name, traderConfig)
+		configuredTrader.ID = pending.ID
+		configuredTrader.PrivateKey = pending.PrivateKey
+		configuredTrader.WalletAddress = pending.WalletAddress
+		configuredTrader.IsRunning = pending.IsRunning
+		configuredTrader.CreatedAt = pending.CreatedAt
+		configuredTrader.IsConfigured = true
+
+		if err := ttm.db.UpdateTgTraderConfig(telegramID, pending.ID, configuredTrader); err != nil {
+			return nil, err
+		}
+
+		log.Printf("✅ 已更新未配置的交易员: %s", configuredTrader.Name)
+		return configuredTrader, nil
+	}
+
+	traderID := uuid.New().String()
+	agentKey, walletAddr, err := generateHyperliquidAccount()
+	if err != nil {
+		return nil, fmt.Errorf("生成 Hyperliquid 账号失败: %w", err)
+	}
+
+	defaultName := fmt.Sprintf("AI交易员 #%d", len(existingTraders)+1)
+	newTrader := ttm.buildConfiguredTraderRecord(telegramID, defaultName, traderConfig)
+	newTrader.ID = traderID
+	newTrader.PrivateKey = agentKey
+	newTrader.WalletAddress = walletAddr
+
+	if err := ttm.db.CreateTgTrader(telegramID, newTrader); err != nil {
 		return nil, fmt.Errorf("创建TG交易员失败: %w", err)
 	}
 
-	log.Printf("✅ 成功创建TG交易员: %s", tgTraderRecord.Name)
-	return tgTraderRecord, nil
+	log.Printf("✅ 成功创建TG交易员: %s", newTrader.Name)
+	return newTrader, nil
 }
 
 // UpdateTraderAPIConfig 更新交易员的AI提供商与API KEY
@@ -130,7 +223,7 @@ func (ttm *TelegramTraderManager) UpdateTraderAPIConfig(telegramID int64, provid
 		return nil, fmt.Errorf("获取交易员失败: %w", err)
 	}
 	if len(traders) == 0 {
-		return nil, fmt.Errorf("您还没有创建交易员，请先使用 /create_trader 创建")
+		return nil, fmt.Errorf("您还没有创建交易员，请先使用 /start 初始化账号")
 	}
 
 	traderRecord := traders[0]
@@ -163,7 +256,7 @@ func (ttm *TelegramTraderManager) StartTrader(telegramID int64) error {
 	}
 
 	if len(traders) == 0 {
-		return fmt.Errorf("您还没有创建交易员，请先使用 /create_trader 创建交易员")
+		return fmt.Errorf("您还没有创建交易员，请先使用 /start 初始化账号")
 	}
 
 	trader := traders[0]
@@ -481,6 +574,8 @@ func (ttm *TelegramTraderManager) GetTraderStatus(telegramID int64) (map[string]
 		"id":                    trader.ID,
 		"name":                  trader.Name,
 		"is_running":            actualRunningState, // 使用实际运行状态
+		"is_configured":         trader.IsConfigured,
+		"wallet_address":        trader.WalletAddress,
 		"initial_balance":       trader.InitialBalance,
 		"scan_interval_minutes": trader.ScanIntervalMinutes,
 		"btc_eth_leverage":      trader.BTCETHLeverage,
@@ -492,7 +587,9 @@ func (ttm *TelegramTraderManager) GetTraderStatus(telegramID int64) (map[string]
 	}
 
 	if actualRunningState {
-		status["status"] = "运行中"
+		if trader.IsConfigured {
+			status["status"] = "运行中"
+		}
 
 		// 5. 如果确实在运行中，获取更多实时信息
 		if traderObj, err := ttm.traderMgr.GetTrader(trader.ID); err == nil {
@@ -515,8 +612,14 @@ func (ttm *TelegramTraderManager) GetTraderStatus(telegramID int64) (map[string]
 			}
 		}
 	} else {
-		status["current_balance"] = "已停止"
-		status["positions_count"] = "0"
+		if trader.IsConfigured {
+			status["current_balance"] = "已停止"
+			status["positions_count"] = "0"
+		}
+	}
+
+	if !trader.IsConfigured {
+		status["status"] = "未配置"
 	}
 
 	return status, nil

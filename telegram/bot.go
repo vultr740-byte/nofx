@@ -6,6 +6,8 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -23,6 +25,7 @@ type TelegramBotManager struct {
 	traderMgr    *manager.TraderManager
 	tgTraderMgr  *TelegramTraderManager
 	configWizard *ConfigWizard
+	debugMu      sync.Mutex
 }
 
 func esc(v interface{}) string {
@@ -146,6 +149,8 @@ func (tbm *TelegramBotManager) handleCommand(update tgbotapi.Update) {
 		tbm.handleTraderStatus(update)
 	case "set_api_key":
 		tbm.handleSetAPIKey(update)
+	case "settings":
+		tbm.handleMenu(update)
 	default:
 		tbm.sendMessage(chatID, "❌ 未知命令。使用 /help 查看可用命令。")
 	}
@@ -168,42 +173,26 @@ func (tbm *TelegramBotManager) handleStart(update tgbotapi.Update) {
 		}
 	}
 
-	if tbm.hasHyperliquidAccount(telegramID) {
+	traderRecord, err := tbm.tgTraderMgr.EnsureTraderAccount(telegramID)
+	if err != nil {
+		log.Printf("创建基础账户失败: %v", err)
+		tbm.sendMessage(chatID, "❌ 初始化 Hyperliquid 账户失败，请稍后重试。")
+		return
+	}
+
+	if traderRecord.IsConfigured {
 		msg := fmt.Sprintf("👋 欢迎回来，%s！\n\n🤖 你的 AI 交易员已准备就绪。\n\n💡 快速入口:\n/deposit - 充值\n/start_trader - 启动交易\n/help - 帮助", esc(firstName))
 		tbm.sendMessage(chatID, msg)
 		return
 	}
 
-	defaultConfig := tbm.defaultTraderConfig()
-	traderRecord, err := tbm.tgTraderMgr.CreateTrader(telegramID, defaultConfig)
-	if err != nil {
-		log.Printf("创建默认TG交易员失败: %v", err)
-		tbm.sendMessage(chatID, "❌ 创建默认交易员失败，请稍后使用 /create_trader 重试。")
-		return
-	}
-
-	// 发送欢迎消息（移除私钥显示，确保安全）
-	welcomeMsg := fmt.Sprintf(`🎉 已为你创建默认 AI 交易员 <b>%s</b>
-
-💼 钱包地址:
-<code>%s</code>
-
-🔐 安全说明:
-• 交易私钥已安全加密存储在服务器
-• 系统将自动使用私钥进行交易授权
-• 私钥不会通过 Telegram 传输，确保安全
-
-⚠️ 重要提醒:
-• 此钱包由系统托管，仅用于交易
-• 请勿向此地址转入大额资金
-• 建议初始资金控制在风险可承受范围内
+	welcomeMsg := fmt.Sprintf(`🎉 已为你生成 Hyperliquid 钱包 <b>%s</b>
 
 💡 下一步操作:
-1. 使用 /deposit 获取充值地址
-2. 充值 USDC 后用 /balance 查看余额
-3. 如需更多策略，使用 /create_trader 再创建新的交易员`,
+1. 使用 /deposit 获取充值地址并充值 USDC
+2. 使用 /create_trader 完成策略与模型配置
+3. 配置完成后可用 /start_trader 启动交易`,
 		esc(traderRecord.Name),
-		esc(traderRecord.WalletAddress),
 	)
 
 	tbm.sendMessage(chatID, welcomeMsg)
@@ -232,6 +221,7 @@ func (tbm *TelegramBotManager) handleHelp(update tgbotapi.Update) {
 /start_trader - 启动 Agent 开始交易
 /stop_trader - 停止 Agent
 /trader_status - 查看 Agent 运行状态
+/settings - 打开 ⚙️ 设置 面板（导出私钥等）
 
 🔒 安全提示:
 请妥善保管您的 Agent Key
@@ -256,7 +246,7 @@ func (tbm *TelegramBotManager) handleBalance(update tgbotapi.Update) {
 
 	// 检查是否有 Hyperliquid 账号
 	if !tbm.hasHyperliquidAccount(telegramID) {
-		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 完成账号初始化")
 		return
 	}
 
@@ -296,7 +286,7 @@ func (tbm *TelegramBotManager) handlePositions(update tgbotapi.Update) {
 
 	// 检查是否有 Hyperliquid 账号
 	if !tbm.hasHyperliquidAccount(telegramID) {
-		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 完成账号初始化")
 		return
 	}
 
@@ -336,7 +326,7 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 
 	// 检查是否有 Hyperliquid 账号
 	if !tbm.hasHyperliquidAccount(telegramID) {
-		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 完成账号初始化")
 		return
 	}
 
@@ -366,6 +356,61 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 	tbm.sendMessage(chatID, depositMsg)
 }
 
+// handleMenu 处理 /menu 命令
+func (tbm *TelegramBotManager) handleMenu(update tgbotapi.Update) {
+	chatID := update.Message.Chat.ID
+	telegramID := update.Message.From.ID
+
+	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
+		return
+	}
+
+	if !tbm.hasHyperliquidAccount(telegramID) {
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 完成账号初始化")
+		return
+	}
+
+	menuMsg := `⚙️ <b>设置</b>
+
+选择需要执行的操作：`
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📤 导出 Agent 私钥", fmt.Sprintf("menu_export|%d", telegramID)),
+		),
+	)
+
+	tbm.sendMessageWithInlineKeyboard(chatID, menuMsg, keyboard)
+}
+
+func (tbm *TelegramBotManager) handleExportPrivateKeyRequest(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	tbm.answerCallbackQuery(callback.ID, "⚠️ 请确认是否导出")
+
+	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
+		return
+	}
+
+	if !tbm.hasHyperliquidAccount(telegramID) {
+		tbm.sendMessage(chatID, "❌ 尚未创建 Hyperliquid 账户，请先使用 /start 完成初始化")
+		return
+	}
+
+	warning := `⚠️ <b>导出 Agent 私钥</b>
+
+• 私钥一旦泄露，资金将不受保护
+• 建议复制后立即删除聊天记录
+• 系统将在发送后自动删除该消息`
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✅ 确认导出", fmt.Sprintf("confirm_export|%d", telegramID)),
+		),
+	)
+
+	tbm.sendMessageWithInlineKeyboard(chatID, warning, keyboard)
+}
+
 // handleSetAPIKey 处理 /set_api_key 命令
 func (tbm *TelegramBotManager) handleSetAPIKey(update tgbotapi.Update) {
 	chatID := update.Message.Chat.ID
@@ -378,7 +423,12 @@ func (tbm *TelegramBotManager) handleSetAPIKey(update tgbotapi.Update) {
 
 	trader, err := tbm.getPrimaryTrader(telegramID)
 	if err != nil {
-		tbm.sendMessage(chatID, "❌ 您还没有创建交易员，请先使用 /create_trader")
+		tbm.sendMessage(chatID, "❌ 您还没有创建交易员，请先使用 /start 初始化账号")
+		return
+	}
+
+	if !trader.IsConfigured {
+		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /create_trader 完成设置")
 		return
 	}
 
@@ -600,6 +650,10 @@ func (tbm *TelegramBotManager) setupCommands() {
 			Description: "🔑 更新 AI API KEY",
 		},
 		{
+			Command:     "settings",
+			Description: "⚙️ 设置",
+		},
+		{
 			Command:     "help",
 			Description: "❓ 帮助信息",
 		},
@@ -615,12 +669,12 @@ func (tbm *TelegramBotManager) setupCommands() {
 
 // sendMessage 发送消息
 func (tbm *TelegramBotManager) sendMessage(chatID int64, text string) {
-	tbm.sendMessageWithMarkup(chatID, text, nil)
+	tbm.sendMessageWithMarkupAndReturnInternal(chatID, text, nil, true, false)
 }
 
 // sendMessageWithInlineKeyboard 发送带内联键盘的消息
 func (tbm *TelegramBotManager) sendMessageWithInlineKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) {
-	tbm.sendMessageWithMarkup(chatID, text, keyboard)
+	tbm.sendMessageWithMarkupAndReturnInternal(chatID, text, keyboard, true, false)
 }
 
 // sendAIProviderSelectionMessage 发送AI提供商选择按钮
@@ -633,13 +687,13 @@ func (tbm *TelegramBotManager) sendAIProviderSelectionMessage(chatID int64, text
 	)
 	keyboard.ResizeKeyboard = true
 	keyboard.OneTimeKeyboard = true
-	tbm.sendMessageWithMarkup(chatID, text, keyboard)
+	tbm.sendMessageWithMarkupAndReturnInternal(chatID, text, keyboard, true, false)
 }
 
 // sendMessageRemovingKeyboard 发送消息并移除键盘
 func (tbm *TelegramBotManager) sendMessageRemovingKeyboard(chatID int64, text string) {
 	removeKeyboard := tgbotapi.NewRemoveKeyboard(true)
-	tbm.sendMessageWithMarkup(chatID, text, removeKeyboard)
+	tbm.sendMessageWithMarkupAndReturnInternal(chatID, text, removeKeyboard, true, false)
 }
 
 func (tbm *TelegramBotManager) getAIModelNameMessage() string {
@@ -652,11 +706,19 @@ func (tbm *TelegramBotManager) getAIModelNameMessage() string {
 
 // sendMessageWithMarkup 通用的消息发送方法（可附带自定义键盘）
 func (tbm *TelegramBotManager) sendMessageWithMarkup(chatID int64, text string, replyMarkup interface{}) {
-	tbm.sendMessageWithMarkupAndReturn(chatID, text, replyMarkup)
+	tbm.sendMessageWithMarkupAndReturnInternal(chatID, text, replyMarkup, true, false)
 }
 
 // sendMessageWithMarkupAndReturn 发送消息并返回消息对象，便于后续更新
 func (tbm *TelegramBotManager) sendMessageWithMarkupAndReturn(chatID int64, text string, replyMarkup interface{}) (*tgbotapi.Message, error) {
+	return tbm.sendMessageWithMarkupAndReturnInternal(chatID, text, replyMarkup, true, false)
+}
+
+func (tbm *TelegramBotManager) sendSensitiveMessageWithMarkupAndReturn(chatID int64, text string, replyMarkup interface{}) (*tgbotapi.Message, error) {
+	return tbm.sendMessageWithMarkupAndReturnInternal(chatID, text, replyMarkup, false, true)
+}
+
+func (tbm *TelegramBotManager) sendMessageWithMarkupAndReturnInternal(chatID int64, text string, replyMarkup interface{}, logText bool, suppressDebug bool) (*tgbotapi.Message, error) {
 	log.Printf("🔍 [DEBUG] 检查消息UTF-8编码 (ChatID: %d, 长度: %d)", chatID, len(text))
 	if !utf8.ValidString(text) {
 		log.Printf("❌ [DEBUG] 消息包含无效UTF-8字符！")
@@ -672,7 +734,21 @@ func (tbm *TelegramBotManager) sendMessageWithMarkupAndReturn(chatID int64, text
 		msg.ReplyMarkup = replyMarkup
 	}
 
-	log.Printf("📤 准备发送消息到 ChatID %d: %s", chatID, text)
+	if logText {
+		log.Printf("📤 准备发送消息到 ChatID %d: %s", chatID, text)
+	} else {
+		log.Printf("📤 正在发送敏感消息到 ChatID %d", chatID)
+	}
+
+	if suppressDebug {
+		tbm.debugMu.Lock()
+		originalDebug := tbm.bot.Debug
+		tbm.bot.Debug = false
+		defer func() {
+			tbm.bot.Debug = originalDebug
+			tbm.debugMu.Unlock()
+		}()
+	}
 
 	sentMsg, err := tbm.bot.Send(msg)
 	if err != nil {
@@ -699,7 +775,11 @@ func (tbm *TelegramBotManager) sendMessageWithMarkupAndReturn(chatID int64, text
 	}
 
 	if err == nil {
-		log.Printf("✅ 消息发送成功 (ChatID: %d)", chatID)
+		if logText {
+			log.Printf("✅ 消息发送成功 (ChatID: %d)", chatID)
+		} else {
+			log.Printf("✅ 敏感消息发送成功 (ChatID: %d)", chatID)
+		}
 		return &sentMsg, nil
 	}
 
@@ -732,6 +812,26 @@ func (tbm *TelegramBotManager) updateProgressMessage(chatID int64, messageID int
 	if _, err := tbm.bot.Send(editConfig); err != nil {
 		log.Printf("⚠️ 更新进度消息失败 (ChatID: %d, MsgID: %d): %v", chatID, messageID, err)
 		tbm.sendMessage(chatID, text)
+	}
+}
+
+func (tbm *TelegramBotManager) scheduleDeleteMessage(chatID int64, messageID int, delay time.Duration) {
+	if messageID == 0 {
+		return
+	}
+
+	go func() {
+		time.Sleep(delay)
+		tbm.deleteMessage(chatID, messageID)
+	}()
+}
+
+func (tbm *TelegramBotManager) deleteMessage(chatID int64, messageID int) {
+	deleteReq := tgbotapi.NewDeleteMessage(chatID, messageID)
+	if _, err := tbm.bot.Request(deleteReq); err != nil {
+		log.Printf("⚠️ 删除消息失败 (ChatID: %d, MsgID: %d): %v", chatID, messageID, err)
+	} else {
+		log.Printf("🗑️ 已删除敏感消息 (ChatID: %d, MsgID: %d)", chatID, messageID)
 	}
 }
 
@@ -780,7 +880,7 @@ func (tbm *TelegramBotManager) extractAgentKeyAndWallet(telegramID int64) (agent
 // ensureTraderHasFunds 在启动交易员前检查是否已经充值资金
 func (tbm *TelegramBotManager) ensureTraderHasFunds(telegramID int64) error {
 	if !tbm.hasHyperliquidAccount(telegramID) {
-		return fmt.Errorf("❌ 尚未创建 Hyperliquid 账户，请先使用 /create_trader 创建交易员")
+		return fmt.Errorf("❌ 尚未创建 Hyperliquid 账户，请先使用 /start 完成首次初始化")
 	}
 
 	agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID)
@@ -821,6 +921,22 @@ func (tbm *TelegramBotManager) ensureTraderHasFunds(telegramID int64) error {
 	return nil
 }
 
+// ensureTraderConfigured 确保交易员已经完成配置
+func (tbm *TelegramBotManager) ensureTraderConfigured(chatID int64, telegramID int64) bool {
+	trader, err := tbm.getPrimaryTrader(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, "❌ 未找到交易员，请先使用 /start 初始化账号")
+		return false
+	}
+
+	if !trader.IsConfigured {
+		tbm.sendMessage(chatID, "❌ 交易员尚未完成配置，请先使用 /create_trader 完成设置")
+		return false
+	}
+
+	return true
+}
+
 // handleCreateTrader 处理 /create_trader 命令
 func (tbm *TelegramBotManager) handleCreateTrader(update tgbotapi.Update) {
 	chatID := update.Message.Chat.ID
@@ -829,7 +945,7 @@ func (tbm *TelegramBotManager) handleCreateTrader(update tgbotapi.Update) {
 	// 检查用户是否已存在
 	_, err := tbm.db.GetTGUserByTelegramID(telegramID)
 	if err != nil {
-		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
 		return
 	}
 
@@ -852,7 +968,15 @@ func (tbm *TelegramBotManager) handleStartTrader(update tgbotapi.Update) {
 	// 检查用户是否已存在
 	_, err := tbm.db.GetTGUserByTelegramID(telegramID)
 	if err != nil {
-		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
+		return
+	}
+
+	if !tbm.ensureTraderConfigured(chatID, telegramID) {
+		return
+	}
+
+	if !tbm.ensureTraderConfigured(chatID, telegramID) {
 		return
 	}
 
@@ -885,7 +1009,7 @@ func (tbm *TelegramBotManager) handleStopTrader(update tgbotapi.Update) {
 	// 检查用户是否已存在
 	_, err := tbm.db.GetTGUserByTelegramID(telegramID)
 	if err != nil {
-		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
 		return
 	}
 
@@ -898,7 +1022,7 @@ func (tbm *TelegramBotManager) handleStopTrader(update tgbotapi.Update) {
 
 	// 如果交易员不存在，提示用户先创建
 	if !status["has_trader"].(bool) {
-		tbm.sendMessage(chatID, "❌ 您还没有创建交易员，请先使用 /create_trader 创建交易员")
+		tbm.sendMessage(chatID, "❌ 您还没有创建交易员，请先使用 /start 初始化账号")
 		return
 	}
 
@@ -937,7 +1061,7 @@ func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 	// 检查用户是否已存在
 	_, err := tbm.db.GetTGUserByTelegramID(telegramID)
 	if err != nil {
-		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
 		return
 	}
 
@@ -956,6 +1080,23 @@ func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 💡 <i>下一步操作:</i>
 /create_trader - 创建新的 AI 交易员`
 		tbm.sendMessage(chatID, noTraderMsg)
+		return
+	}
+
+	if configured, ok := status["is_configured"].(bool); ok && !configured {
+		walletAddr := ""
+		if addr, ok := status["wallet_address"].(string); ok {
+			walletAddr = addr
+		}
+		msg := fmt.Sprintf(`🤖 <b>交易员待配置</b>
+
+• 钱包地址: <code>%s</code>
+• 状态: 💤 未配置
+
+💡 请使用 /create_trader 完成模型与策略配置
+• /deposit - 充值 USDC
+• /balance - 查看账户余额`, esc(walletAddr))
+		tbm.sendMessage(chatID, msg)
 		return
 	}
 
@@ -1147,6 +1288,12 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleStopWithClose(callback, chatID, telegramID)
 	case "stop_only":
 		tbm.handleStopOnly(callback, chatID, telegramID)
+	case "menu_export":
+		tbm.handleExportPrivateKeyRequest(callback, chatID, telegramID)
+	case "confirm_export":
+		tbm.handleExportPrivateKeyCallback(callback, chatID, telegramID)
+	case "ack_export":
+		tbm.handleAcknowledgePrivateKey(callback, chatID, telegramID)
 	default:
 		log.Printf("❌ 未知动作: %s", action)
 		tbm.answerCallbackQuery(callback.ID, "未知操作")
@@ -1157,7 +1304,7 @@ func (tbm *TelegramBotManager) handleStartTraderCallback(callback *tgbotapi.Call
 	tbm.answerCallbackQuery(callback.ID, "▶️ 正在启动交易员...")
 
 	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
-		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
 		return
 	}
 
@@ -1180,11 +1327,75 @@ func (tbm *TelegramBotManager) handleStartTraderCallback(callback *tgbotapi.Call
 	tbm.updateProgressMessage(chatID, progressMsgID, "🚀 交易员启动成功！使用 /trader_status 查看运行状态")
 }
 
+func (tbm *TelegramBotManager) handleExportPrivateKeyCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	tbm.answerCallbackQuery(callback.ID, "🔐 正在准备私钥...")
+
+	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
+		return
+	}
+
+	if !tbm.hasHyperliquidAccount(telegramID) {
+		tbm.sendMessage(chatID, "❌ 尚未创建 Hyperliquid 账户，请先使用 /start 完成初始化")
+		return
+	}
+
+	privateKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 获取账户信息失败: %s", esc(err)))
+		return
+	}
+
+	keyToShow := strings.TrimSpace(privateKey)
+	if keyToShow == "" {
+		tbm.sendMessage(chatID, "❌ 未找到可导出的私钥，请稍后重试")
+		return
+	}
+	if !strings.HasPrefix(strings.ToLower(keyToShow), "0x") {
+		keyToShow = "0x" + keyToShow
+	}
+
+	message := fmt.Sprintf(`⚠️ <b>私钥导出</b>
+
+• 请勿泄露此私钥
+• 请在复制后立即删除本聊天记录
+• 点击“已备份”即可立即删除此消息
+• 系统也会在 60 秒后自动删除
+
+Agent 私钥:
+<code>%s</code>
+
+钱包地址:
+<code>%s</code>`,
+		esc(keyToShow),
+		esc(walletAddr),
+	)
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🗑️ 已备份，删除", fmt.Sprintf("ack_export|%d", telegramID)),
+		),
+	)
+
+	sentMsg, err := tbm.sendSensitiveMessageWithMarkupAndReturn(chatID, message, keyboard)
+	if err != nil || sentMsg == nil {
+		return
+	}
+	tbm.scheduleDeleteMessage(chatID, sentMsg.MessageID, 60*time.Second)
+}
+
+func (tbm *TelegramBotManager) handleAcknowledgePrivateKey(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	tbm.answerCallbackQuery(callback.ID, "🗑️ 已删除敏感消息")
+	if callback.Message != nil {
+		tbm.deleteMessage(chatID, callback.Message.MessageID)
+	}
+}
+
 func (tbm *TelegramBotManager) handleStopTraderCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
 	tbm.answerCallbackQuery(callback.ID, "⏹️ 正在检查交易员状态...")
 
 	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
-		tbm.sendMessage(chatID, "❌ 请先使用 /create_trader 创建交易员")
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
 		return
 	}
 
@@ -1195,7 +1406,7 @@ func (tbm *TelegramBotManager) handleStopTraderCallback(callback *tgbotapi.Callb
 	}
 
 	if !status["has_trader"].(bool) {
-		tbm.sendMessage(chatID, "❌ 您还没有创建交易员，请先使用 /create_trader 创建交易员")
+		tbm.sendMessage(chatID, "❌ 您还没有创建交易员，请先使用 /start 初始化账号")
 		return
 	}
 
@@ -1431,39 +1642,6 @@ func formatDecisionChunk(chunk decisionChunk, index int, total int) string {
 		return fmt.Sprintf("%s\n%s", header, preBlock)
 	}
 	return preBlock
-}
-
-func (tbm *TelegramBotManager) defaultTraderConfig() *TraderConfig {
-	template := findPromptTemplateByName("default")
-	return &TraderConfig{
-		PromptTemplate:      template.Name,
-		InitialBalance:      1000,
-		RiskLevel:           template.RiskLevel,
-		BTCETHLeverage:      template.BTCETHLeverage,
-		AltcoinLeverage:     template.AltcoinLeverage,
-		ScanIntervalMinutes: template.ScanIntervalMinutes,
-		AIProvider:          "deepseek",
-	}
-}
-
-func findPromptTemplateByName(name string) PromptTemplate {
-	templates := GetAvailablePromptTemplates()
-	for _, tpl := range templates {
-		if strings.EqualFold(tpl.Name, name) {
-			return tpl
-		}
-	}
-	if len(templates) == 0 {
-		return PromptTemplate{
-			Name:                "default",
-			DisplayName:         "默认策略",
-			RiskLevel:           "标准",
-			BTCETHLeverage:      5,
-			AltcoinLeverage:     3,
-			ScanIntervalMinutes: 30,
-		}
-	}
-	return templates[0]
 }
 
 // maskPrivateKey 隐藏私钥的敏感部分用于日志记录

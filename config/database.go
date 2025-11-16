@@ -72,6 +72,7 @@ type DatabaseInterface interface {
 	UpdateTgTraderStatus(tgUserID int64, traderID string, isRunning bool) error
 	UpdateTgTraderInitialBalance(tgUserID int64, traderID string, newBalance float64) error
 	UpdateTgTraderAPIConfig(tgUserID int64, traderID string, aiModelID string, apiKey string, aiModel string) error
+	UpdateTgTraderConfig(tgUserID int64, traderID string, traderRecord *TgTraderRecord) error
 	DeleteTgTrader(tgUserID int64, traderID string) error
 	GetTgTraderConfig(tgUserID int64, traderID string) (*TgTraderRecord, error)
 	Close() error
@@ -361,6 +362,7 @@ func (d *Database) createPostgreSQLTables() error {
 		`ALTER TABLE tg_traders ADD COLUMN IF NOT EXISTS ai_model_api_url TEXT DEFAULT ''`,
 		`ALTER TABLE tg_traders ADD COLUMN IF NOT EXISTS private_key TEXT DEFAULT ''`,
 		`ALTER TABLE tg_traders ADD COLUMN IF NOT EXISTS wallet_address TEXT DEFAULT ''`,
+		`ALTER TABLE tg_traders ADD COLUMN IF NOT EXISTS is_configured BOOLEAN DEFAULT FALSE`,
 	}
 
 	for _, query := range alterQueries {
@@ -577,6 +579,7 @@ func (d *Database) createSQLiteTables() error {
 		`ALTER TABLE tg_traders ADD COLUMN ai_model_api_url TEXT DEFAULT ''`,
 		`ALTER TABLE tg_traders ADD COLUMN private_key TEXT DEFAULT ''`,
 		`ALTER TABLE tg_traders ADD COLUMN wallet_address TEXT DEFAULT ''`,
+		`ALTER TABLE tg_traders ADD COLUMN is_configured BOOLEAN DEFAULT 0`,
 	}
 
 	for _, query := range alterQueries {
@@ -715,6 +718,7 @@ func (d *Database) createTgTradersTable() error {
 				initial_balance DECIMAL(20,8) NOT NULL,
 				scan_interval_minutes INTEGER DEFAULT 3,
 				is_running BOOLEAN DEFAULT FALSE,
+				is_configured BOOLEAN DEFAULT FALSE,
 				btc_eth_leverage INTEGER DEFAULT 5,
 				altcoin_leverage INTEGER DEFAULT 5,
 				trading_symbols TEXT DEFAULT '',
@@ -748,6 +752,7 @@ func (d *Database) createTgTradersTable() error {
 				initial_balance REAL NOT NULL,
 				scan_interval_minutes INTEGER DEFAULT 3,
 				is_running BOOLEAN DEFAULT 0,
+				is_configured BOOLEAN DEFAULT 0,
 				btc_eth_leverage INTEGER DEFAULT 5,
 				altcoin_leverage INTEGER DEFAULT 5,
 				trading_symbols TEXT DEFAULT '',
@@ -1078,6 +1083,7 @@ type TgTraderRecord struct {
 	InitialBalance       float64   `json:"initial_balance"`
 	ScanIntervalMinutes  int       `json:"scan_interval_minutes"`
 	IsRunning            bool      `json:"is_running"`
+	IsConfigured         bool      `json:"is_configured"`
 	BTCETHLeverage       int       `json:"btc_eth_leverage"`
 	AltcoinLeverage      int       `json:"altcoin_leverage"`
 	TradingSymbols       string    `json:"trading_symbols"`
@@ -2830,19 +2836,19 @@ func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) 
 		query := `
 			INSERT INTO tg_traders (
 				id, tg_user_id, name, ai_model_id, ai_model_name, exchange_id,
-				initial_balance, scan_interval_minutes, is_running,
+				initial_balance, scan_interval_minutes, is_running, is_configured,
 				btc_eth_leverage, altcoin_leverage, trading_symbols,
 				use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				is_cross_margin, use_default_coins, custom_coins,
 				system_prompt_template, ai_model_api_key, ai_model_api_url,
 				private_key, wallet_address, created_at, updated_at
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW(), NOW()
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), NOW()
 			)`
 		_, err := d.db.Exec(query,
 			traderRecord.ID, traderRecord.TgUserID, traderRecord.Name, traderRecord.AIModelID, traderRecord.AIModelName,
 			traderRecord.ExchangeID, traderRecord.InitialBalance, traderRecord.ScanIntervalMinutes,
-			traderRecord.IsRunning, traderRecord.BTCETHLeverage, traderRecord.AltcoinLeverage,
+			traderRecord.IsRunning, traderRecord.IsConfigured, traderRecord.BTCETHLeverage, traderRecord.AltcoinLeverage,
 			traderRecord.TradingSymbols, traderRecord.UseCoinPool, traderRecord.UseOITop,
 			traderRecord.CustomPrompt, traderRecord.OverrideBasePrompt, traderRecord.IsCrossMargin,
 			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.SystemPromptTemplate,
@@ -2854,19 +2860,19 @@ func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) 
 		query := `
 			INSERT INTO tg_traders (
 				id, tg_user_id, name, ai_model_id, ai_model_name, exchange_id,
-				initial_balance, scan_interval_minutes, is_running,
+				initial_balance, scan_interval_minutes, is_running, is_configured,
 				btc_eth_leverage, altcoin_leverage, trading_symbols,
 				use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				is_cross_margin, use_default_coins, custom_coins,
 				system_prompt_template, ai_model_api_key, ai_model_api_url,
 				private_key, wallet_address, created_at, updated_at
 			) VALUES (
-				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 			)`
 		_, err := d.db.Exec(query,
 			traderRecord.ID, traderRecord.TgUserID, traderRecord.Name, traderRecord.AIModelID, traderRecord.AIModelName,
 			traderRecord.ExchangeID, traderRecord.InitialBalance, traderRecord.ScanIntervalMinutes,
-			traderRecord.IsRunning, traderRecord.BTCETHLeverage, traderRecord.AltcoinLeverage,
+			traderRecord.IsRunning, traderRecord.IsConfigured, traderRecord.BTCETHLeverage, traderRecord.AltcoinLeverage,
 			traderRecord.TradingSymbols, traderRecord.UseCoinPool, traderRecord.UseOITop,
 			traderRecord.CustomPrompt, traderRecord.OverrideBasePrompt, traderRecord.IsCrossMargin,
 			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.SystemPromptTemplate,
@@ -2883,7 +2889,7 @@ func (d *Database) GetTgTraders(tgUserID int64) ([]TgTraderRecord, error) {
 	if d.usePostgreSQL {
 		query = `
 			SELECT id, tg_user_id, name, ai_model_id, COALESCE(ai_model_name, '') AS ai_model_name, exchange_id,
-				   initial_balance, scan_interval_minutes, is_running,
+				   initial_balance, scan_interval_minutes, is_running, is_configured,
 				   btc_eth_leverage, altcoin_leverage, trading_symbols,
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
@@ -2900,7 +2906,7 @@ func (d *Database) GetTgTraders(tgUserID int64) ([]TgTraderRecord, error) {
 	} else {
 		query = `
 			SELECT id, tg_user_id, name, ai_model_id, COALESCE(ai_model_name, '') AS ai_model_name, exchange_id,
-				   initial_balance, scan_interval_minutes, is_running,
+				   initial_balance, scan_interval_minutes, is_running, is_configured,
 				   btc_eth_leverage, altcoin_leverage, trading_symbols,
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
@@ -2928,7 +2934,7 @@ func (d *Database) GetTgTraders(tgUserID int64) ([]TgTraderRecord, error) {
 		err := rows.Scan(
 			&trader.ID, &trader.TgUserID, &trader.Name, &trader.AIModelID, &trader.AIModelName,
 			&trader.ExchangeID, &trader.InitialBalance, &trader.ScanIntervalMinutes,
-			&trader.IsRunning, &trader.BTCETHLeverage, &trader.AltcoinLeverage,
+			&trader.IsRunning, &trader.IsConfigured, &trader.BTCETHLeverage, &trader.AltcoinLeverage,
 			&trader.TradingSymbols, &trader.UseCoinPool, &trader.UseOITop,
 			&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.IsCrossMargin,
 			&trader.UseDefaultCoins, &trader.CustomCoins, &trader.SystemPromptTemplate,
@@ -3082,6 +3088,135 @@ func (d *Database) UpdateTgTraderAPIConfig(tgUserID int64, traderID string, aiMo
 	return nil
 }
 
+// UpdateTgTraderConfig 根据配置向导结果更新交易员完整配置
+func (d *Database) UpdateTgTraderConfig(tgUserID int64, traderID string, traderRecord *TgTraderRecord) error {
+	encryptedAPIKey, err := d.encryptSecretValue(traderRecord.AIModelAPIKey)
+	if err != nil {
+		log.Printf("🚨 CRITICAL: 无法加密AI模型API密钥，配置将不被更新: %v", err)
+		return fmt.Errorf("无法加密AI模型API密钥: %w", err)
+	}
+
+	var query string
+	var args []interface{}
+
+	if d.usePostgreSQL {
+		query = `
+			UPDATE tg_traders
+			SET name = $1,
+				ai_model_id = $2,
+				ai_model_name = $3,
+				exchange_id = $4,
+				initial_balance = $5,
+				scan_interval_minutes = $6,
+				btc_eth_leverage = $7,
+				altcoin_leverage = $8,
+				trading_symbols = $9,
+				use_coin_pool = $10,
+				use_oi_top = $11,
+				custom_prompt = $12,
+				override_base_prompt = $13,
+				is_cross_margin = $14,
+				use_default_coins = $15,
+				custom_coins = $16,
+				system_prompt_template = $17,
+				ai_model_api_key = $18,
+				ai_model_api_url = $19,
+				is_configured = $20,
+				updated_at = NOW()
+			WHERE tg_user_id = $21 AND id = $22
+		`
+		args = []interface{}{
+			traderRecord.Name,
+			traderRecord.AIModelID,
+			traderRecord.AIModelName,
+			traderRecord.ExchangeID,
+			traderRecord.InitialBalance,
+			traderRecord.ScanIntervalMinutes,
+			traderRecord.BTCETHLeverage,
+			traderRecord.AltcoinLeverage,
+			traderRecord.TradingSymbols,
+			traderRecord.UseCoinPool,
+			traderRecord.UseOITop,
+			traderRecord.CustomPrompt,
+			traderRecord.OverrideBasePrompt,
+			traderRecord.IsCrossMargin,
+			traderRecord.UseDefaultCoins,
+			traderRecord.CustomCoins,
+			traderRecord.SystemPromptTemplate,
+			encryptedAPIKey,
+			traderRecord.AIModelAPIURL,
+			traderRecord.IsConfigured,
+			tgUserID,
+			traderID,
+		}
+	} else {
+		query = `
+			UPDATE tg_traders
+			SET name = ?,
+				ai_model_id = ?,
+				ai_model_name = ?,
+				exchange_id = ?,
+				initial_balance = ?,
+				scan_interval_minutes = ?,
+				btc_eth_leverage = ?,
+				altcoin_leverage = ?,
+				trading_symbols = ?,
+				use_coin_pool = ?,
+				use_oi_top = ?,
+				custom_prompt = ?,
+				override_base_prompt = ?,
+				is_cross_margin = ?,
+				use_default_coins = ?,
+				custom_coins = ?,
+				system_prompt_template = ?,
+				ai_model_api_key = ?,
+				ai_model_api_url = ?,
+				is_configured = ?,
+				updated_at = CURRENT_TIMESTAMP
+			WHERE tg_user_id = ? AND id = ?
+		`
+		args = []interface{}{
+			traderRecord.Name,
+			traderRecord.AIModelID,
+			traderRecord.AIModelName,
+			traderRecord.ExchangeID,
+			traderRecord.InitialBalance,
+			traderRecord.ScanIntervalMinutes,
+			traderRecord.BTCETHLeverage,
+			traderRecord.AltcoinLeverage,
+			traderRecord.TradingSymbols,
+			traderRecord.UseCoinPool,
+			traderRecord.UseOITop,
+			traderRecord.CustomPrompt,
+			traderRecord.OverrideBasePrompt,
+			traderRecord.IsCrossMargin,
+			traderRecord.UseDefaultCoins,
+			traderRecord.CustomCoins,
+			traderRecord.SystemPromptTemplate,
+			encryptedAPIKey,
+			traderRecord.AIModelAPIURL,
+			traderRecord.IsConfigured,
+			tgUserID,
+			traderID,
+		}
+	}
+
+	result, err := d.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("更新TG交易员配置失败: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("获取影响行数失败: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("未找到匹配的TG交易员记录")
+	}
+
+	return nil
+}
+
 // DeleteTgTrader 删除TG交易员
 func (d *Database) DeleteTgTrader(tgUserID int64, traderID string) error {
 	var query string
@@ -3168,11 +3303,11 @@ func (d *Database) GetTgTraderConfig(tgUserID int64, traderID string) (*TgTrader
 	}
 
 	decryptedAPIKey, err := d.decryptSecretValue(trader.AIModelAPIKey)
-		if err != nil {
-			log.Printf("🚨 CRITICAL: 无法解密AI模型API密钥: %v", err)
-			return nil, fmt.Errorf("无法解密AI模型API密钥: %w", err)
-		}
-		trader.AIModelAPIKey = decryptedAPIKey
+	if err != nil {
+		log.Printf("🚨 CRITICAL: 无法解密AI模型API密钥: %v", err)
+		return nil, fmt.Errorf("无法解密AI模型API密钥: %w", err)
+	}
+	trader.AIModelAPIKey = decryptedAPIKey
 	decryptedPrivateKey, err := d.decryptSecretValue(trader.PrivateKey)
 	if err != nil {
 		log.Printf("🚨 CRITICAL: 无法解密私钥: %v", err)
