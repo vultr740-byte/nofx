@@ -128,6 +128,10 @@ func (s *ArbitrumService) SendGas(privateKeyHex, toAddress string, amountWei *bi
 	if err != nil {
 		feeCap = big.NewInt(13_500_000) // 0.0135 gwei
 	}
+	baseFee, err := s.client.SuggestGasPrice(ctx)
+	if err == nil && feeCap.Cmp(baseFee) <= 0 {
+		feeCap = baseFee
+	}
 
 	toAddr := common.HexToAddress(toAddress)
 	tx := types.NewTx(&types.DynamicFeeTx{
@@ -179,6 +183,10 @@ func (s *ArbitrumService) TransferUSDC(privateKeyHex string, amount *big.Int) (s
 	feeCap, err := s.client.SuggestGasPrice(ctx)
 	if err != nil {
 		feeCap = big.NewInt(13_500_000)
+	}
+	baseFee, err := s.client.SuggestGasPrice(ctx)
+	if err == nil && feeCap.Cmp(baseFee) < 0 {
+		feeCap = baseFee
 	}
 
 	data, err := s.erc20ABI.Pack("transfer", s.bridgeAddr, amount)
@@ -240,18 +248,7 @@ func parsePrivateKey(hexKey string) (*ecdsa.PrivateKey, common.Address, error) {
 	return privKey, addr, nil
 }
 
-// CalcWeiFromETH converts an ETH float value to Wei as big.Int
-func CalcWeiFromETH(amount float64) *big.Int {
-	if amount <= 0 {
-		return big.NewInt(0)
-	}
-	f := new(big.Float).SetFloat64(amount)
-	weiFactor := new(big.Float).SetFloat64(1e18)
-	value := new(big.Float).Mul(f, weiFactor)
-	wei := new(big.Int)
-	value.Int(wei)
-	return wei
-}
+// EstimateUSDCTransferCost roughly calculates gas cost for a transfer
 func (s *ArbitrumService) EstimateUSDCTransferCost(fromAddress string, amount *big.Int) (*big.Int, error) {
 	if amount == nil || amount.Sign() <= 0 {
 		return nil, fmt.Errorf("USDC 金额无效")
@@ -263,6 +260,11 @@ func (s *ArbitrumService) EstimateUSDCTransferCost(fromAddress string, amount *b
 	feeCap, err := s.client.SuggestGasPrice(ctx)
 	if err != nil {
 		feeCap = big.NewInt(13_500_000)
+	}
+
+	baseFee, err := s.client.SuggestGasPrice(ctx)
+	if err == nil && feeCap.Cmp(baseFee) < 0 {
+		feeCap = baseFee
 	}
 
 	data, err := s.erc20ABI.Pack("transfer", s.bridgeAddr, amount)
@@ -284,4 +286,17 @@ func (s *ArbitrumService) EstimateUSDCTransferCost(fromAddress string, amount *b
 
 	gasCost := new(big.Int).Mul(feeCap, big.NewInt(int64(gasLimit)))
 	return gasCost, nil
+}
+
+// CalcWeiFromETH converts an ETH float value to Wei as big.Int
+func CalcWeiFromETH(amount float64) *big.Int {
+	if amount <= 0 {
+		return big.NewInt(0)
+	}
+	f := new(big.Float).SetFloat64(amount)
+	weiFactor := new(big.Float).SetFloat64(1e18)
+	value := new(big.Float).Mul(f, weiFactor)
+	wei := new(big.Int)
+	value.Int(wei)
+	return wei
 }
