@@ -122,11 +122,11 @@ func (s *ArbitrumService) SendGas(privateKeyHex, toAddress string, amountWei *bi
 
 	tipCap, err := s.client.SuggestGasTipCap(ctx)
 	if err != nil {
-		tipCap = big.NewInt(1e9) // 1 gwei
+		tipCap = big.NewInt(10_000_000) // 0.01 gwei
 	}
 	feeCap, err := s.client.SuggestGasPrice(ctx)
 	if err != nil {
-		feeCap = big.NewInt(2e9)
+		feeCap = big.NewInt(13_500_000) // 0.0135 gwei
 	}
 
 	toAddr := common.HexToAddress(toAddress)
@@ -174,11 +174,11 @@ func (s *ArbitrumService) TransferUSDC(privateKeyHex string, amount *big.Int) (s
 
 	tipCap, err := s.client.SuggestGasTipCap(ctx)
 	if err != nil {
-		tipCap = big.NewInt(1e9)
+		tipCap = big.NewInt(10_000_000)
 	}
 	feeCap, err := s.client.SuggestGasPrice(ctx)
 	if err != nil {
-		feeCap = new(big.Int).Add(tipCap, big.NewInt(1e9))
+		feeCap = big.NewInt(13_500_000)
 	}
 
 	data, err := s.erc20ABI.Pack("transfer", s.bridgeAddr, amount)
@@ -191,8 +191,19 @@ func (s *ArbitrumService) TransferUSDC(privateKeyHex string, amount *big.Int) (s
 		To:   &s.usdcAddress,
 		Data: data,
 	})
-	if err != nil || gasLimit < 80000 {
-		gasLimit = 120000
+	if err != nil || gasLimit == 0 {
+		gasLimit = 60000
+	} else {
+		gasLimit += gasLimit / 5 // add ~20% safety buffer
+	}
+
+	gasCost := new(big.Int).Mul(feeCap, big.NewInt(int64(gasLimit)))
+	balance, err := s.client.BalanceAt(ctx, fromAddr, nil)
+	if err != nil {
+		return "", fmt.Errorf("查询 ETH 余额失败: %w", err)
+	}
+	if balance.Cmp(gasCost) < 0 {
+		return "", fmt.Errorf("账户 ETH 不足，需至少 %s wei，当前 %s wei", gasCost.String(), balance.String())
 	}
 
 	tx := types.NewTx(&types.DynamicFeeTx{
@@ -240,4 +251,37 @@ func CalcWeiFromETH(amount float64) *big.Int {
 	wei := new(big.Int)
 	value.Int(wei)
 	return wei
+}
+func (s *ArbitrumService) EstimateUSDCTransferCost(fromAddress string, amount *big.Int) (*big.Int, error) {
+	if amount == nil || amount.Sign() <= 0 {
+		return nil, fmt.Errorf("USDC 金额无效")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), s.callTimeout)
+	defer cancel()
+
+	feeCap, err := s.client.SuggestGasPrice(ctx)
+	if err != nil {
+		feeCap = big.NewInt(13_500_000)
+	}
+
+	data, err := s.erc20ABI.Pack("transfer", s.bridgeAddr, amount)
+	if err != nil {
+		return nil, fmt.Errorf("编码 transfer 调用失败: %w", err)
+	}
+
+	fromAddr := common.HexToAddress(fromAddress)
+	gasLimit, err := s.client.EstimateGas(ctx, ethereum.CallMsg{
+		From: fromAddr,
+		To:   &s.usdcAddress,
+		Data: data,
+	})
+	if err != nil || gasLimit == 0 {
+		gasLimit = 60000
+	} else {
+		gasLimit += gasLimit / 5
+	}
+
+	gasCost := new(big.Int).Mul(feeCap, big.NewInt(int64(gasLimit)))
+	return gasCost, nil
 }

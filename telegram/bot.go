@@ -923,9 +923,9 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 		log.Printf("⚠️ 查询 Gas 赞助记录失败: %v", err)
 	}
 
-	requiredEth := tbm.gasSponsorWei
-	if requiredEth == nil {
-		requiredEth = big.NewInt(0)
+	requiredEth := big.NewInt(0)
+	if tbm.gasSponsorWei != nil {
+		requiredEth.Set(tbm.gasSponsorWei)
 	}
 
 	if record == nil {
@@ -953,6 +953,17 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 		record.USDCAmount = targetUSDC.String()
 		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, "", "", "", record.USDCAmount)
 	}
+
+	gasCost, err := tbm.arbService.EstimateUSDCTransferCost(walletAddr, targetUSDC)
+	if err != nil {
+		log.Printf("⚠️ 估算 USDC 充值 Gas 失败: %v", err)
+		return
+	}
+	if gasCost.Cmp(requiredEth) > 0 {
+		requiredEth = gasCost
+	}
+	record.AmountWei = requiredEth.String()
+	_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, "", "", "", record.AmountWei)
 
 	if record.Status == gasStatusProcessing && requiredEth.Sign() > 0 && strings.TrimSpace(tbm.gasSponsorKey) == "" {
 		log.Printf("⚠️ 检测到 USDC>=20 但未配置 Gas 赞助账户")
@@ -993,7 +1004,7 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 			record.GasTxHash = txHash
 			record.Status = gasStatusGasSent
 			_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusGasSent, txHash, "", "")
-			tbm.sendMessage(chatID, fmt.Sprintf("⛽ 已赞助 %s ETH 用于 Gas，交易哈希: <code>%s</code>", esc(formatETH(requiredEth)), esc(shortTxHash(txHash))))
+			tbm.sendMessage(chatID, fmt.Sprintf("⛽ 已赞助 %s ETH 用于 Gas，交易哈希: <code>%s</code>", esc(formatETH(requiredEth)), esc(txHash)))
 
 			time.Sleep(15 * time.Second)
 			ethBal, err = tbm.arbService.GetETHBalance(walletAddr)
@@ -1027,7 +1038,7 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 	}
 
 	_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusCompleted, "", txHash, "")
-	tbm.sendMessage(chatID, fmt.Sprintf("💸 已检测到 %s USDC，自动充值至 Hyperliquid。\\nTx: <code>%s</code>", esc(formatUSDC(targetUSDC)), esc(shortTxHash(txHash))))
+	tbm.sendMessage(chatID, fmt.Sprintf("💸 已检测到 %s USDC，自动充值至 Hyperliquid。\\nTx: <code>%s</code>", esc(formatUSDC(targetUSDC)), esc(txHash)))
 }
 
 func (tbm *TelegramBotManager) startAPIKeyUpdate(chatID int64, telegramID int64) bool {
@@ -1098,13 +1109,6 @@ func formatETH(amount *big.Int) string {
 	f := new(big.Rat).SetFrac(amount, big.NewInt(1_000_000_000_000_000_000))
 	floatVal, _ := f.Float64()
 	return fmt.Sprintf("%.8f", floatVal)
-}
-
-func shortTxHash(hash string) string {
-	if len(hash) <= 10 {
-		return hash
-	}
-	return fmt.Sprintf("%s…%s", hash[:6], hash[len(hash)-4:])
 }
 
 func stringToBig(value string) *big.Int {
