@@ -262,7 +262,6 @@ func (tbm *TelegramBotManager) handleHelp(update tgbotapi.Update) {
 Agent Key 仅用于交易操作
 
 💡 提示: 每个用户自动创建一个 Agent`, esc(firstName))
-
 	tbm.sendMessage(chatID, helpMsg)
 }
 
