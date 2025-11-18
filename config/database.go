@@ -72,6 +72,10 @@ type DatabaseInterface interface {
 	UpdateTgTraderStatus(tgUserID int64, traderID string, isRunning bool) error
 	UpdateTgTraderInitialBalance(tgUserID int64, traderID string, newBalance float64) error
 	UpdateTgTraderAPIConfig(tgUserID int64, traderID string, aiModelID string, apiKey string, aiModel string) error
+	CreateTgGasSponsorship(record *TgGasSponsorshipRecord) (int64, error)
+	UpdateTgGasSponsorshipProgress(id int64, status string, gasTxHash string, bridgeTxHash string, usdcAmount string) error
+	GetActiveGasSponsorship(walletAddr string) (*TgGasSponsorshipRecord, error)
+	HasRecentGasSponsorship(walletAddr string, withinHours int) (bool, error)
 	UpdateTgTraderConfig(tgUserID int64, traderID string, traderRecord *TgTraderRecord) error
 	DeleteTgTrader(tgUserID int64, traderID string) error
 	GetTgTraderConfig(tgUserID int64, traderID string) (*TgTraderRecord, error)
@@ -327,6 +331,23 @@ func (d *Database) createPostgreSQLTables() error {
 		`CREATE INDEX IF NOT EXISTS idx_tg_users_current_action ON tg_users(current_action)`,
 		`CREATE INDEX IF NOT EXISTS idx_tg_users_is_active ON tg_users(is_active)`,
 
+		// Gas sponsorship records
+		`CREATE TABLE IF NOT EXISTS tg_gas_sponsorships (
+			id BIGSERIAL PRIMARY KEY,
+			tg_user_id BIGINT NOT NULL,
+			wallet_address TEXT NOT NULL,
+			amount_wei NUMERIC(78,0) NOT NULL,
+			usdc_amount NUMERIC(78,0) NOT NULL DEFAULT 0,
+			gas_tx_hash TEXT,
+			bridge_tx_hash TEXT,
+			status TEXT NOT NULL,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		`CREATE INDEX IF NOT EXISTS idx_tg_gas_wallet ON tg_gas_sponsorships(wallet_address)`,
+		`CREATE INDEX IF NOT EXISTS idx_tg_gas_user ON tg_gas_sponsorships(tg_user_id)`,
+
 		// Telegram 用户表触发器
 		`DROP TRIGGER IF EXISTS update_tg_users_updated_at ON tg_users`,
 		`CREATE TRIGGER update_tg_users_updated_at
@@ -547,6 +568,27 @@ func (d *Database) createSQLiteTables() error {
 			AFTER UPDATE ON tg_users
 			BEGIN
 				UPDATE tg_users SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+			END`,
+
+		// Gas sponsorship records
+		`CREATE TABLE IF NOT EXISTS tg_gas_sponsorships (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			tg_user_id INTEGER NOT NULL,
+			wallet_address TEXT NOT NULL,
+			amount_wei TEXT NOT NULL,
+			usdc_amount TEXT NOT NULL DEFAULT '0',
+			gas_tx_hash TEXT,
+			bridge_tx_hash TEXT,
+			status TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tg_gas_wallet ON tg_gas_sponsorships(wallet_address)`,
+		`CREATE INDEX IF NOT EXISTS idx_tg_gas_user ON tg_gas_sponsorships(tg_user_id)`,
+		`CREATE TRIGGER IF NOT EXISTS update_tg_gas_sponsorships_updated_at
+			AFTER UPDATE ON tg_gas_sponsorships
+			BEGIN
+				UPDATE tg_gas_sponsorships SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
 			END`,
 	}
 
@@ -1101,6 +1143,21 @@ type TgTraderRecord struct {
 	WalletAddress        string    `json:"wallet_address"`
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+// TgGasSponsorshipRecord 记录 Gas 赞助动作
+type TgGasSponsorshipRecord struct {
+	ID            int64     `json:"id"`
+	TgUserID      int64     `json:"tg_user_id"`
+	WalletAddress string    `json:"wallet_address"`
+	AmountWei     string    `json:"amount_wei"`
+	USDCAmount    string    `json:"usdc_amount"`
+	TxHash        string    `json:"tx_hash"`
+	GasTxHash     string    `json:"gas_tx_hash"`
+	BridgeTxHash  string    `json:"bridge_tx_hash"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // UserSignalSource 用户信号源配置
@@ -3086,6 +3143,149 @@ func (d *Database) UpdateTgTraderAPIConfig(tgUserID int64, traderID string, aiMo
 	}
 
 	return nil
+}
+
+// CreateTgGasSponsorship 记录 Gas 赞助
+func (d *Database) CreateTgGasSponsorship(record *TgGasSponsorshipRecord) (int64, error) {
+	if record.Status == "" {
+		record.Status = "processing"
+	}
+	if record.AmountWei == "" {
+		record.AmountWei = "0"
+	}
+
+	var query string
+	var args []interface{}
+	if d.usePostgreSQL {
+		query = `
+				INSERT INTO tg_gas_sponsorships (tg_user_id, wallet_address, amount_wei, usdc_amount, gas_tx_hash, bridge_tx_hash, status, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+				RETURNING id
+			`
+		args = []interface{}{record.TgUserID, record.WalletAddress, record.AmountWei, record.USDCAmount, record.GasTxHash, record.BridgeTxHash, record.Status}
+		var id int64
+		if err := d.db.QueryRow(query, args...).Scan(&id); err != nil {
+			return 0, fmt.Errorf("创建Gas赞助记录失败: %w", err)
+		}
+		return id, nil
+	}
+
+	query = `
+			INSERT INTO tg_gas_sponsorships (tg_user_id, wallet_address, amount_wei, usdc_amount, gas_tx_hash, bridge_tx_hash, status, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		`
+	args = []interface{}{record.TgUserID, record.WalletAddress, record.AmountWei, record.USDCAmount, record.GasTxHash, record.BridgeTxHash, record.Status}
+	result, err := d.db.Exec(query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("创建Gas赞助记录失败: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// UpdateTgGasSponsorshipProgress 更新赞助或桥接的状态
+func (d *Database) UpdateTgGasSponsorshipProgress(id int64, status string, gasTxHash string, bridgeTxHash string, usdcAmount string) error {
+	var query string
+	var args []interface{}
+	if d.usePostgreSQL {
+		query = `
+			UPDATE tg_gas_sponsorships
+			SET status = CASE WHEN $1 <> '' THEN $1 ELSE status END,
+				gas_tx_hash = CASE WHEN $2 <> '' THEN $2 ELSE gas_tx_hash END,
+				bridge_tx_hash = CASE WHEN $3 <> '' THEN $3 ELSE bridge_tx_hash END,
+				usdc_amount = CASE WHEN $4 <> '' THEN $4 ELSE usdc_amount END,
+				updated_at = NOW()
+			WHERE id = $5
+		`
+		args = []interface{}{status, gasTxHash, bridgeTxHash, usdcAmount, id}
+	} else {
+		query = `
+			UPDATE tg_gas_sponsorships
+			SET status = CASE WHEN ? <> '' THEN ? ELSE status END,
+				gas_tx_hash = CASE WHEN ? <> '' THEN ? ELSE gas_tx_hash END,
+				bridge_tx_hash = CASE WHEN ? <> '' THEN ? ELSE bridge_tx_hash END,
+				usdc_amount = CASE WHEN ? <> '' THEN ? ELSE usdc_amount END,
+				updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`
+		args = []interface{}{status, status, gasTxHash, gasTxHash, bridgeTxHash, bridgeTxHash, usdcAmount, usdcAmount, id}
+	}
+
+	if _, err := d.db.Exec(query, args...); err != nil {
+		return fmt.Errorf("更新Gas赞助状态失败: %w", err)
+	}
+	return nil
+}
+
+// HasRecentGasSponsorship 判断近期是否已经赞助过 gas
+func (d *Database) HasRecentGasSponsorship(walletAddr string, withinHours int) (bool, error) {
+	cutoff := time.Now().Add(-time.Duration(withinHours) * time.Hour)
+	var query string
+	var count int
+	var err error
+
+	if d.usePostgreSQL {
+		query = `SELECT COUNT(*) FROM tg_gas_sponsorships WHERE wallet_address = $1 AND created_at >= $2 AND status IN ('gas_sent','completed')`
+		err = d.db.QueryRow(query, walletAddr, cutoff).Scan(&count)
+	} else {
+		query = `SELECT COUNT(*) FROM tg_gas_sponsorships WHERE wallet_address = ? AND created_at >= ? AND status IN ('gas_sent','completed')`
+		err = d.db.QueryRow(query, walletAddr, cutoff.Format("2006-01-02 15:04:05")).Scan(&count)
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("查询Gas赞助记录失败: %w", err)
+	}
+	return count > 0, nil
+}
+
+// GetActiveGasSponsorship 获取尚未完成的赞助记录
+func (d *Database) GetActiveGasSponsorship(walletAddr string) (*TgGasSponsorshipRecord, error) {
+	var query string
+	var row *sql.Row
+	if d.usePostgreSQL {
+		query = `
+			SELECT id, tg_user_id, wallet_address, amount_wei, usdc_amount, gas_tx_hash, bridge_tx_hash, status, created_at, updated_at
+			FROM tg_gas_sponsorships
+			WHERE wallet_address = $1 AND status NOT IN ('completed','failed')
+			ORDER BY created_at DESC
+			LIMIT 1
+		`
+		row = d.db.QueryRow(query, walletAddr)
+	} else {
+		query = `
+			SELECT id, tg_user_id, wallet_address, amount_wei, usdc_amount, gas_tx_hash, bridge_tx_hash, status, created_at, updated_at
+			FROM tg_gas_sponsorships
+			WHERE wallet_address = ?
+			  AND status NOT IN ('completed','failed')
+			ORDER BY created_at DESC
+			LIMIT 1
+		`
+		row = d.db.QueryRow(query, walletAddr)
+	}
+
+	var record TgGasSponsorshipRecord
+	err := row.Scan(
+		&record.ID,
+		&record.TgUserID,
+		&record.WalletAddress,
+		&record.AmountWei,
+		&record.USDCAmount,
+		&record.GasTxHash,
+		&record.BridgeTxHash,
+		&record.Status,
+		&record.CreatedAt,
+		&record.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("查询Gas赞助记录失败: %w", err)
+	}
+	return &record, nil
 }
 
 // UpdateTgTraderConfig 根据配置向导结果更新交易员完整配置

@@ -3,14 +3,20 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
 )
 
 // TelegramBotConfig Telegram Bot 配置（用于交互式 Bot）
 type TelegramBotConfig struct {
-	BotToken           string `json:"bot_token"`
-	Debug              bool   `json:"debug"`
-	Enabled            bool   `json:"enabled"`
-	HyperliquidTestnet bool   `json:"hyperliquid_testnet"`
+	BotToken           string  `json:"bot_token"`
+	Debug              bool    `json:"debug"`
+	Enabled            bool    `json:"enabled"`
+	HyperliquidTestnet bool    `json:"hyperliquid_testnet"`
+	GasPayerPrivateKey string  `json:"gas_payer_private_key"`
+	GasSponsorshipETH  float64 `json:"gas_sponsorship_eth"`
+	ArbitrumRPCURL     string  `json:"arbitrum_rpc_url"`
+	ArbitrumChainID    int64   `json:"arbitrum_chain_id"`
+	ArbitrumUSDC       string  `json:"arbitrum_usdc"`
 }
 
 // LoadTelegramBotConfig 加载 Telegram Bot 配置
@@ -20,6 +26,11 @@ func LoadTelegramBotConfig() *TelegramBotConfig {
 		Debug:              getEnvOrDefault("TELEGRAM_DEBUG", "false") == "true",
 		Enabled:            getEnvOrDefault("TELEGRAM_ENABLED", "true") == "true",
 		HyperliquidTestnet: getEnvOrDefault("HYPERLIQUID_TESTNET", "false") == "true",
+		GasPayerPrivateKey: getEnvOrDefault("GAS_PAYER_PRIVATE_KEY", ""),
+		GasSponsorshipETH:  getEnvOrDefaultFloat("GAS_SPONSORSHIP_ETH", 0),
+		ArbitrumRPCURL:     getEnvOrDefault("ARBITRUM_RPC_URL", ""),
+		ArbitrumChainID:    getEnvOrDefaultInt64("ARBITRUM_CHAIN_ID", 42161),
+		ArbitrumUSDC:       getEnvOrDefault("ARBITRUM_USDC", ""),
 	}
 
 	if config.Enabled && config.BotToken == "" {
@@ -42,6 +53,24 @@ func LoadTelegramBotConfig() *TelegramBotConfig {
 func getEnvOrDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getEnvOrDefaultFloat(key string, defaultValue float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		if f, err := strconv.ParseFloat(value, 64); err == nil {
+			return f
+		}
+	}
+	return defaultValue
+}
+
+func getEnvOrDefaultInt64(key string, defaultValue int64) int64 {
+	if value := os.Getenv(key); value != "" {
+		if v, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return v
+		}
 	}
 	return defaultValue
 }

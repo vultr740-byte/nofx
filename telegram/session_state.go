@@ -10,20 +10,19 @@ import (
 type SessionState string
 
 const (
-	StateIdle               SessionState = "idle"                  // 空闲状态
-	StateCreatingTrader     SessionState = "creating_trader"       // 创建交易员中
-	StateChoosingPrompt     SessionState = "choosing_prompt"       // 选择提示词模板
-	StateChoosingAIModel    SessionState = "choosing_ai_model"     // 选择AI模型提供商
-	StateSettingAPIKey      SessionState = "setting_api_key"       // 设置 API KEY
-	StateUpdatingAIProvider SessionState = "updating_ai_provider"  // 更新 AI 提供商
-	StateUpdatingAPIKey     SessionState = "updating_api_key"      // 更新 API KEY
-	StateSettingAIModelName SessionState = "setting_ai_model_name" // 设置自定义模型名称
-	StateSettingBalance     SessionState = "setting_balance"       // 设置初始资金
-	StateSettingRisk        SessionState = "setting_risk"          // 设置风险级别
-	StateSettingLeverage    SessionState = "setting_leverage"      // 设置杠杆倍数
-	StateSettingInterval    SessionState = "setting_interval"      // 设置扫描间隔
-	StateConfirm            SessionState = "confirm"               // 确认配置
-	StateQuickSetup         SessionState = "quick_setup"           // 快速配置（选择风险级别）
+	StateIdle               SessionState = "idle"                 // 空闲状态
+	StateCreatingTrader     SessionState = "creating_trader"      // 创建交易员中
+	StateChoosingPrompt     SessionState = "choosing_prompt"      // 选择提示词模板
+	StateChoosingAIModel    SessionState = "choosing_ai_model"    // 选择AI模型提供商
+	StateSettingAPIKey      SessionState = "setting_api_key"      // 设置 API KEY
+	StateUpdatingAIProvider SessionState = "updating_ai_provider" // 更新 AI 提供商
+	StateUpdatingAPIKey     SessionState = "updating_api_key"     // 更新 API KEY
+	StateSettingBalance     SessionState = "setting_balance"      // 设置初始资金
+	StateSettingRisk        SessionState = "setting_risk"         // 设置风险级别
+	StateSettingLeverage    SessionState = "setting_leverage"     // 设置杠杆倍数
+	StateSettingInterval    SessionState = "setting_interval"     // 设置扫描间隔
+	StateConfirm            SessionState = "confirm"              // 确认配置
+	StateQuickSetup         SessionState = "quick_setup"          // 快速配置（选择风险级别）
 )
 
 // PromptTemplate 提示词模板配置
@@ -160,6 +159,20 @@ func (sm *SessionManager) CleanupExpiredSessions() {
 			delete(sm.sessions, telegramID)
 		}
 	}
+}
+
+// GetSessionStateOnly 获取当前会话状态（不过期返回StateIdle）
+func (sm *SessionManager) GetSessionStateOnly(telegramID int64) SessionState {
+	sm.mutex.RLock()
+	defer sm.mutex.RUnlock()
+
+	if session, exists := sm.sessions[telegramID]; exists {
+		if session.isExpired() {
+			return StateIdle
+		}
+		return session.State
+	}
+	return StateIdle
 }
 
 // isExpired 检查会话是否过期

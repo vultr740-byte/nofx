@@ -348,7 +348,7 @@ func main() {
 	var telegramBot *telegram.TelegramBotManager
 	if telegramConfig.Enabled {
 		var err error
-		telegramBot, err = telegram.NewTelegramBotManager(telegramConfig.BotToken, database, telegramConfig.Debug, telegramConfig.HyperliquidTestnet, traderManager)
+		telegramBot, err = telegram.NewTelegramBotManager(telegramConfig, database, traderManager)
 		if err != nil {
 			log.Printf("❌ Telegram Bot 初始化失败: %v", err)
 		} else {

@@ -9,7 +9,7 @@ NOFX Telegram Bot 是一个基于 Telegram 的 Hyperliquid 交易机器人，提
 - **🚀 自动创建账号**: 使用 `/start` 命令自动生成 Hyperliquid 账号
 - **💰 余额查询**: 使用 `/balance` 查看现货和合约余额
 - **📊 持仓查询**: 使用 `/positions` 查看当前持仓信息
-- **🔑 动态配置 AI 密钥**: 使用 `/set_api_key` 即时更换大模型 API KEY
+- **🔑 动态配置 AI 密钥**: 在 `/settings` 中更新 AI API KEY
 - **💳 充值地址**: 使用 `/deposit` 获取 USDC 充值地址
 - **🔒 安全可靠**: 使用 Agent Wallet 模式，保障资金安全
 
@@ -56,7 +56,6 @@ docker compose up -d
 | `/positions` | 持仓查询 | 查看当前持仓信息 |
 | `/deposit` | 充值地址 | 获取 USDC 充值地址 |
 | `/settings` | ⚙️ 设置 | 导出 Agent 私钥等操作 |
-| `/set_api_key` | 配置 AI 密钥 | 切换 DeepSeek/Qwen 并更新 API KEY |
 
 ### 使用流程
 

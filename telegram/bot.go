@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"math/big"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,15 +18,18 @@ import (
 
 // TelegramBotManager Telegram Bot 管理器
 type TelegramBotManager struct {
-	bot          *tgbotapi.BotAPI
-	db           config.DatabaseInterface
-	hlService    *HyperliquidService
-	debug        bool
-	testnet      bool
-	traderMgr    *manager.TraderManager
-	tgTraderMgr  *TelegramTraderManager
-	configWizard *ConfigWizard
-	debugMu      sync.Mutex
+	bot           *tgbotapi.BotAPI
+	db            config.DatabaseInterface
+	hlService     *HyperliquidService
+	arbService    *ArbitrumService
+	debug         bool
+	testnet       bool
+	traderMgr     *manager.TraderManager
+	tgTraderMgr   *TelegramTraderManager
+	configWizard  *ConfigWizard
+	debugMu       sync.Mutex
+	gasSponsorKey string
+	gasSponsorWei *big.Int
 }
 
 func esc(v interface{}) string {
@@ -35,6 +39,17 @@ func esc(v interface{}) string {
 const (
 	telegramMessageChunkSize = 3500
 	decisionJSONMarker       = "📋 决策JSON"
+	hyperliquidBridgeAddress = "0x2df1c51e09aecf9cacb7bc98cb1742757f163df7"
+	gasSponsorshipCooldown   = 6 * time.Hour
+)
+
+var minUSDCBridgeAmount = new(big.Int).Mul(big.NewInt(20), big.NewInt(1_000_000))
+
+const (
+	gasStatusProcessing = "processing"
+	gasStatusGasSent    = "gas_sent"
+	gasStatusCompleted  = "completed"
+	gasStatusFailed     = "failed"
 )
 
 type decisionChunk struct {
@@ -43,16 +58,16 @@ type decisionChunk struct {
 }
 
 // NewTelegramBotManager 创建 Telegram Bot 管理器
-func NewTelegramBotManager(token string, db config.DatabaseInterface, debug bool, testnet bool, traderMgr *manager.TraderManager) (*TelegramBotManager, error) {
-	bot, err := tgbotapi.NewBotAPI(token)
+func NewTelegramBotManager(cfg *config.TelegramBotConfig, db config.DatabaseInterface, traderMgr *manager.TraderManager) (*TelegramBotManager, error) {
+	bot, err := tgbotapi.NewBotAPI(cfg.BotToken)
 	if err != nil {
 		return nil, fmt.Errorf("创建 Telegram Bot 失败: %w", err)
 	}
 
-	bot.Debug = debug
+	bot.Debug = cfg.Debug
 
 	network := "主网"
-	if testnet {
+	if cfg.HyperliquidTestnet {
 		network = "测试网"
 	}
 	log.Printf("✅ Telegram Bot 初始化成功: %s (Hyperliquid: %s)", bot.Self.UserName, network)
@@ -62,14 +77,30 @@ func NewTelegramBotManager(token string, db config.DatabaseInterface, debug bool
 	configWizard := NewConfigWizard(tgTraderMgr)
 
 	tgBotMgr := &TelegramBotManager{
-		bot:          bot,
-		db:           db,
-		hlService:    NewHyperliquidService(),
-		debug:        debug,
-		testnet:      testnet,
-		traderMgr:    traderMgr,
-		tgTraderMgr:  tgTraderMgr,
-		configWizard: configWizard,
+		bot:           bot,
+		db:            db,
+		hlService:     NewHyperliquidService(),
+		debug:         cfg.Debug,
+		testnet:       cfg.HyperliquidTestnet,
+		traderMgr:     traderMgr,
+		tgTraderMgr:   tgTraderMgr,
+		configWizard:  configWizard,
+		gasSponsorKey: cfg.GasPayerPrivateKey,
+	}
+
+	if cfg.GasSponsorshipETH > 0 {
+		tgBotMgr.gasSponsorWei = CalcWeiFromETH(cfg.GasSponsorshipETH)
+	} else {
+		tgBotMgr.gasSponsorWei = big.NewInt(0)
+	}
+
+	if cfg.ArbitrumRPCURL != "" && cfg.ArbitrumUSDC != "" {
+		if arbService, err := NewArbitrumService(cfg.ArbitrumRPCURL, cfg.ArbitrumChainID, cfg.ArbitrumUSDC, hyperliquidBridgeAddress); err != nil {
+			log.Printf("⚠️ 初始化 Arbitrum 服务失败: %v", err)
+		} else {
+			tgBotMgr.arbService = arbService
+			log.Printf("🌉 已启用 Arbitrum 充值自动化 (RPC: %s)", cfg.ArbitrumRPCURL)
+		}
 	}
 
 	// 设置TelegramBotManager引用到TelegramTraderManager，用于推送决策
@@ -95,7 +126,11 @@ func (tbm *TelegramBotManager) Start() {
 
 	for update := range updates {
 		if update.Message != nil {
-			log.Printf("收到消息 [%s] %s", update.Message.From.UserName, update.Message.Text)
+			if tbm.isSensitiveInput(update.Message.From.ID) {
+				log.Printf("收到消息 [%s] [敏感输入已隐藏]", update.Message.From.UserName)
+			} else {
+				log.Printf("收到消息 [%s] %s", update.Message.From.UserName, update.Message.Text)
+			}
 			tbm.handleMessage(update)
 		} else if update.CallbackQuery != nil {
 			log.Printf("收到回调查询 [%s]", update.CallbackQuery.From.UserName)
@@ -147,8 +182,6 @@ func (tbm *TelegramBotManager) handleCommand(update tgbotapi.Update) {
 		tbm.handleStopTrader(update)
 	case "trader_status":
 		tbm.handleTraderStatus(update)
-	case "set_api_key":
-		tbm.handleSetAPIKey(update)
 	case "settings":
 		tbm.handleMenu(update)
 	default:
@@ -271,6 +304,11 @@ func (tbm *TelegramBotManager) handleBalance(update tgbotapi.Update) {
 
 	// 发送余额信息
 	tbm.sendMessage(chatID, balanceMsg)
+
+	// 自动充值逻辑
+	if tbm.arbService != nil {
+		go tbm.tryAutoBridge(telegramID, chatID, agentKey, walletAddr)
+	}
 }
 
 // handlePositions 处理 /positions 命令
@@ -376,7 +414,10 @@ func (tbm *TelegramBotManager) handleMenu(update tgbotapi.Update) {
 选择需要执行的操作：`
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📤 导出 Agent 私钥", fmt.Sprintf("menu_export|%d", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("🧠 更新 AI API KEY", fmt.Sprintf("menu_set_api|%d", telegramID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔑 导出 Agent 私钥", fmt.Sprintf("menu_export|%d", telegramID)),
 		),
 	)
 
@@ -416,57 +457,7 @@ func (tbm *TelegramBotManager) handleSetAPIKey(update tgbotapi.Update) {
 	chatID := update.Message.Chat.ID
 	telegramID := update.Message.From.ID
 
-	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
-		tbm.sendMessage(chatID, "❌ 请先使用 /start 与机器人建立连接")
-		return
-	}
-
-	trader, err := tbm.getPrimaryTrader(telegramID)
-	if err != nil {
-		tbm.sendMessage(chatID, "❌ 您还没有创建交易员，请先使用 /start 初始化账号")
-		return
-	}
-
-	if !trader.IsConfigured {
-		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /create_trader 完成设置")
-		return
-	}
-
-	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
-	sessionMgr.ClearSession(telegramID)
-
-	session := sessionMgr.GetOrCreateSession(telegramID)
-	provider := normalizeAIProvider(trader.AIModelID)
-	session.TraderConfig.AIProvider = provider
-	session.TraderConfig.AIModelAPIKey = trader.AIModelAPIKey
-	session.TraderConfig.AIModelAPIURL = trader.AIModelAPIURL
-	session.TraderConfig.AIModelName = trader.AIModelName
-	session.TraderConfig.Step = StateUpdatingAIProvider
-	sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
-	sessionMgr.UpdateSessionState(telegramID, StateUpdatingAIProvider)
-
-	providerName := aiProviderDisplayName(provider)
-	maskedKey := "未设置"
-	if trader.AIModelAPIKey != "" {
-		maskedKey = tbm.configWizard.maskAPIKey(trader.AIModelAPIKey)
-	}
-
-	message := fmt.Sprintf(`🔐 <b>更新 AI API KEY</b>
-
-当前交易员: %s
-当前模型: %s
-当前密钥: %s
-
-请选择要使用的大模型：
-1. DeepSeek（默认）
-2. Qwen / 通义千问
-
-点击下方按钮或回复 1 / 2，输入 "cancel" 可取消。`,
-		esc(trader.Name),
-		esc(providerName),
-		esc(maskedKey))
-
-	tbm.sendAIProviderSelectionMessage(chatID, message)
+	tbm.startAPIKeyUpdate(chatID, telegramID)
 }
 
 // handleAPIKeyUpdateFlow 处理 API KEY 更新输入
@@ -487,31 +478,14 @@ func (tbm *TelegramBotManager) handleAPIKeyUpdateFlow(update tgbotapi.Update, se
 	case StateUpdatingAIProvider:
 		if provider, ok := detectAIProviderFromInput(input); ok {
 			session.TraderConfig.AIProvider = provider
-			if strings.TrimSpace(session.TraderConfig.AIModelAPIURL) != "" {
-				session.TraderConfig.Step = StateSettingAIModelName
-				sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
-				sessionMgr.UpdateSessionState(telegramID, StateSettingAIModelName)
-				tbm.sendMessageRemovingKeyboard(chatID, tbm.getAIModelNameMessage())
-			} else {
-				session.TraderConfig.Step = StateUpdatingAPIKey
-				sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
-				sessionMgr.UpdateSessionState(telegramID, StateUpdatingAPIKey)
-				tbm.sendMessageRemovingKeyboard(chatID, tbm.configWizard.getAPIKeyMessage(provider))
-			}
+			session.TraderConfig.Step = StateUpdatingAPIKey
+			sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
+			sessionMgr.UpdateSessionState(telegramID, StateUpdatingAPIKey)
+			tbm.sendMessageRemovingKeyboard(chatID, tbm.configWizard.getAPIKeyMessage(provider))
 			return
 		}
 
 		tbm.sendAIProviderSelectionMessage(chatID, "❌ 无法识别的选项，请点击按钮选择 DeepSeek 或 Qwen，或输入 1 / 2。输入 \"cancel\" 可取消。")
-	case StateSettingAIModelName:
-		if strings.EqualFold(input, "skip") || input == "默认" || input == "default" || input == "" {
-			session.TraderConfig.AIModelName = ""
-		} else {
-			session.TraderConfig.AIModelName = input
-		}
-		session.TraderConfig.Step = StateUpdatingAPIKey
-		sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
-		sessionMgr.UpdateSessionState(telegramID, StateUpdatingAPIKey)
-		tbm.sendMessageRemovingKeyboard(chatID, tbm.configWizard.getAPIKeyMessage(session.TraderConfig.AIProvider))
 	case StateUpdatingAPIKey:
 		provider := normalizeAIProvider(session.TraderConfig.AIProvider)
 		if !tbm.configWizard.validateAPIKeyForProvider(provider, input) {
@@ -572,7 +546,7 @@ func (tbm *TelegramBotManager) handleRegularMessage(update tgbotapi.Update) {
 	}
 
 	// 处理 API KEY 更新流程
-	if session.State == StateUpdatingAIProvider || session.State == StateUpdatingAPIKey || session.State == StateSettingAIModelName {
+	if session.State == StateUpdatingAIProvider || session.State == StateUpdatingAPIKey {
 		tbm.handleAPIKeyUpdateFlow(update, session)
 		return
 	}
@@ -646,10 +620,6 @@ func (tbm *TelegramBotManager) setupCommands() {
 			Description: "👁️ 查看 Agent",
 		},
 		{
-			Command:     "set_api_key",
-			Description: "🔑 更新 AI API KEY",
-		},
-		{
 			Command:     "settings",
 			Description: "⚙️ 设置",
 		},
@@ -696,12 +666,9 @@ func (tbm *TelegramBotManager) sendMessageRemovingKeyboard(chatID int64, text st
 	tbm.sendMessageWithMarkupAndReturnInternal(chatID, text, removeKeyboard, true, false)
 }
 
-func (tbm *TelegramBotManager) getAIModelNameMessage() string {
-	return `🧠 <b>自定义模型名称</b>
-
-如果你在使用自定义 API URL，请输入后端要求的模型名称（如 qwen-turbo / deepseek-chat 等）。
-
-直接按回车或输入 skip/default 表示使用默认模型。`
+func (tbm *TelegramBotManager) isSensitiveInput(telegramID int64) bool {
+	sessionState := tbm.tgTraderMgr.GetSessionManager().GetSessionStateOnly(telegramID)
+	return sessionState == StateUpdatingAPIKey
 }
 
 // sendMessageWithMarkup 通用的消息发送方法（可附带自定义键盘）
@@ -935,6 +902,219 @@ func (tbm *TelegramBotManager) ensureTraderConfigured(chatID int64, telegramID i
 	}
 
 	return true
+}
+
+func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, privateKey, walletAddr string) {
+	if tbm.arbService == nil {
+		return
+	}
+
+	usdcBal, err := tbm.arbService.GetUSDCBalance(walletAddr)
+	if err != nil {
+		log.Printf("⚠️ 查询 USDC 余额失败: %v", err)
+		return
+	}
+	if usdcBal.Cmp(minUSDCBridgeAmount) < 0 {
+		return
+	}
+
+	record, err := tbm.db.GetActiveGasSponsorship(walletAddr)
+	if err != nil {
+		log.Printf("⚠️ 查询 Gas 赞助记录失败: %v", err)
+	}
+
+	requiredEth := tbm.gasSponsorWei
+	if requiredEth == nil {
+		requiredEth = big.NewInt(0)
+	}
+
+	if record == nil {
+		record = &config.TgGasSponsorshipRecord{
+			TgUserID:      telegramID,
+			WalletAddress: walletAddr,
+			AmountWei:     requiredEth.String(),
+			USDCAmount:    usdcBal.String(),
+			Status:        gasStatusProcessing,
+		}
+		recordID, err := tbm.db.CreateTgGasSponsorship(record)
+		if err != nil {
+			log.Printf("⚠️ 创建 Gas 赞助记录失败: %v", err)
+			return
+		}
+		record.ID = recordID
+	} else if record.USDCAmount == "" || usdcBal.Cmp(stringToBig(record.USDCAmount)) > 0 {
+		record.USDCAmount = usdcBal.String()
+		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, "", "", "", record.USDCAmount)
+	}
+
+	targetUSDC := stringToBig(record.USDCAmount)
+	if targetUSDC.Sign() == 0 {
+		targetUSDC = new(big.Int).Set(usdcBal)
+		record.USDCAmount = targetUSDC.String()
+		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, "", "", "", record.USDCAmount)
+	}
+
+	if record.Status == gasStatusProcessing && requiredEth.Sign() > 0 && strings.TrimSpace(tbm.gasSponsorKey) == "" {
+		log.Printf("⚠️ 检测到 USDC>=20 但未配置 Gas 赞助账户")
+		tbm.sendMessage(chatID, "⚠️ 检测到 USDC 余额满足自动充值，但当前地址缺少 ETH Gas，且系统尚未配置赞助账户。请手动充值少量 ETH 后重试 /balance。")
+		return
+	}
+
+	ethBal, err := tbm.arbService.GetETHBalance(walletAddr)
+	if err != nil {
+		log.Printf("⚠️ 查询 ETH 余额失败: %v", err)
+		return
+	}
+
+	if record.Status == gasStatusProcessing {
+		if requiredEth.Sign() == 0 || ethBal.Cmp(requiredEth) >= 0 {
+			record.Status = gasStatusGasSent
+			_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusGasSent, "", "", "")
+		} else {
+			if record.GasTxHash != "" {
+				tbm.sendMessage(chatID, "⏳ Gas 赞助已发送，等待到账后再执行 /balance。")
+				return
+			}
+			recent, err := tbm.db.HasRecentGasSponsorship(walletAddr, int(gasSponsorshipCooldown.Hours()))
+			if err != nil {
+				log.Printf("⚠️ 查询 Gas 赞助记录失败: %v", err)
+			}
+			if recent {
+				tbm.sendMessage(chatID, "⚠️ 该地址近期刚获得 Gas 赞助，请稍后再试。")
+				return
+			}
+			txHash, err := tbm.arbService.SendGas(tbm.gasSponsorKey, walletAddr, requiredEth)
+			if err != nil {
+				log.Printf("❌ Gas 赞助失败: %v", err)
+				_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusFailed, "", "", "")
+				tbm.sendMessage(chatID, fmt.Sprintf("❌ 自动赞助 Gas 失败: %s", esc(err)))
+				return
+			}
+			record.GasTxHash = txHash
+			record.Status = gasStatusGasSent
+			_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusGasSent, txHash, "", "")
+			tbm.sendMessage(chatID, fmt.Sprintf("⛽ 已赞助 %s ETH 用于 Gas，交易哈希: <code>%s</code>", esc(formatETH(requiredEth)), esc(shortTxHash(txHash))))
+
+			time.Sleep(15 * time.Second)
+			ethBal, err = tbm.arbService.GetETHBalance(walletAddr)
+			if err != nil {
+				log.Printf("⚠️ 再次查询 ETH 余额失败: %v", err)
+				return
+			}
+			if ethBal.Cmp(requiredEth) < 0 {
+				tbm.sendMessage(chatID, "⚠️ Gas 已发送但余额仍不足，请稍后使用 /balance 重试自动充值。")
+				return
+			}
+		}
+	}
+
+	if record.Status != gasStatusGasSent {
+		return
+	}
+
+	if usdcBal.Cmp(targetUSDC) < 0 {
+		tbm.sendMessage(chatID, "⚠️ USDC 余额不足以完成自动充值，请确保金额 ≥ 20 USDC 后重新执行 /balance。")
+		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusFailed, "", "", "")
+		return
+	}
+
+	txHash, err := tbm.arbService.TransferUSDC(privateKey, targetUSDC)
+	if err != nil {
+		log.Printf("❌ 自动充值失败: %v", err)
+		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusFailed, "", "", "")
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 自动充值失败: %s", esc(err)))
+		return
+	}
+
+	_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusCompleted, "", txHash, "")
+	tbm.sendMessage(chatID, fmt.Sprintf("💸 已检测到 %s USDC，自动充值至 Hyperliquid。\\nTx: <code>%s</code>", esc(formatUSDC(targetUSDC)), esc(shortTxHash(txHash))))
+}
+
+func (tbm *TelegramBotManager) startAPIKeyUpdate(chatID int64, telegramID int64) bool {
+	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 与机器人建立连接")
+		return false
+	}
+
+	trader, err := tbm.getPrimaryTrader(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, "❌ 您还没有创建交易员，请先使用 /start 初始化账号")
+		return false
+	}
+
+	if !trader.IsConfigured {
+		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /create_trader 完成设置")
+		return false
+	}
+
+	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
+	sessionMgr.ClearSession(telegramID)
+
+	session := sessionMgr.GetOrCreateSession(telegramID)
+	provider := normalizeAIProvider(trader.AIModelID)
+	session.TraderConfig.AIProvider = provider
+	session.TraderConfig.AIModelAPIKey = trader.AIModelAPIKey
+	session.TraderConfig.AIModelAPIURL = trader.AIModelAPIURL
+	session.TraderConfig.AIModelName = trader.AIModelName
+	session.TraderConfig.Step = StateUpdatingAIProvider
+	sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
+	sessionMgr.UpdateSessionState(telegramID, StateUpdatingAIProvider)
+
+	providerName := aiProviderDisplayName(provider)
+	maskedKey := "未设置"
+	if trader.AIModelAPIKey != "" {
+		maskedKey = tbm.configWizard.maskAPIKey(trader.AIModelAPIKey)
+	}
+
+	message := fmt.Sprintf(`🔐 <b>更新 AI API KEY</b>
+
+当前交易员: %s
+当前模型: %s
+当前密钥: %s
+
+请选择要使用的大模型：
+1. DeepSeek（默认）
+2. Qwen / 通义千问
+
+点击下方按钮或回复 1 / 2，输入 "cancel" 可取消。`,
+		esc(trader.Name),
+		esc(providerName),
+		esc(maskedKey))
+
+	tbm.sendAIProviderSelectionMessage(chatID, message)
+	return true
+}
+
+func formatUSDC(amount *big.Int) string {
+	f := new(big.Rat).SetFrac(amount, big.NewInt(1_000_000))
+	floatVal, _ := f.Float64()
+	return fmt.Sprintf("%.2f", floatVal)
+}
+
+func formatETH(amount *big.Int) string {
+	if amount == nil {
+		return "0"
+	}
+	f := new(big.Rat).SetFrac(amount, big.NewInt(1_000_000_000_000_000_000))
+	floatVal, _ := f.Float64()
+	return fmt.Sprintf("%.8f", floatVal)
+}
+
+func shortTxHash(hash string) string {
+	if len(hash) <= 10 {
+		return hash
+	}
+	return fmt.Sprintf("%s…%s", hash[:6], hash[len(hash)-4:])
+}
+
+func stringToBig(value string) *big.Int {
+	if strings.TrimSpace(value) == "" {
+		return new(big.Int)
+	}
+	if bi, ok := new(big.Int).SetString(value, 10); ok {
+		return bi
+	}
+	return new(big.Int)
 }
 
 // handleCreateTrader 处理 /create_trader 命令
@@ -1294,6 +1474,8 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleExportPrivateKeyCallback(callback, chatID, telegramID)
 	case "ack_export":
 		tbm.handleAcknowledgePrivateKey(callback, chatID, telegramID)
+	case "menu_set_api":
+		tbm.handleMenuSetAPI(callback, chatID, telegramID)
 	default:
 		log.Printf("❌ 未知动作: %s", action)
 		tbm.answerCallbackQuery(callback.ID, "未知操作")
@@ -1359,8 +1541,8 @@ func (tbm *TelegramBotManager) handleExportPrivateKeyCallback(callback *tgbotapi
 
 • 请勿泄露此私钥
 • 请在复制后立即删除本聊天记录
-• 点击“已备份”即可立即删除此消息
-• 系统也会在 60 秒后自动删除
+• 点击“已安全备份”即可立即删除此消息
+• 系统也会在 10 秒后自动删除
 
 Agent 私钥:
 <code>%s</code>
@@ -1373,7 +1555,7 @@ Agent 私钥:
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🗑️ 已备份，删除", fmt.Sprintf("ack_export|%d", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("🗑️ 已安全备份", fmt.Sprintf("ack_export|%d", telegramID)),
 		),
 	)
 
@@ -1381,7 +1563,7 @@ Agent 私钥:
 	if err != nil || sentMsg == nil {
 		return
 	}
-	tbm.scheduleDeleteMessage(chatID, sentMsg.MessageID, 60*time.Second)
+	tbm.scheduleDeleteMessage(chatID, sentMsg.MessageID, 10*time.Second)
 }
 
 func (tbm *TelegramBotManager) handleAcknowledgePrivateKey(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
@@ -1389,6 +1571,11 @@ func (tbm *TelegramBotManager) handleAcknowledgePrivateKey(callback *tgbotapi.Ca
 	if callback.Message != nil {
 		tbm.deleteMessage(chatID, callback.Message.MessageID)
 	}
+}
+
+func (tbm *TelegramBotManager) handleMenuSetAPI(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	tbm.answerCallbackQuery(callback.ID, "🔐 正在打开 AI 配置...")
+	tbm.startAPIKeyUpdate(chatID, telegramID)
 }
 
 func (tbm *TelegramBotManager) handleStopTraderCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
