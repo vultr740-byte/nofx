@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Get 获取指定代币的市场数据
@@ -293,34 +295,57 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 func getOpenInterestData(symbol string) (*OIData, error) {
 	url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/openInterest?symbol=%s", symbol)
 
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
+	var lastErr error
+	const maxRetries = 3
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			time.Sleep(2 * time.Second)
+		}
+
+		resp, err := http.Get(url)
+		if err != nil {
+			lastErr = err
+			log.Printf("⚠️ 第%d次获取 %s OI 失败: %v", attempt, symbol, err)
+			continue
+		}
+
+		body, err := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			log.Printf("⚠️ 第%d次读取 %s OI 响应失败: %v", attempt, symbol, err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("status %d, body %s", resp.StatusCode, truncateForLog(string(body)))
+			log.Printf("⚠️ 第%d次获取 %s OI 返回异常: %v", attempt, symbol, lastErr)
+			continue
+		}
+
+		var result struct {
+			OpenInterest string `json:"openInterest"`
+			Symbol       string `json:"symbol"`
+			Time         int64  `json:"time"`
+		}
+
+		if err := json.Unmarshal(body, &result); err != nil {
+			lastErr = err
+			log.Printf("⚠️ 第%d次解析 %s OI 响应失败: %v", attempt, symbol, err)
+			continue
+		}
+
+		oi, _ := strconv.ParseFloat(result.OpenInterest, 64)
+		return &OIData{
+			Latest:  oi,
+			Average: oi * 0.999,
+		}, nil
 	}
-	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var result struct {
-		OpenInterest string `json:"openInterest"`
-		Symbol       string `json:"symbol"`
-		Time         int64  `json:"time"`
-	}
-
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
-	}
-
-	oi, _ := strconv.ParseFloat(result.OpenInterest, 64)
-
-	return &OIData{
-		Latest:  oi,
-		Average: oi * 0.999, // 近似平均值
-	}, nil
+	return nil, fmt.Errorf("获取OI失败: %w", lastErr)
 }
+
 
 // getFundingRate 获取资金费率
 func getFundingRate(symbol string) (float64, error) {
@@ -472,6 +497,14 @@ func Normalize(symbol string) string {
 		return symbol
 	}
 	return symbol + "USDT"
+}
+
+func truncateForLog(s string) string {
+	const maxLen = 200
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // parseFloat 解析float值

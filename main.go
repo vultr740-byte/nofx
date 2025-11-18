@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -411,6 +412,9 @@ func main() {
 
 	// 恢复运行中的TG交易员
 	if telegramBot != nil {
+		delay := 5 * time.Second
+		log.Printf("⏳ 服务器重启刚完成，等待 %v 再恢复TG交易员...", delay)
+		time.Sleep(delay)
 		log.Println("🔄 检查并恢复运行中的TG交易员...")
 		tgRestoredCount := restoreTGTraders(database, telegramBot)
 		log.Printf("✅ TG交易员恢复完成，共恢复 %d 个TG交易员", tgRestoredCount)
