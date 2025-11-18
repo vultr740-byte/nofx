@@ -1251,6 +1251,14 @@ sudo apt-get install libta-lib0-dev
 - If API fails, system uses default mainstream coins (BTC, ETH, etc.)
 - ~~Check API URL and auth parameter in config.json~~ *Check configuration in web interface*
 
+### 6. Binance API unreachable in certain regions (e.g. US)
+
+**Solution**:
+- Binance Futures REST endpoints (e.g. `fapi.binance.com`) are geo-restricted in some regions like the United States
+- We now route requests through Binance's Singapore POP, but you still need outbound network access that can reach that location
+- If you're running the bot from a US-based server, configure a VPN/proxy or cloud instance that can reach Binance SG endpoints before starting the service
+- Symptoms of this issue include `OpenInterest`/market data returning zero and AI refusing to trade due to “持仓价值过低”
+
 ---
 
 ## 📈 Performance Optimization Tips

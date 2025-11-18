@@ -114,7 +114,7 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 	}
 
 	var message strings.Builder
-	message.WriteString("📊 当前持仓\n\n")
+	message.WriteString("💎 当前持仓\n\n")
 
 	for i, pos := range positions {
 		symbol, _ := pos["symbol"].(string)
@@ -123,6 +123,7 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 		entryPrice, _ := pos["entryPrice"].(float64)
 		markPrice, _ := pos["markPrice"].(float64)
 		unRealizedProfit, _ := pos["unRealizedProfit"].(float64)
+		leverage, _ := pos["leverage"].(float64)
 
 		// 计算盈亏百分比
 		var profitPercent float64
@@ -133,25 +134,37 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 			}
 		}
 
-		// 方向表情符号
+		// 方向和盈亏表情符号
 		sideEmoji := "📈"
+		sideText := "多头"
 		if side == "short" {
 			sideEmoji = "📉"
+			sideText = "空头"
 		}
 
-		message.WriteString(fmt.Sprintf(`%s %s → %s
-数量: %.4f | 入场: $%.2f
-标记: $%.2f | 盈亏: %.2f USDC (%.2f%%)
+		pnlEmoji := "✅"
+		if unRealizedProfit < 0 {
+			pnlEmoji = "❌"
+		}
+
+		// 格式化杠杆显示
+		leverageText := fmt.Sprintf("%.0fx", leverage)
+
+		message.WriteString(fmt.Sprintf(`%s <b>%s → %s (%s)</b>
+持仓数量: <code>%.4f</code>
+入场价格: <code>$%.4f</code>
+标记价格: <code>$%.4f</code>
+未实现盈亏: <code>%.2f USDC (%.2f%%)</code> %s
 
 `,
-			sideEmoji, symbol, strings.ToUpper(side),
+			sideEmoji, symbol, sideText, leverageText,
 			positionAmt, entryPrice, markPrice,
-			unRealizedProfit, profitPercent,
+			unRealizedProfit, profitPercent, pnlEmoji,
 		))
 
 		// 如果不是最后一个持仓，添加分隔线
 		if i < len(positions)-1 {
-			message.WriteString("---\n")
+			message.WriteString("─────────────────\n")
 		}
 	}
 
@@ -164,11 +177,27 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 		}
 	}
 
+	// 计算总盈亏百分比
+	var totalProfitPercent float64
+	if positionCount > 0 {
+		totalValue := 0.0
+		for _, pos := range positions {
+			if value, ok := pos["entryPrice"].(float64); ok {
+				if amt, ok := pos["positionAmt"].(float64); ok {
+					totalValue += value * amt
+				}
+			}
+		}
+		if totalValue > 0 {
+			totalProfitPercent = (totalUnrealized / totalValue) * 100
+		}
+	}
+
 	message.WriteString(fmt.Sprintf(`
-📋 持仓汇总
-• 持仓数量: %d 个
-• 总未实现盈亏: %.2f USDC`,
-		positionCount, totalUnrealized,
+📋 <b>持仓汇总</b>
+活跃持仓: <code>%d 个</code>
+总未实现盈亏: <code>%.2f USDC (%.2f%%)</code>`,
+		positionCount, totalUnrealized, totalProfitPercent,
 	))
 
 	return message.String()
