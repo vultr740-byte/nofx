@@ -274,7 +274,8 @@ func main() {
 
 	// 从数据库加载所有TG交易员到内存
 	log.Printf("🔄 开始加载TG交易员...")
-	err = traderManager.LoadTGTradersFromDatabase(database)
+	tgUseTestnet := strings.EqualFold(strings.TrimSpace(os.Getenv("HYPERLIQUID_TESTNET")), "true")
+	err = traderManager.LoadTGTradersFromDatabase(database, tgUseTestnet)
 	if err != nil {
 		log.Printf("⚠️ 加载TG交易员失败: %v", err)
 		// TG交易员加载失败不应该导致程序退出，因为它们可能不存在
@@ -482,7 +483,8 @@ func restoreTGTraders(database config.DatabaseInterface, telegramBot *telegram.T
 						continue
 					}
 					// 直接通过TelegramBotManager的traderMgr动态加载TG交易员
-					if err := telegramBot.GetTraderManager().LoadTGTradersFromDatabase(dbConcrete); err != nil {
+					useTestnet := strings.EqualFold(strings.TrimSpace(os.Getenv("HYPERLIQUID_TESTNET")), "true")
+					if err := telegramBot.GetTraderManager().LoadTGTradersFromDatabase(dbConcrete, useTestnet); err != nil {
 						log.Printf("❌ 动态加载TG交易员失败: %v", err)
 						continue
 					}

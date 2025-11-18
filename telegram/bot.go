@@ -73,7 +73,7 @@ func NewTelegramBotManager(cfg *config.TelegramBotConfig, db config.DatabaseInte
 	log.Printf("✅ Telegram Bot 初始化成功: %s (Hyperliquid: %s)", bot.Self.UserName, network)
 
 	// 创建交易员管理器
-	tgTraderMgr := NewTelegramTraderManager(db, traderMgr)
+	tgTraderMgr := NewTelegramTraderManager(db, traderMgr, cfg.HyperliquidTestnet)
 	configWizard := NewConfigWizard(tgTraderMgr)
 
 	tgBotMgr := &TelegramBotManager{
@@ -1039,6 +1039,22 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 
 	_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusCompleted, "", txHash, "")
 	tbm.sendMessage(chatID, fmt.Sprintf("💸 已检测到 %s USDC，自动充值至 Hyperliquid。\\nTx: <code>%s</code>", esc(formatUSDC(targetUSDC)), esc(txHash)))
+	tbm.refreshHyperliquidBalance(chatID, privateKey, walletAddr)
+}
+
+func (tbm *TelegramBotManager) refreshHyperliquidBalance(chatID int64, agentKey, walletAddr string) {
+	if tbm.hlService == nil {
+		return
+	}
+
+	balanceMsg, err := tbm.hlService.GetBalance(agentKey, walletAddr, tbm.testnet)
+	if err != nil {
+		log.Printf("⚠️ 自动刷新 Hyperliquid 余额失败: %v", err)
+		tbm.sendMessage(chatID, "⚠️ 无法自动刷新 Hyperliquid 余额，请稍后使用 /balance 重试。")
+		return
+	}
+
+	tbm.sendMessage(chatID, fmt.Sprintf("✅ 充值完成，最新余额如下：\n\n%s", balanceMsg))
 }
 
 func (tbm *TelegramBotManager) startAPIKeyUpdate(chatID int64, telegramID int64) bool {

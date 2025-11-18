@@ -714,7 +714,7 @@ func containsUserPrefix(traderID string) bool {
 }
 
 // LoadTGTradersFromDatabase 从数据库加载所有TG交易员到内存
-func (tm *TraderManager) LoadTGTradersFromDatabase(database *config.Database) error {
+func (tm *TraderManager) LoadTGTradersFromDatabase(database *config.Database, useTestnet bool) error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
@@ -724,7 +724,11 @@ func (tm *TraderManager) LoadTGTradersFromDatabase(database *config.Database) er
 		return fmt.Errorf("获取TG用户列表失败: %w", err)
 	}
 
-	log.Printf("📋 发现 %d 个TG用户，开始加载TG交易员...", len(tgUserIDs))
+	network := "主网"
+	if useTestnet {
+		network = "测试网"
+	}
+	log.Printf("📋 发现 %d 个TG用户，开始加载TG交易员... (Hyperliquid: %s)", len(tgUserIDs), network)
 
 	var loadedCount int
 	for _, tgUserID := range tgUserIDs {
@@ -744,7 +748,7 @@ func (tm *TraderManager) LoadTGTradersFromDatabase(database *config.Database) er
 		log.Printf("📋 TG用户 %d: %d 个交易员", tgUserID, len(tgTraders))
 
 		for _, tgTrader := range tgTraders {
-			if err := tm.loadTGTraderFromDB(database, &tgTrader, tgUserID); err != nil {
+			if err := tm.loadTGTraderFromDB(database, &tgTrader, tgUserID, useTestnet); err != nil {
 				log.Printf("❌ 加载TG交易员失败: %s (ID: %d), error: %v", tgTrader.Name, tgUserID, err)
 				continue
 			}
@@ -757,7 +761,7 @@ func (tm *TraderManager) LoadTGTradersFromDatabase(database *config.Database) er
 }
 
 // loadTGTraderFromDB 从数据库加载单个TG交易员
-func (tm *TraderManager) loadTGTraderFromDB(database *config.Database, tgTrader *config.TgTraderRecord, tgUserID int64) error {
+func (tm *TraderManager) loadTGTraderFromDB(database *config.Database, tgTrader *config.TgTraderRecord, tgUserID int64, useTestnet bool) error {
 	if tgTrader.PrivateKey == "" {
 		return fmt.Errorf("TG交易员缺少私钥")
 	}
@@ -777,6 +781,7 @@ func (tm *TraderManager) loadTGTraderFromDB(database *config.Database, tgTrader 
 		log.Printf("⚠️ TG交易员 %s 扫描间隔为0，使用默认值5分钟", tgTrader.Name)
 		scanInterval = 5 // 默认5分钟扫描间隔
 	}
+	tgTrader.ScanIntervalMinutes = scanInterval
 
 	// 获取AI模型和交易所配置
 	// TG用户使用默认的AI模型和交易所配置
@@ -809,7 +814,7 @@ func (tm *TraderManager) loadTGTraderFromDB(database *config.Database, tgTrader 
 	exchangeCfg := exchanges[0]
 
 	// 使用专门的方法创建TG交易员实例
-	err = tm.createTGTraderInstance(tgTrader, aiModelCfg, exchangeCfg, agentKey, walletAddr, database)
+	err = tm.createTGTraderInstance(tgTrader, aiModelCfg, exchangeCfg, agentKey, walletAddr, database, useTestnet)
 	if err != nil {
 		return fmt.Errorf("创建TG交易员实例失败: %w", err)
 	}
@@ -819,7 +824,7 @@ func (tm *TraderManager) loadTGTraderFromDB(database *config.Database, tgTrader 
 }
 
 // createTGTraderInstance 创建TG交易员实例
-func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord, aiModelCfg *config.AIModelConfig, exchangeCfg *config.ExchangeConfig, agentKey string, walletAddr string, database *config.Database) error {
+func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord, aiModelCfg *config.AIModelConfig, exchangeCfg *config.ExchangeConfig, agentKey string, walletAddr string, database *config.Database, useTestnet bool) error {
 	if walletAddr == "" {
 		derivedAddr, err := deriveAddressFromPrivateKey(agentKey)
 		if err != nil {
@@ -911,7 +916,7 @@ func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord,
 			Exchange:              "hyperliquid",
 			HyperliquidPrivateKey: agentKey,
 			HyperliquidWalletAddr: walletAddr,
-			HyperliquidTestnet:    true,
+			HyperliquidTestnet:    useTestnet,
 			DeepSeekKey:           deepSeekKey,
 			QwenKey:               qwenKey,
 			CustomAPIURL:          apiURL,

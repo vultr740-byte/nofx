@@ -24,12 +24,12 @@ type TelegramTraderManager struct {
 }
 
 // NewTelegramTraderManager 创建 Telegram 交易员管理器
-func NewTelegramTraderManager(db config.DatabaseInterface, traderMgr *manager.TraderManager) *TelegramTraderManager {
+func NewTelegramTraderManager(db config.DatabaseInterface, traderMgr *manager.TraderManager, testnet bool) *TelegramTraderManager {
 	return &TelegramTraderManager{
 		db:         db,
 		traderMgr:  traderMgr,
 		sessionMgr: NewSessionManager(),
-		testnet:    true, // TG交易员默认使用测试网
+		testnet:    testnet,
 	}
 }
 
@@ -676,7 +676,7 @@ func (ttm *TelegramTraderManager) GetTgTrader(traderID string) (*trader.AutoTrad
 
 	// 使用TraderManager的loadTGTraderFromDB方法动态加载
 	log.Printf("🔄 动态创建TG交易员实例: %s", traderID)
-	if err := ttm.traderMgr.LoadTGTradersFromDatabase(database); err != nil {
+	if err := ttm.traderMgr.LoadTGTradersFromDatabase(database, ttm.testnet); err != nil {
 		return nil, fmt.Errorf("动态加载TG交易员失败: %w", err)
 	}
 
