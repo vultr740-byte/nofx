@@ -68,10 +68,13 @@ func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}
 	totalUnrealizedProfit, _ := balance["totalUnrealizedProfit"].(float64)
 	spotBalance, _ := balance["spotBalance"].(float64)
 
-	// 计算盈亏百分比
+	// 计算合约净值：总资产 - 现货余额
+	perpetualValue := totalWalletBalance - spotBalance
+
+	// 计算盈亏百分比（基于合约净值）
 	var profitPercent float64
-	if totalWalletBalance-totalUnrealizedProfit > 0 {
-		profitPercent = (totalUnrealizedProfit / (totalWalletBalance - totalUnrealizedProfit)) * 100
+	if perpetualValue-totalUnrealizedProfit > 0 {
+		profitPercent = (totalUnrealizedProfit / (perpetualValue - totalUnrealizedProfit)) * 100
 	}
 
 	// 盈亏表情符号
@@ -82,21 +85,21 @@ func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}
 		pnlEmoji = "🔴"
 	}
 
-	message := fmt.Sprintf(`💰 账户余额总览
+	message := fmt.Sprintf(`💎 账户余额总览
 
-💎 总资产: %.2f USDC
+💰 总资产: <code>%.2f USDC</code>
 
 📊 资产详情:
-• 现货余额: %.2f USDC
-• 可用余额: %.2f USDC
-• 合约净值: %.2f USDC
+• 现货余额: <code>%.2f USDC</code>
+• 合约净值: <code>%.2f USDC</code>
+• 可用余额: <code>%.2f USDC</code>
 
 %s 盈亏状况:
-• 未实现盈亏: %.2f USDC (%.2f%%)`,
+• 未实现盈亏: <code>%.2f USDC (%.2f%%)</code>`,
 		totalWalletBalance,
 		spotBalance,
+		perpetualValue,
 		availableBalance,
-		totalWalletBalance-spotBalance,
 		pnlEmoji,
 		totalUnrealizedProfit,
 		profitPercent,
