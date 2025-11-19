@@ -110,7 +110,7 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 	if len(positions) == 0 {
 		return `🕒 暂无持仓
 
-💡 使用 /deposit 充值资金后即可开始交易`
+💡 去充值 /deposit`
 	}
 
 	var message strings.Builder

@@ -217,9 +217,8 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	}
 
 	// ✅ Step 5: 正确处理 Spot + Perpetuals 余额
-	// 重要：Spot 只加到总资产，不加到可用余额
-	//      原因：Spot 和 Perpetuals 是独立帐户，需手动 ClassTransfer 才能转账
-	totalWalletBalance := walletBalanceWithoutUnrealized + spotUSDCBalance
+	// Hyperliquid 前端的“Total Wallet Balance”展示 = 可用余额 + 已占用保证金 + Spot
+	totalWalletBalance := availableBalance + totalMarginUsed + spotUSDCBalance
 
 	result["totalWalletBalance"] = totalWalletBalance    // 总资产（Perp + Spot）
 	result["availableBalance"] = availableBalance        // 可用余额（仅 Perpetuals，不含 Spot）
