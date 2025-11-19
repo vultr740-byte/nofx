@@ -1021,21 +1021,18 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 
 	// 获取账户字段
 	totalWalletBalance := 0.0
-	totalUnrealizedProfit := 0.0
 	availableBalance := 0.0
 
 	if wallet, ok := balance["totalWalletBalance"].(float64); ok {
 		totalWalletBalance = wallet
 	}
-	if unrealized, ok := balance["totalUnrealizedProfit"].(float64); ok {
-		totalUnrealizedProfit = unrealized
-	}
-	if avail, ok := balance["availableBalance"].(float64); ok {
+		if avail, ok := balance["availableBalance"].(float64); ok {
 		availableBalance = avail
 	}
 
-	// Total Equity = 钱包余额 + 未实现盈亏
-	totalEquity := totalWalletBalance + totalUnrealizedProfit
+	// 修复：totalWalletBalance 已经是正确的总资产值（包含现货+合约净值），不应该再加未实现盈亏
+	// 原来的计算逻辑是为了兼容旧的错误数据，现在 totalWalletBalance 已经修复
+	totalEquity := totalWalletBalance
 
 	// 2. 获取持仓信息
 	positions, err := at.trader.GetPositions()
@@ -1845,8 +1842,8 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 		availableBalance = avail
 	}
 
-	// Total Equity = 钱包余额 + 未实现盈亏
-	totalEquity := totalWalletBalance + totalUnrealizedProfit
+	// 修复：totalWalletBalance 已经是正确的总资产值，不需要再加未实现盈亏
+	totalEquity := totalWalletBalance
 
 	// 获取持仓计算总保证金
 	positions, err := at.trader.GetPositions()
