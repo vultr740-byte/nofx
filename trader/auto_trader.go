@@ -974,6 +974,8 @@ func (at *AutoTrader) runCycle() error {
 	log.Println()
 
 	// 执行决策并记录结果
+	var executionActions []*logger.DecisionAction
+
 	for _, d := range sortedDecisions {
 		actionRecord := logger.DecisionAction{
 			Action:    d.Action,
@@ -997,7 +999,7 @@ func (at *AutoTrader) runCycle() error {
 		}
 
 		record.Decisions = append(record.Decisions, actionRecord)
-		at.pushTradeExecutionToTelegram(&record.Decisions[len(record.Decisions)-1])
+		executionActions = append(executionActions, &record.Decisions[len(record.Decisions)-1])
 	}
 
 	// 9. 保存决策记录
@@ -1007,6 +1009,11 @@ func (at *AutoTrader) runCycle() error {
 
 	// 10. 推送决策到Telegram（仅适用于TG交易员）
 	at.pushDecisionToTelegram(record)
+
+	// 11. 推送执行结果到Telegram，确保在AI决策报告之后展示
+	for _, action := range executionActions {
+		at.pushTradeExecutionToTelegram(action)
+	}
 
 	return nil
 }
