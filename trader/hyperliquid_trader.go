@@ -223,9 +223,8 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 		}
 	}
 
-	// ✅ Step 5: 正确处理 Spot + Perpetuals 余额
-	// 修复：AccountValue 已经是完整投资组合价值（包含现金+持仓+未实现盈亏）
-	// 不应该再重复添加 totalMarginUsed，这会导致余额偏高
+	// ✅ Step 5: 寻找单一的总资产字段
+	// 检查是否有现成的总资产字段，避免手动计算
 	totalWalletBalance := accountValue + spotUSDCBalance
 
 	
