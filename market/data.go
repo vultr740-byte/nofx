@@ -14,14 +14,14 @@ import (
 
 // Get 获取指定代币的市场数据
 func Get(symbol string) (*Data, error) {
-	var klines3m, klines4h []Kline
+	var klines15m, klines4h []Kline
 	var err error
 	// 标准化symbol
 	symbol = Normalize(symbol)
-	// 获取3分钟K线数据 (最近10个)
-	klines3m, err = WSMonitorCli.GetCurrentKlines(symbol, "3m") // 多获取一些用于计算
+	// 获取15分钟K线数据 (最近10个)
+	klines15m, err = WSMonitorCli.GetCurrentKlines(symbol, "15m") // 多获取一些用于计算
 	if err != nil {
-		return nil, fmt.Errorf("获取3分钟K线失败: %v", err)
+		return nil, fmt.Errorf("获取15分钟K线失败: %v", err)
 	}
 
 	// 获取4小时K线数据 (最近10个)
@@ -30,17 +30,17 @@ func Get(symbol string) (*Data, error) {
 		return nil, fmt.Errorf("获取4小时K线失败: %v", err)
 	}
 
-	// 计算当前指标 (基于3分钟最新数据)
-	currentPrice := klines3m[len(klines3m)-1].Close
-	currentEMA20 := calculateEMA(klines3m, 20)
-	currentMACD := calculateMACD(klines3m)
-	currentRSI7 := calculateRSI(klines3m, 7)
+	// 计算当前指标 (基于15分钟最新数据)
+	currentPrice := klines15m[len(klines15m)-1].Close
+	currentEMA20 := calculateEMA(klines15m, 20)
+	currentMACD := calculateMACD(klines15m)
+	currentRSI7 := calculateRSI(klines15m, 7)
 
 	// 计算价格变化百分比
-	// 1小时价格变化 = 20个3分钟K线前的价格
+	// 1小时价格变化 = 4个15分钟K线前的价格 (4 * 15 = 60分钟)
 	priceChange1h := 0.0
-	if len(klines3m) >= 21 { // 至少需要21根K线 (当前 + 20根前)
-		price1hAgo := klines3m[len(klines3m)-21].Close
+	if len(klines15m) >= 5 { // 至少需要5根K线 (当前 + 4根前)
+		price1hAgo := klines15m[len(klines15m)-5].Close
 		if price1hAgo > 0 {
 			priceChange1h = ((currentPrice - price1hAgo) / price1hAgo) * 100
 		}
@@ -66,7 +66,7 @@ func Get(symbol string) (*Data, error) {
 	fundingRate, _ := getFundingRate(symbol)
 
 	// 计算日内系列数据
-	intradayData := calculateIntradaySeries(klines3m)
+	intradayData := calculateIntradaySeries(klines15m)
 
 	// 计算长期数据
 	longerTermData := calculateLongerTermData(klines4h)
@@ -200,18 +200,18 @@ func calculateATR(klines []Kline, period int) float64 {
 	return atr
 }
 
-// calculateIntradaySeries 计算日内系列数据
+// calculateIntradaySeries 计算日内系列数据 (基于15分钟K线)
 func calculateIntradaySeries(klines []Kline) *IntradayData {
 	data := &IntradayData{
-		MidPrices:   make([]float64, 0, 10),
-		EMA20Values: make([]float64, 0, 10),
-		MACDValues:  make([]float64, 0, 10),
-		RSI7Values:  make([]float64, 0, 10),
-		RSI14Values: make([]float64, 0, 10),
+		MidPrices:   make([]float64, 0, 8),
+		EMA20Values: make([]float64, 0, 8),
+		MACDValues:  make([]float64, 0, 8),
+		RSI7Values:  make([]float64, 0, 8),
+		RSI14Values: make([]float64, 0, 8),
 	}
 
-	// 获取最近10个数据点
-	start := len(klines) - 10
+	// 获取最近8个数据点 (8 * 15分钟 = 2小时历史)
+	start := len(klines) - 8
 	if start < 0 {
 		start = 0
 	}
@@ -386,7 +386,7 @@ func Format(data *Data) string {
 
 	// 使用动态精度格式化价格
 	priceStr := formatPriceWithDynamicPrecision(data.CurrentPrice)
-	sb.WriteString(fmt.Sprintf("current_price = %s, current_ema20 = %.3f, current_macd = %.3f, current_rsi (7 period) = %.3f\n\n",
+	sb.WriteString(fmt.Sprintf("current_price = %s, current_ema20 = %.3f, current_macd = %.3f, current_rsi (7 period, 15m) = %.3f\n\n",
 		priceStr, data.CurrentEMA20, data.CurrentMACD, data.CurrentRSI7))
 
 	sb.WriteString(fmt.Sprintf("In addition, here is the latest %s open interest and funding rate for perps:\n\n",
@@ -403,7 +403,7 @@ func Format(data *Data) string {
 	sb.WriteString(fmt.Sprintf("Funding Rate: %.2e\n\n", data.FundingRate))
 
 	if data.IntradaySeries != nil {
-		sb.WriteString("Intraday series (3‑minute intervals, oldest → latest):\n\n")
+		sb.WriteString("Intraday series (15‑minute intervals, oldest → latest):\n\n")
 
 		if len(data.IntradaySeries.MidPrices) > 0 {
 			sb.WriteString(fmt.Sprintf("Mid prices: %s\n\n", formatFloatSlice(data.IntradaySeries.MidPrices)))
