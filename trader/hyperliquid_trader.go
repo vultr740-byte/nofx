@@ -181,15 +181,7 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	log.Printf("🔍 [DEBUG] Hyperliquid API %s 完整数据:", summaryType)
 	log.Printf("%s", string(summaryJSON))
 
-	// 🔍 调试：打印Withdrawable和其他关键字段
-	log.Printf("🚨 [CRITICAL API FIELDS]:")
-	log.Printf("  • accountState.Withdrawable: %s", accountState.Withdrawable)
-	if t.isCrossMargin {
-		log.Printf("  • accountState.CrossMarginSummary.AccountValue: %s", accountState.CrossMarginSummary.AccountValue)
-	} else {
-		log.Printf("  • accountState.MarginSummary.AccountValue: %s", accountState.MarginSummary.AccountValue)
-	}
-
+	
 	// ⚠️ 关键修复：从所有持仓中累加真正的未实现盈亏
 	totalUnrealizedPnl := 0.0
 	for _, assetPos := range accountState.AssetPositions {
@@ -236,15 +228,7 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	// 不应该再重复添加 totalMarginUsed，这会导致余额偏高
 	totalWalletBalance := accountValue + spotUSDCBalance
 
-	// 🔍 关键调试：验证字段值
-	log.Printf("🚨 [CRITICAL DEBUG] 字段值验证:")
-	log.Printf("  • accountValue (AccountValue字段): %.6f USDC", accountValue)
-	log.Printf("  • availableBalance (Withdrawable字段): %.6f USDC", availableBalance)
-	log.Printf("  • totalUnrealizedPnl (累加值): %.6f USDC", totalUnrealizedPnl)
-	log.Printf("  • totalWalletBalance (计算结果): %.6f USDC", totalWalletBalance)
-	log.Printf("  • 检查: accountValue ≈ availableBalance + totalUnrealizedPnl ? %.6f ≈ %.6f + %.6f = %.6f",
-		accountValue, availableBalance, totalUnrealizedPnl, availableBalance+totalUnrealizedPnl)
-
+	
 	result["totalWalletBalance"] = totalWalletBalance    // 总资产（Perp + Spot）
 	result["availableBalance"] = availableBalance        // 可用余额（仅 Perpetuals，不含 Spot）
 	result["totalUnrealizedProfit"] = totalUnrealizedPnl // 未实现盈亏（仅来自 Perpetuals）
