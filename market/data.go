@@ -203,15 +203,15 @@ func calculateATR(klines []Kline, period int) float64 {
 // calculateIntradaySeries 计算日内系列数据 (基于15分钟K线)
 func calculateIntradaySeries(klines []Kline) *IntradayData {
 	data := &IntradayData{
-		MidPrices:   make([]float64, 0, 8),
-		EMA20Values: make([]float64, 0, 8),
-		MACDValues:  make([]float64, 0, 8),
-		RSI7Values:  make([]float64, 0, 8),
-		RSI14Values: make([]float64, 0, 8),
+		MidPrices:   make([]float64, 0, 16),
+		EMA20Values: make([]float64, 0, 16),
+		MACDValues:  make([]float64, 0, 16),
+		RSI7Values:  make([]float64, 0, 16),
+		RSI14Values: make([]float64, 0, 16),
 	}
 
-	// 获取最近8个数据点 (8 * 15分钟 = 2小时历史)
-	start := len(klines) - 8
+	// 获取最近16个数据点 (16 * 15分钟 = 4小时历史)
+	start := len(klines) - 16
 	if start < 0 {
 		start = 0
 	}
