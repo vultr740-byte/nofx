@@ -142,9 +142,9 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 			sideText = "空头"
 		}
 
-		pnlEmoji := "✅"
+		pnlEmoji := "🟢"
 		if unRealizedProfit < 0 {
-			pnlEmoji = "❌"
+			pnlEmoji = "🔴"
 		}
 
 		// 格式化杠杆显示
