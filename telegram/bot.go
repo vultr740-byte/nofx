@@ -364,7 +364,35 @@ func (tbm *TelegramBotManager) handleLeaderboard(update tgbotapi.Update) {
 
 	tbm.sendMessage(chatID, "🔄 正在加载排行榜，请稍候...")
 
-	data, err := tbm.traderMgr.GetCompetitionData()
+	// 读取 tg_traders 表的 trader ID 列表
+	db, ok := tbm.db.(interface {
+		GetAllTGUsers() ([]int64, error)
+		GetTgTraders(tgUserID int64) ([]config.TgTraderRecord, error)
+	})
+	if !ok {
+		tbm.sendMessage(chatID, "⚠️ 排行榜暂不可用，请稍后重试。")
+		return
+	}
+
+	var traderIDs []string
+	userIDs, err := db.GetAllTGUsers()
+	if err != nil {
+		log.Printf("获取TG用户列表失败: %v", err)
+		tbm.sendMessage(chatID, "❌ 获取排行榜失败，请稍后重试。")
+		return
+	}
+	for _, uid := range userIDs {
+		tgTraders, err := db.GetTgTraders(uid)
+		if err != nil {
+			log.Printf("获取TG交易员失败 (uid=%d): %v", uid, err)
+			continue
+		}
+		for _, t := range tgTraders {
+			traderIDs = append(traderIDs, t.ID)
+		}
+	}
+
+	data, err := tbm.traderMgr.GetCompetitionDataByIDs(traderIDs)
 	if err != nil {
 		log.Printf("获取排行榜失败: %v", err)
 		tbm.sendMessage(chatID, "❌ 获取排行榜失败，请稍后重试。")

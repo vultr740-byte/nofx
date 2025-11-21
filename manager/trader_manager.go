@@ -558,6 +558,85 @@ func (tm *TraderManager) GetCompetitionData() (map[string]interface{}, error) {
 	return comparison, nil
 }
 
+// GetCompetitionDataByIDs 获取指定 trader 列表的竞赛数据（按收益率排序，不使用缓存）
+func (tm *TraderManager) GetCompetitionDataByIDs(traderIDs []string) (map[string]interface{}, error) {
+	tm.mu.RLock()
+	selected := make([]*trader.AutoTrader, 0, len(traderIDs))
+	for _, id := range traderIDs {
+		if t, ok := tm.traders[id]; ok {
+			selected = append(selected, t)
+		}
+	}
+	tm.mu.RUnlock()
+
+	if len(selected) == 0 {
+		return map[string]interface{}{
+			"traders":     []map[string]interface{}{},
+			"count":       0,
+			"total_count": 0,
+		}, nil
+	}
+
+	traders := tm.getConcurrentTraderData(selected)
+
+	// 按收益率排序（降序）
+	sort.Slice(traders, func(i, j int) bool {
+		pnlPctI, okI := traders[i]["total_pnl_pct"].(float64)
+		pnlPctJ, okJ := traders[j]["total_pnl_pct"].(float64)
+		if !okI {
+			pnlPctI = 0
+		}
+		if !okJ {
+			pnlPctJ = 0
+		}
+		return pnlPctI > pnlPctJ
+	})
+
+	return map[string]interface{}{
+		"traders":     traders,
+		"count":       len(traders),
+		"total_count": len(traders),
+	}, nil
+}
+
+// GetTGCompetitionData 获取仅TG交易员的竞赛数据（按收益率排序）
+func (tm *TraderManager) GetTGCompetitionData() (map[string]interface{}, error) {
+	tm.mu.RLock()
+
+	// 仅筛选TG交易员
+	tgTraders := make([]*trader.AutoTrader, 0, len(tm.traders))
+	for _, t := range tm.traders {
+		if t.IsTGTrader() {
+			tgTraders = append(tgTraders, t)
+		}
+	}
+	tm.mu.RUnlock()
+
+	log.Printf("🔄 获取TG交易员排行榜数据，数量: %d", len(tgTraders))
+
+	traders := tm.getConcurrentTraderData(tgTraders)
+
+	// 按收益率排序（降序）
+	sort.Slice(traders, func(i, j int) bool {
+		pnlPctI, okI := traders[i]["total_pnl_pct"].(float64)
+		pnlPctJ, okJ := traders[j]["total_pnl_pct"].(float64)
+		if !okI {
+			pnlPctI = 0
+		}
+		if !okJ {
+			pnlPctJ = 0
+		}
+		return pnlPctI > pnlPctJ
+	})
+
+	comparison := make(map[string]interface{})
+	comparison["traders"] = traders
+	comparison["count"] = len(traders)
+	comparison["total_count"] = len(traders)
+
+	return comparison, nil
+}
+
 // getConcurrentTraderData 并发获取多个交易员的数据
 func (tm *TraderManager) getConcurrentTraderData(traders []*trader.AutoTrader) []map[string]interface{} {
 	type traderResult struct {

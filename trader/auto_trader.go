@@ -289,6 +289,11 @@ func (at *AutoTrader) SetTelegramBotManager(telegramBotManager interface{}) {
 	at.telegramBotManager = telegramBotManager
 }
 
+// IsTGTrader 判断是否为TG交易员（userID为纯数字的Telegram ID）
+func (at *AutoTrader) IsTGTrader() bool {
+	return isTGTrader(at.userID)
+}
+
 // pushDecisionToTelegram 推送AI决策到Telegram（仅适用于TG交易员）
 func (at *AutoTrader) pushDecisionToTelegram(record *logger.DecisionRecord) {
 	// 检查是否有Telegram Bot管理器
