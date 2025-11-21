@@ -120,21 +120,7 @@ func (s *ArbitrumService) SendGas(privateKeyHex, toAddress string, amountWei *bi
 		return "", fmt.Errorf("获取 nonce 失败: %w", err)
 	}
 
-	// 获取最新区块的 baseFee，确保 feeCap >= baseFee + tipCap
-	tipCap, err := s.client.SuggestGasTipCap(ctx)
-	if err != nil {
-		tipCap = big.NewInt(10_000_000) // 0.01 gwei
-	}
-	feeCap, err := s.client.SuggestGasPrice(ctx)
-	if err != nil {
-		feeCap = big.NewInt(13_500_000) // 0.0135 gwei
-	}
-	if head, err := s.client.HeaderByNumber(ctx, nil); err == nil && head.BaseFee != nil {
-		minFeeCap := new(big.Int).Add(head.BaseFee, tipCap)
-		if feeCap.Cmp(minFeeCap) < 0 {
-			feeCap = minFeeCap
-		}
-	}
+	tipCap, feeCap := s.getGasCaps(ctx)
 
 	toAddr := common.HexToAddress(toAddress)
 	tx := types.NewTx(&types.DynamicFeeTx{
@@ -179,21 +165,7 @@ func (s *ArbitrumService) TransferUSDC(privateKeyHex string, amount *big.Int) (s
 		return "", fmt.Errorf("获取 nonce 失败: %w", err)
 	}
 
-	// 获取最新区块的 baseFee，确保 feeCap >= baseFee + tipCap
-	tipCap, err := s.client.SuggestGasTipCap(ctx)
-	if err != nil {
-		tipCap = big.NewInt(10_000_000)
-	}
-	feeCap, err := s.client.SuggestGasPrice(ctx)
-	if err != nil {
-		feeCap = big.NewInt(13_500_000)
-	}
-	if head, err := s.client.HeaderByNumber(ctx, nil); err == nil && head.BaseFee != nil {
-		minFeeCap := new(big.Int).Add(head.BaseFee, tipCap)
-		if feeCap.Cmp(minFeeCap) < 0 {
-			feeCap = minFeeCap
-		}
-	}
+	tipCap, feeCap := s.getGasCaps(ctx)
 
 	data, err := s.erc20ABI.Pack("transfer", s.bridgeAddr, amount)
 	if err != nil {
@@ -242,6 +214,35 @@ func (s *ArbitrumService) TransferUSDC(privateKeyHex string, amount *big.Int) (s
 
 	time.Sleep(s.transferWait)
 	return signedTx.Hash().Hex(), nil
+}
+
+// getGasCaps 统一获取 tipCap 和 feeCap，确保 feeCap 至少覆盖 baseFee+tip，并增加冗余
+func (s *ArbitrumService) getGasCaps(ctx context.Context) (*big.Int, *big.Int) {
+	// 默认兜底值（约 0.015 / 0.03 gwei）
+	defaultTip := big.NewInt(15_000_000)
+	defaultBase := big.NewInt(30_000_000)
+
+	tipCap, err := s.client.SuggestGasTipCap(ctx)
+	if err != nil || tipCap == nil || tipCap.Sign() <= 0 {
+		tipCap = new(big.Int).Set(defaultTip)
+	}
+
+	// 读取最新区块 baseFee
+	baseFee := new(big.Int).Set(defaultBase)
+	if head, err := s.client.HeaderByNumber(ctx, nil); err == nil && head.BaseFee != nil && head.BaseFee.Sign() > 0 {
+		baseFee = new(big.Int).Set(head.BaseFee)
+	}
+
+	// feeCap = baseFee*2 + tip，留冗余避免 maxFee < baseFee
+	feeCap := new(big.Int).Mul(baseFee, big.NewInt(2))
+	feeCap.Add(feeCap, tipCap)
+
+	// 极端兜底
+	if feeCap.Sign() <= 0 {
+		feeCap = new(big.Int).Add(defaultBase, tipCap)
+	}
+
+	return tipCap, feeCap
 }
 
 func parsePrivateKey(hexKey string) (*ecdsa.PrivateKey, common.Address, error) {
