@@ -55,6 +55,7 @@ type DecisionAction struct {
 	Quantity   float64   `json:"quantity"`  // 数量（部分平仓时使用）
 	Leverage   int       `json:"leverage"`  // 杠杆（开仓时）
 	Price      float64   `json:"price"`     // 执行价格
+	Profit     float64   `json:"profit"`    // 本次交易盈亏（USDT）
 	OrderID    int64     `json:"order_id"`  // 订单ID
 	Timestamp  time.Time `json:"timestamp"` // 执行时间
 	Success    bool      `json:"success"`   // 是否成功

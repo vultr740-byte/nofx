@@ -378,6 +378,9 @@ func (at *AutoTrader) pushTradeExecutionToTelegram(action *logger.DecisionAction
 	if action.Price > 0 {
 		builder.WriteString(fmt.Sprintf("• 价格: %.4f\n", action.Price))
 	}
+	if action.Profit != 0 {
+		builder.WriteString(fmt.Sprintf("• 盈亏: %.2f USDT\n", action.Profit))
+	}
 	if !action.Timestamp.IsZero() {
 		builder.WriteString(fmt.Sprintf("🕒 %s\n", action.Timestamp.Format("15:04:05")))
 	}
@@ -1394,10 +1397,33 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *decision.Decision, ac
 	}
 	actionRecord.Price = marketData.CurrentPrice
 
+	// 记录持仓均价与数量（用于计算平仓盈亏）
+	var entryPrice float64
+	var positionAmt float64
+	positionsForPnl, err := at.trader.GetPositions()
+	if err == nil {
+		for _, pos := range positionsForPnl {
+			if pos["symbol"] == symbol && pos["side"] == "long" {
+				entryPrice = pos["entryPrice"].(float64)
+				positionAmt = pos["positionAmt"].(float64)
+				if positionAmt < 0 {
+					positionAmt = -positionAmt
+				}
+				break
+			}
+		}
+	}
+
 	// 平仓
 	order, err := at.trader.CloseLong(symbol, 0) // 0 = 全部平仓
 	if err != nil {
 		return err
+	}
+
+	// 尝试计算本次平仓盈亏（基于持仓均价和当前价格）
+	if marketData.CurrentPrice > 0 && entryPrice > 0 && positionAmt > 0 {
+		actionRecord.Quantity = positionAmt
+		actionRecord.Profit = (marketData.CurrentPrice - entryPrice) * positionAmt
 	}
 
 	// 记录订单ID
@@ -1428,10 +1454,33 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *decision.Decision, a
 	}
 	actionRecord.Price = marketData.CurrentPrice
 
+	// 记录持仓均价与数量（用于计算平仓盈亏）
+	var entryPrice float64
+	var positionAmt float64
+	positionsForPnl, err := at.trader.GetPositions()
+	if err == nil {
+		for _, pos := range positionsForPnl {
+			if pos["symbol"] == symbol && pos["side"] == "short" {
+				entryPrice = pos["entryPrice"].(float64)
+				positionAmt = pos["positionAmt"].(float64)
+				if positionAmt < 0 {
+					positionAmt = -positionAmt
+				}
+				break
+			}
+		}
+	}
+
 	// 平仓
 	order, err := at.trader.CloseShort(symbol, 0) // 0 = 全部平仓
 	if err != nil {
 		return err
+	}
+
+	// 尝试计算本次平仓盈亏
+	if marketData.CurrentPrice > 0 && entryPrice > 0 && positionAmt > 0 {
+		actionRecord.Quantity = positionAmt
+		actionRecord.Profit = (entryPrice - marketData.CurrentPrice) * positionAmt
 	}
 
 	// 记录订单ID
