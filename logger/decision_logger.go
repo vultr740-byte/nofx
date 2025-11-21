@@ -672,8 +672,8 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 		}
 	}
 
-	// 计算夏普比率：仅当存在真实交易收益率时更新，否则保持上一次的值
-	if len(sharpeReturns) > 0 {
+	// 计算夏普比率：需要足够的收益率样本才更新，否则沿用上一期
+	if len(sharpeReturns) >= 3 {
 		analysis.SharpeRatio = calculateSharpeRatioFromReturns(sharpeReturns)
 		l.lastSharpeRatio = analysis.SharpeRatio
 		l.hasSharpeRatio = true
@@ -688,7 +688,8 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 
 // calculateSharpeRatioFromReturns 根据收益率序列计算夏普比率
 func calculateSharpeRatioFromReturns(returns []float64) float64 {
-	if len(returns) == 0 {
+	// 需要至少3个样本才能给出稳定的统计量
+	if len(returns) < 3 {
 		return 0.0
 	}
 
@@ -715,15 +716,12 @@ func calculateSharpeRatioFromReturns(returns []float64) float64 {
 		diff := r - meanReturn
 		sumSquaredDiff += diff * diff
 	}
-	variance := sumSquaredDiff / float64(len(validReturns))
+	// 使用样本标准差（N-1）避免小样本时方差被低估
+	variance := sumSquaredDiff / float64(len(validReturns)-1)
 	stdDev := math.Sqrt(variance)
 
-	if stdDev == 0 {
-		if meanReturn > 0 {
-			return 999.0
-		} else if meanReturn < 0 {
-			return -999.0
-		}
+	if stdDev < 1e-9 {
+		// 样本几乎无波动，返回0避免极端值
 		return 0.0
 	}
 
