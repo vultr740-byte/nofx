@@ -321,14 +321,12 @@ func (at *AutoTrader) pushDecisionToTelegram(record *logger.DecisionRecord) {
 		return
 	}
 
-	// 推送消息到Telegram
-	go func() {
-		if err := tgBotMgr.PushDecisionToUser(telegramID, decisionMsg); err != nil {
-			log.Printf("⚠️ 推送决策到Telegram失败: %v", err)
-		} else {
-			log.Printf("✅ 成功推送AI决策到Telegram (用户ID: %s)", at.userID)
-		}
-	}()
+	// 推送消息到Telegram（同步，保证在执行结果之前发送）
+	if err := tgBotMgr.PushDecisionToUser(telegramID, decisionMsg); err != nil {
+		log.Printf("⚠️ 推送决策到Telegram失败: %v", err)
+	} else {
+		log.Printf("✅ 成功推送AI决策到Telegram (用户ID: %s)", at.userID)
+	}
 }
 
 // pushTradeExecutionToTelegram 推送单笔交易执行结果（仅TG交易员）
@@ -396,11 +394,9 @@ func (at *AutoTrader) pushTradeExecutionToTelegram(action *logger.DecisionAction
 
 	message := builder.String()
 
-	go func() {
-		if err := tgBotMgr.PushDecisionToUser(telegramID, message); err != nil {
-			log.Printf("⚠️ 推送交易执行信息到Telegram失败: %v", err)
-		}
-	}()
+	if err := tgBotMgr.PushDecisionToUser(telegramID, message); err != nil {
+		log.Printf("⚠️ 推送交易执行信息到Telegram失败: %v", err)
+	}
 }
 
 // formatDecisionForTelegram 格式化AI决策为Telegram消息
