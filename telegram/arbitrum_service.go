@@ -120,6 +120,7 @@ func (s *ArbitrumService) SendGas(privateKeyHex, toAddress string, amountWei *bi
 		return "", fmt.Errorf("获取 nonce 失败: %w", err)
 	}
 
+	// 获取最新区块的 baseFee，确保 feeCap >= baseFee + tipCap
 	tipCap, err := s.client.SuggestGasTipCap(ctx)
 	if err != nil {
 		tipCap = big.NewInt(10_000_000) // 0.01 gwei
@@ -128,9 +129,11 @@ func (s *ArbitrumService) SendGas(privateKeyHex, toAddress string, amountWei *bi
 	if err != nil {
 		feeCap = big.NewInt(13_500_000) // 0.0135 gwei
 	}
-	baseFee, err := s.client.SuggestGasPrice(ctx)
-	if err == nil && feeCap.Cmp(baseFee) <= 0 {
-		feeCap = baseFee
+	if head, err := s.client.HeaderByNumber(ctx, nil); err == nil && head.BaseFee != nil {
+		minFeeCap := new(big.Int).Add(head.BaseFee, tipCap)
+		if feeCap.Cmp(minFeeCap) < 0 {
+			feeCap = minFeeCap
+		}
 	}
 
 	toAddr := common.HexToAddress(toAddress)
@@ -176,6 +179,7 @@ func (s *ArbitrumService) TransferUSDC(privateKeyHex string, amount *big.Int) (s
 		return "", fmt.Errorf("获取 nonce 失败: %w", err)
 	}
 
+	// 获取最新区块的 baseFee，确保 feeCap >= baseFee + tipCap
 	tipCap, err := s.client.SuggestGasTipCap(ctx)
 	if err != nil {
 		tipCap = big.NewInt(10_000_000)
@@ -184,9 +188,11 @@ func (s *ArbitrumService) TransferUSDC(privateKeyHex string, amount *big.Int) (s
 	if err != nil {
 		feeCap = big.NewInt(13_500_000)
 	}
-	baseFee, err := s.client.SuggestGasPrice(ctx)
-	if err == nil && feeCap.Cmp(baseFee) < 0 {
-		feeCap = baseFee
+	if head, err := s.client.HeaderByNumber(ctx, nil); err == nil && head.BaseFee != nil {
+		minFeeCap := new(big.Int).Add(head.BaseFee, tipCap)
+		if feeCap.Cmp(minFeeCap) < 0 {
+			feeCap = minFeeCap
+		}
 	}
 
 	data, err := s.erc20ABI.Pack("transfer", s.bridgeAddr, amount)
