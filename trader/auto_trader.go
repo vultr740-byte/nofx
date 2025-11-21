@@ -516,6 +516,8 @@ func (at *AutoTrader) Run() error {
 	at.isRunning = true
 	log.Println("🚀 AI驱动自动交易系统启动")
 
+	log.Printf("📥 [InitBalance] trader=%s user=%s initial=%.2f (config/db)", at.name, at.userID, at.initialBalance)
+
 	// 如果初始余额为0，先获取当前余额
 	if at.initialBalance <= 0 {
 		log.Printf("💰 正在自动获取当前交易所余额...")
@@ -525,18 +527,26 @@ func (at *AutoTrader) Run() error {
 			return fmt.Errorf("获取初始余额失败: %w", err)
 		}
 
-		// 提取可用余额
+		// 优先使用总资产，而不是可用余额，避免持仓时计算偏小
 		var actualBalance float64
-		if availableBalance, ok := balanceInfo["available_balance"].(float64); ok && availableBalance > 0 {
-			actualBalance = availableBalance
-		} else if availableBalance, ok := balanceInfo["availableBalance"].(float64); ok && availableBalance > 0 {
-			actualBalance = availableBalance
-		} else if totalBalance, ok := balanceInfo["balance"].(float64); ok && totalBalance > 0 {
-			actualBalance = totalBalance
-		} else if totalEquity, ok := balanceInfo["total_equity"].(float64); ok && totalEquity > 0 {
-			actualBalance = totalEquity
+		if equity, ok := balanceInfo["totalWalletBalance"].(float64); ok && equity > 0 {
+			actualBalance = equity
+			log.Printf("📊 [InitBalance] 使用 totalWalletBalance=%.4f", equity)
+		} else if equity, ok := balanceInfo["total_equity"].(float64); ok && equity > 0 {
+			actualBalance = equity
+			log.Printf("📊 [InitBalance] 使用 total_equity=%.4f", equity)
 		} else if accountValue, ok := balanceInfo["accountValue"].(float64); ok && accountValue > 0 {
 			actualBalance = accountValue
+			log.Printf("📊 [InitBalance] 使用 accountValue=%.4f", accountValue)
+		} else if totalBalance, ok := balanceInfo["balance"].(float64); ok && totalBalance > 0 {
+			actualBalance = totalBalance
+			log.Printf("📊 [InitBalance] 使用 balance=%.4f", totalBalance)
+		} else if availableBalance, ok := balanceInfo["availableBalance"].(float64); ok && availableBalance > 0 {
+			actualBalance = availableBalance
+			log.Printf("📊 [InitBalance] 使用 availableBalance=%.4f", availableBalance)
+		} else if availableBalance, ok := balanceInfo["available_balance"].(float64); ok && availableBalance > 0 {
+			actualBalance = availableBalance
+			log.Printf("📊 [InitBalance] 使用 available_balance=%.4f", availableBalance)
 		}
 
 		if actualBalance > 0 {
@@ -569,6 +579,8 @@ func (at *AutoTrader) Run() error {
 		} else {
 			log.Printf("⚠️ 警告: 交易所余额为0或无法解析，继续使用初始余额: %.2f", at.initialBalance)
 		}
+	} else {
+		log.Printf("📊 [InitBalance] 使用数据库初始余额: %.2f USDT", at.initialBalance)
 	}
 
 	log.Printf("💰 初始余额: %.2f USDT", at.initialBalance)
@@ -1944,6 +1956,10 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 	if totalEquity > 0 {
 		marginUsedPct = (totalMarginUsed / totalEquity) * 100
 	}
+
+	// 诊断日志：输出盈亏相关数据，便于排查排行榜异常
+	log.Printf("📈 [AccountInfo] trader=%s equity=%.2f initial=%.2f pnl=%.2f pnl_pct=%.2f unrealized=%.2f margin_used=%.2f",
+		at.name, totalEquity, at.initialBalance, totalPnL, totalPnLPct, totalUnrealizedPnL, totalMarginUsed)
 
 	return map[string]interface{}{
 		// 核心字段
