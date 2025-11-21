@@ -158,12 +158,13 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	result := make(map[string]interface{})
 
 	// ✅ Step 3: 总资产使用 MarginSummary 的 accountValue（包含占用保证金）
-	var accountValue, totalMarginUsed float64
+	var accountValue, totalMarginUsed, totalNtlPos float64
 	var summaryType string
 	var summary interface{}
 
 	accountValue, _ = strconv.ParseFloat(accountState.MarginSummary.AccountValue, 64)
 	totalMarginUsed, _ = strconv.ParseFloat(accountState.MarginSummary.TotalMarginUsed, 64)
+	totalNtlPos, _ = strconv.ParseFloat(accountState.MarginSummary.TotalNtlPos, 64)
 	summaryType = "MarginSummary (默认对齐 JS)"
 	summary = accountState.MarginSummary
 
@@ -208,6 +209,8 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	result["availableBalance"] = availableBalance        // 可用余额（Withdrawable 字段）
 	result["totalUnrealizedProfit"] = totalUnrealizedPnl // 未实现盈亏（仅来自 Perpetuals）
 	result["spotBalance"] = spotUSDCBalance              // Spot 现货余额（单独返回）
+	result["totalMarginUsed"] = totalMarginUsed          // 占用保证金
+	result["totalPosition"] = totalNtlPos                // 总持仓名义价值
 
 	// 增强的调试日志：显示完整的余额字段映射
 	log.Printf("🔍 [DEBUG] Hyperliquid 余额字段详情 (JavaScript 方式):")
@@ -216,6 +219,7 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	log.Printf("  • TotalMarginUsed (占用保证金): %.2f USDC", totalMarginUsed)
 	log.Printf("  • SpotUSDCBalance (现货余额): %.2f USDC", spotUSDCBalance)
 	log.Printf("  • TotalUnrealizedPnL (未实现盈亏): %.2f USDC", totalUnrealizedPnl)
+	log.Printf("  • TotalNtlPos (总持仓): %.2f USDC", totalNtlPos)
 	log.Printf("")
 	log.Printf("✅ JavaScript 计算方式:")
 	log.Printf("  • 总资产 = AccountValue = %.2f USDC", totalWalletBalance)

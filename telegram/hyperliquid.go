@@ -67,6 +67,7 @@ func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}
 	availableBalance, _ := balance["availableBalance"].(float64)
 	totalUnrealizedProfit, _ := balance["totalUnrealizedProfit"].(float64)
 	spotBalance, _ := balance["spotBalance"].(float64)
+	totalPosition, _ := balance["totalPosition"].(float64)
 
 	// 计算盈亏百分比
 	var profitPercent float64
@@ -82,24 +83,21 @@ func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}
 		pnlEmoji = "🔴"
 	}
 
-	// JavaScript 方式：总资产 = AccountValue，现货余额单独展示
-	contractNetValue := totalWalletBalance // 合约净值等于总资产 (AccountValue)
-
-	message := fmt.Sprintf(`💰 账户余额总览 (JavaScript 方式)
+	message := fmt.Sprintf(`💰 账户余额总览
 
 💎 总资产: %.2f USDC
 
 📊 资产详情:
 • 现货余额: %.2f USDC
 • 可用余额: %.2f USDC
-• 合约净值: %.2f USDC
+• 总持仓: %.2f USDC
 
 %s 盈亏状况:
 • 未实现盈亏: %.2f USDC (%.2f%%)`,
 		totalWalletBalance,
 		spotBalance,
 		availableBalance,
-		contractNetValue,
+		totalPosition,
 		pnlEmoji,
 		totalUnrealizedProfit,
 		profitPercent,
