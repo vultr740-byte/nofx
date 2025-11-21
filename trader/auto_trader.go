@@ -863,10 +863,15 @@ func (at *AutoTrader) runCycle() error {
 	}
 
 	// 保存账户状态快照
+	totalUnrealized := 0.0
+	for _, pos := range ctx.Positions {
+		totalUnrealized += pos.UnrealizedPnL
+	}
+
 	record.AccountState = logger.AccountSnapshot{
 		TotalBalance:          ctx.Account.TotalEquity,
 		AvailableBalance:      ctx.Account.AvailableBalance,
-		TotalUnrealizedProfit: ctx.Account.TotalPnL,
+		TotalUnrealizedProfit: totalUnrealized, // 来自当前持仓的未实现盈亏
 		PositionCount:         ctx.Account.PositionCount,
 		MarginUsedPct:         ctx.Account.MarginUsedPct,
 	}
@@ -1033,7 +1038,7 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 	if wallet, ok := balance["totalWalletBalance"].(float64); ok {
 		totalWalletBalance = wallet
 	}
-		if avail, ok := balance["availableBalance"].(float64); ok {
+	if avail, ok := balance["availableBalance"].(float64); ok {
 		availableBalance = avail
 	}
 

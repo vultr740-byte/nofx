@@ -156,7 +156,6 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 入场价格: <code>$%.4f</code>
 标记价格: <code>$%.4f</code>
 未实现盈亏: <code>%.2f USDC (%.2f%%)</code> %s
-
 `,
 			sideEmoji, symbol, sideText, leverageText,
 			positionAmt, entryPrice, markPrice,
