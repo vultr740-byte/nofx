@@ -385,18 +385,13 @@ func (at *AutoTrader) pushTradeExecutionToTelegram(action *logger.DecisionAction
 		builder.WriteString(fmt.Sprintf("• 盈亏: %.2f USDT\n", action.Profit))
 	}
 	if action.StopLoss != nil {
-		builder.WriteString(fmt.Sprintf("🛡️ 止损: %.4f\n", *action.StopLoss))
+		builder.WriteString(fmt.Sprintf("• 止损: %.4f\n", *action.StopLoss))
 	}
 	if action.TakeProfit != nil {
-		builder.WriteString(fmt.Sprintf("🎯 止盈: %.4f\n", *action.TakeProfit))
+		builder.WriteString(fmt.Sprintf("• 止盈: %.4f\n", *action.TakeProfit))
 	}
 	if action.Error != "" {
 		builder.WriteString(fmt.Sprintf("⚠️ %s\n", action.Error))
-	}
-	if !action.Timestamp.IsZero() {
-		// 使用本地时区显示时间，避免 UTC 混淆
-		localTime := action.Timestamp.Local()
-		builder.WriteString(fmt.Sprintf("时间: %s\n", localTime.Format("15:04:05")))
 	}
 
 	message := builder.String()
