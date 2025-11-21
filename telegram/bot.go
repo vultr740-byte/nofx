@@ -182,6 +182,8 @@ func (tbm *TelegramBotManager) handleCommand(update tgbotapi.Update) {
 		tbm.handleStopTrader(update)
 	case "trader_status":
 		tbm.handleTraderStatus(update)
+	case "leaderboard":
+		tbm.handleLeaderboard(update)
 	case "settings":
 		tbm.handleMenu(update)
 	default:
@@ -249,6 +251,7 @@ func (tbm *TelegramBotManager) handleHelp(update tgbotapi.Update) {
 /balance - 查看您的账户余额（现货 + 合约）
 /positions - 查看当前持仓信息
 /deposit - 获取 USDC 充值地址
+/leaderboard - 查看交易员盈利排行榜
 
 🤖 AI Agent 管理:
 /start_trader - 启动 Agent 开始交易
@@ -348,6 +351,72 @@ func (tbm *TelegramBotManager) handlePositions(update tgbotapi.Update) {
 
 	// 发送持仓信息
 	tbm.sendMessage(chatID, positionsMsg)
+}
+
+// handleLeaderboard 处理 /leaderboard 命令
+func (tbm *TelegramBotManager) handleLeaderboard(update tgbotapi.Update) {
+	chatID := update.Message.Chat.ID
+
+	if tbm.traderMgr == nil {
+		tbm.sendMessage(chatID, "⚠️ 排行榜暂不可用，请稍后重试。")
+		return
+	}
+
+	tbm.sendMessage(chatID, "🔄 正在加载排行榜，请稍候...")
+
+	data, err := tbm.traderMgr.GetCompetitionData()
+	if err != nil {
+		log.Printf("获取排行榜失败: %v", err)
+		tbm.sendMessage(chatID, "❌ 获取排行榜失败，请稍后重试。")
+		return
+	}
+
+	tradersAny, ok := data["traders"]
+	if !ok {
+		tbm.sendMessage(chatID, "⚠️ 暂无交易员数据。")
+		return
+	}
+
+	traders, ok := tradersAny.([]map[string]interface{})
+	if !ok || len(traders) == 0 {
+		tbm.sendMessage(chatID, "⚠️ 暂无交易员数据。")
+		return
+	}
+
+	limit := 10
+	if len(traders) < limit {
+		limit = len(traders)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("🏆 盈利排行榜（按收益率排名）\n\n")
+
+	for i := 0; i < limit; i++ {
+		tr := traders[i]
+		name, _ := tr["trader_name"].(string)
+		model, _ := tr["ai_model"].(string)
+		exchange, _ := tr["exchange"].(string)
+		pnlPct, _ := tr["total_pnl_pct"].(float64)
+		pnl, _ := tr["total_pnl"].(float64)
+
+		if name == "" {
+			name = "未命名交易员"
+		}
+		if model == "" {
+			model = "未配置模型"
+		}
+		if exchange == "" {
+			exchange = "交易所未配置"
+		}
+
+		sb.WriteString(fmt.Sprintf("#%d %s\n", i+1, name))
+		sb.WriteString(fmt.Sprintf("• 模型: %s\n", model))
+		sb.WriteString(fmt.Sprintf("• 交易所: %s\n", exchange))
+		sb.WriteString(fmt.Sprintf("• 收益率: %.2f%%\n", pnlPct))
+		sb.WriteString(fmt.Sprintf("• 盈亏: %.2f USDT\n\n", pnl))
+	}
+
+	tbm.sendMessage(chatID, sb.String())
 }
 
 // handleDeposit 处理 /deposit 命令
@@ -617,6 +686,10 @@ func (tbm *TelegramBotManager) setupCommands() {
 		{
 			Command:     "trader_status",
 			Description: "👁️ 查看 Agent",
+		},
+		{
+			Command:     "leaderboard",
+			Description: "🏆 盈利排行榜",
 		},
 		{
 			Command:     "settings",
