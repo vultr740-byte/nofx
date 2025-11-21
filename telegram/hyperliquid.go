@@ -83,9 +83,7 @@ func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}
 		pnlEmoji = "🔴"
 	}
 
-	message := fmt.Sprintf(`💰 账户余额总览
-
-💎 总资产: %.2f USDC
+	message := fmt.Sprintf(`总资产: %.2f USDC
 
 📊 资产详情:
 • 现货余额: %.2f USDC
@@ -115,7 +113,6 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 	}
 
 	var message strings.Builder
-	message.WriteString("💎 当前持仓\n\n")
 
 	for i, pos := range positions {
 		symbol, _ := pos["symbol"].(string)
