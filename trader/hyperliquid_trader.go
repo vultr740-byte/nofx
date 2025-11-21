@@ -193,10 +193,10 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	// AccountValue = 总账户净值（已包含空闲资金+持仓价值+未实现盈亏）
 	// TotalMarginUsed = 持仓占用的保证金（已包含在AccountValue中，仅用于显示）
 
-	// ✅ Step 4: 优化的可用余额计算逻辑
+	// ✅ Step 4: JavaScript 方式的可用余额计算逻辑
+	// 直接使用 Withdrawable 字段，与 JavaScript 参考实现保持一致
 	availableBalance := 0.0
 
-	// 优先使用 Withdrawable 字段（官方提供的最准确值）
 	if accountState.Withdrawable != "" {
 		withdrawable, err := strconv.ParseFloat(accountState.Withdrawable, 64)
 		if err == nil {
@@ -204,51 +204,38 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 			log.Printf("✓ 使用 Withdrawable 字段: %.2f USDC", availableBalance)
 		} else {
 			log.Printf("⚠️ Withdrawable 字段解析失败: %v", err)
+			availableBalance = 0
 		}
 	} else {
-		log.Printf("⚠️ Withdrawable 字段为空，使用降级计算")
+		log.Printf("⚠️ Withdrawable 字段为空")
+		availableBalance = 0
 	}
 
-	// 降级方案：如果没有有效的 Withdrawable，使用更准确的计算
-	if availableBalance == 0 {
-		// AccountValue = 可用余额 + 占用保证金
-		// 所以：可用余额 = AccountValue - 占用保证金
-		availableBalance = accountValue - totalMarginUsed
+	// ✅ Step 5: 采用 JavaScript 计算方式
+	// 直接使用 accountValue 作为总资产，避免重复计算现货余额
+	totalWalletBalance := accountValue
 
-		if availableBalance < 0 {
-			log.Printf("⚠️ 计算的可用余额为负数 (%.2f)，重置为 0", availableBalance)
-			availableBalance = 0
-		} else {
-			log.Printf("✓ 使用降级计算 (AccountValue - MarginUsed): %.2f USDC", availableBalance)
-		}
-	}
-
-	// ✅ Step 5: 寻找单一的总资产字段
-	// 检查是否有现成的总资产字段，避免手动计算
-	totalWalletBalance := accountValue + spotUSDCBalance
-
-	
-	result["totalWalletBalance"] = totalWalletBalance    // 总资产（Perp + Spot）
-	result["availableBalance"] = availableBalance        // 可用余额（仅 Perpetuals，不含 Spot）
+	result["totalWalletBalance"] = totalWalletBalance    // 总资产（使用 accountValue）
+	result["availableBalance"] = availableBalance        // 可用余额（Withdrawable 字段）
 	result["totalUnrealizedProfit"] = totalUnrealizedPnl // 未实现盈亏（仅来自 Perpetuals）
 	result["spotBalance"] = spotUSDCBalance              // Spot 现货余额（单独返回）
 
 	// 增强的调试日志：显示完整的余额字段映射
-	log.Printf("🔍 [DEBUG] Hyperliquid 余额字段详情:")
-	log.Printf("  • AccountValue (合约净值): %.2f USDC", accountValue)
+	log.Printf("🔍 [DEBUG] Hyperliquid 余额字段详情 (JavaScript 方式):")
+	log.Printf("  • AccountValue (总资产): %.2f USDC", accountValue)
 	log.Printf("  • Withdrawable (可提现): %.2f USDC", availableBalance)
 	log.Printf("  • TotalMarginUsed (占用保证金): %.2f USDC", totalMarginUsed)
 	log.Printf("  • SpotUSDCBalance (现货余额): %.2f USDC", spotUSDCBalance)
 	log.Printf("  • TotalUnrealizedPnL (未实现盈亏): %.2f USDC", totalUnrealizedPnl)
 	log.Printf("")
-	log.Printf("✅ 修复后的计算逻辑:")
-	log.Printf("  • 总资产 = AccountValue + SpotUSDCBalance = %.2f + %.2f = %.2f USDC",
-		accountValue, spotUSDCBalance, totalWalletBalance)
+	log.Printf("✅ JavaScript 计算方式:")
+	log.Printf("  • 总资产 = AccountValue = %.2f USDC", totalWalletBalance)
+	log.Printf("  • 现货余额单独展示: %.2f USDC", spotUSDCBalance)
 	log.Printf("")
 	log.Printf("💰 账户总览:")
-	log.Printf("  • 总资产 (Perp+Spot): %.2f USDC", totalWalletBalance)
-	log.Printf("  • Perpetuals 可用余额: %.2f USDC", availableBalance)
-	log.Printf("  • Spot 现货余额: %.2f USDC", spotUSDCBalance)
+	log.Printf("  • 总资产 (AccountValue): %.2f USDC", totalWalletBalance)
+	log.Printf("  • 可用余额 (Withdrawable): %.2f USDC", availableBalance)
+	log.Printf("  • 现货余额 (Spot): %.2f USDC", spotUSDCBalance)
 	log.Printf("  • 未实现盈亏: %.2f USDC", totalUnrealizedPnl)
 	log.Printf("  ⭐ 与 Hyperliquid 官网对比: 总资产 %.2f USDC", totalWalletBalance)
 

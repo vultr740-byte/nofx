@@ -82,7 +82,10 @@ func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}
 		pnlEmoji = "🔴"
 	}
 
-	message := fmt.Sprintf(`💰 账户余额总览
+	// JavaScript 方式：总资产 = AccountValue，现货余额单独展示
+	contractNetValue := totalWalletBalance // 合约净值等于总资产 (AccountValue)
+
+	message := fmt.Sprintf(`💰 账户余额总览 (JavaScript 方式)
 
 💎 总资产: %.2f USDC
 
@@ -96,7 +99,7 @@ func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}
 		totalWalletBalance,
 		spotBalance,
 		availableBalance,
-		totalWalletBalance-spotBalance,
+		contractNetValue,
 		pnlEmoji,
 		totalUnrealizedProfit,
 		profitPercent,
