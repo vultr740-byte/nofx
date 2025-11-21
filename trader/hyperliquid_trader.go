@@ -157,31 +157,21 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	// 解析余额信息（MarginSummary字段都是string）
 	result := make(map[string]interface{})
 
-	// ✅ Step 3: 根据保证金模式动态选择正确的摘要（CrossMarginSummary 或 MarginSummary）
+	// ✅ Step 3: 总资产使用 MarginSummary 的 accountValue（包含占用保证金）
 	var accountValue, totalMarginUsed float64
 	var summaryType string
 	var summary interface{}
 
-	if t.isCrossMargin {
-		// 全仓模式：使用 CrossMarginSummary
-		accountValue, _ = strconv.ParseFloat(accountState.CrossMarginSummary.AccountValue, 64)
-		totalMarginUsed, _ = strconv.ParseFloat(accountState.CrossMarginSummary.TotalMarginUsed, 64)
-		summaryType = "CrossMarginSummary (全仓)"
-		summary = accountState.CrossMarginSummary
-	} else {
-		// 逐仓模式：使用 MarginSummary
-		accountValue, _ = strconv.ParseFloat(accountState.MarginSummary.AccountValue, 64)
-		totalMarginUsed, _ = strconv.ParseFloat(accountState.MarginSummary.TotalMarginUsed, 64)
-		summaryType = "MarginSummary (逐仓)"
-		summary = accountState.MarginSummary
-	}
+	accountValue, _ = strconv.ParseFloat(accountState.MarginSummary.AccountValue, 64)
+	totalMarginUsed, _ = strconv.ParseFloat(accountState.MarginSummary.TotalMarginUsed, 64)
+	summaryType = "MarginSummary (默认对齐 JS)"
+	summary = accountState.MarginSummary
 
 	// 🔍 调试：打印API返回的完整摘要结构
 	summaryJSON, _ := json.MarshalIndent(summary, "  ", "  ")
 	log.Printf("🔍 [DEBUG] Hyperliquid API %s 完整数据:", summaryType)
 	log.Printf("%s", string(summaryJSON))
 
-	
 	// ⚠️ 关键修复：从所有持仓中累加真正的未实现盈亏
 	totalUnrealizedPnl := 0.0
 	for _, assetPos := range accountState.AssetPositions {
@@ -193,8 +183,7 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	// AccountValue = 总账户净值（已包含空闲资金+持仓价值+未实现盈亏）
 	// TotalMarginUsed = 持仓占用的保证金（已包含在AccountValue中，仅用于显示）
 
-	// ✅ Step 4: JavaScript 方式的可用余额计算逻辑
-	// 直接使用 Withdrawable 字段，与 JavaScript 参考实现保持一致
+	// ✅ Step 4: 可用余额直接使用 Withdrawable 字段
 	availableBalance := 0.0
 
 	if accountState.Withdrawable != "" {
