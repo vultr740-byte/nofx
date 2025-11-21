@@ -245,6 +245,13 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 
 	log.Printf("🔍 [DEBUG] Hyperliquid API返回 %d 个资产持仓", len(accountState.AssetPositions))
 
+	// 预先获取触发类挂单，用于止盈/止损信息
+	frontendOrders, err := t.exchange.Info().FrontendOpenOrders(t.ctx, t.walletAddr)
+	if err != nil {
+		log.Printf("⚠️ 获取前端挂单失败，止盈止损信息将缺失: %v", err)
+		frontendOrders = nil
+	}
+
 	var result []map[string]interface{}
 
 	// 遍历所有持仓
@@ -312,6 +319,47 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 		posMap["unRealizedProfit"] = unrealizedPnl
 		posMap["leverage"] = float64(position.Leverage.Value)
 		posMap["liquidationPrice"] = liquidationPx
+
+		// 匹配止盈/止损触发单
+		var stopLossPx, takeProfitPx float64
+		for _, ord := range frontendOrders {
+			if ord.Coin != position.Coin || !ord.ReduceOnly || !ord.IsTrigger {
+				continue
+			}
+			triggerPx := ord.TriggerPx
+			if triggerPx <= 0 {
+				continue
+			}
+			if posAmt > 0 {
+				// 多仓：触发价低于开仓价视为止损，高于视为止盈
+				if triggerPx < entryPrice {
+					if stopLossPx == 0 || triggerPx > stopLossPx {
+						stopLossPx = triggerPx
+					}
+				} else {
+					if takeProfitPx == 0 || triggerPx < takeProfitPx {
+						takeProfitPx = triggerPx
+					}
+				}
+			} else {
+				// 空仓：触发价高于开仓价视为止损，低于视为止盈
+				if triggerPx > entryPrice {
+					if stopLossPx == 0 || triggerPx < stopLossPx || stopLossPx == 0 {
+						stopLossPx = triggerPx
+					}
+				} else {
+					if takeProfitPx == 0 || triggerPx > takeProfitPx {
+						takeProfitPx = triggerPx
+					}
+				}
+			}
+		}
+		if stopLossPx > 0 {
+			posMap["stopLoss"] = stopLossPx
+		}
+		if takeProfitPx > 0 {
+			posMap["takeProfit"] = takeProfitPx
+		}
 
 		result = append(result, posMap)
 	}

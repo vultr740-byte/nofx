@@ -122,6 +122,8 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 		markPrice, _ := pos["markPrice"].(float64)
 		unRealizedProfit, _ := pos["unRealizedProfit"].(float64)
 		leverage, _ := pos["leverage"].(float64)
+		stopLoss, _ := pos["stopLoss"].(float64)
+		takeProfit, _ := pos["takeProfit"].(float64)
 
 		// 计算盈亏百分比
 		var profitPercent float64
@@ -153,10 +155,24 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 入场价格: <code>$%.4f</code>
 标记价格: <code>$%.4f</code>
 未实现盈亏: <code>%.2f USDC (%.2f%%)</code> %s
+止损: <code>%s</code>
+止盈: <code>%s</code>
 `,
 			sideEmoji, symbol, sideText, leverageText,
 			positionAmt, entryPrice, markPrice,
 			unRealizedProfit, profitPercent, pnlEmoji,
+			func() string {
+				if stopLoss > 0 {
+					return fmt.Sprintf("$%.4f", stopLoss)
+				}
+				return "未设置"
+			}(),
+			func() string {
+				if takeProfit > 0 {
+					return fmt.Sprintf("$%.4f", takeProfit)
+				}
+				return "未设置"
+			}(),
 		))
 
 		// 如果不是最后一个持仓，添加分隔线
