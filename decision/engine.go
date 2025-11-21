@@ -689,7 +689,14 @@ func findMatchingBracket(s string, start int) int {
 
 // validateDecision 验证单个决策的有效性
 func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int) error {
-	// 验证action
+	// 验证action，并兼容部分别名
+	if d.Action == "modify_stop_loss" {
+		d.Action = "update_stop_loss"
+	}
+	if d.Action == "modify_take_profit" {
+		d.Action = "update_take_profit"
+	}
+
 	validActions := map[string]bool{
 		"open_long":          true,
 		"open_short":         true,
@@ -709,10 +716,10 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 	// 开仓操作必须提供完整参数
 	if d.Action == "open_long" || d.Action == "open_short" {
 		// 根据币种使用配置的杠杆上限
-		maxLeverage := altcoinLeverage              // 山寨币使用配置的杠杆
+		maxLeverage := altcoinLeverage                               // 山寨币使用配置的杠杆
 		maxPositionValue := accountEquity * float64(altcoinLeverage) // 山寨币最多配置杠杆倍账户净值
 		if d.Symbol == "BTCUSDT" || d.Symbol == "ETHUSDT" {
-			maxLeverage = btcEthLeverage              // BTC和ETH使用配置的杠杆
+			maxLeverage = btcEthLeverage                               // BTC和ETH使用配置的杠杆
 			maxPositionValue = accountEquity * float64(btcEthLeverage) // BTC/ETH最多配置杠杆倍账户净值
 		}
 
