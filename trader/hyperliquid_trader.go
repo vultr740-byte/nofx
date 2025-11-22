@@ -3,6 +3,8 @@ package trader
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -827,8 +829,13 @@ func (t *HyperliquidTrader) cancelOrderByRef(symbol string, ref orderRef) error 
 
 // buildCloid 生成可追踪的 cloid，用于后续精准取消挂单
 func (t *HyperliquidTrader) buildCloid(symbol, kind string) string {
-	cleanSymbol := strings.ToLower(symbol)
-	return fmt.Sprintf("%s-%s-%d", kind, cleanSymbol, time.Now().UnixNano())
+	b := make([]byte, 16) // 16 bytes => 32 hex chars
+	if _, err := rand.Read(b); err != nil {
+		// 理论上不会失败，失败则退化为时间戳
+		return fmt.Sprintf("%s%x", kind, time.Now().UnixNano())
+	}
+	hexPart := hex.EncodeToString(b)
+	return "0x" + hexPart
 }
 
 func (t *HyperliquidTrader) rememberStopLossOrder(symbol string, status hyperliquid.OrderStatus, cloid string) {
