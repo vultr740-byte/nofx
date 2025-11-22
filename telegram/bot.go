@@ -1139,7 +1139,11 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 
 	_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusCompleted, "", txHash, "")
 	tbm.sendMessage(chatID, fmt.Sprintf("💸 已检测到 %s USDC，自动充值至 Hyperliquid。\\nTx: <code>%s</code>", esc(formatUSDC(targetUSDC)), esc(txHash)))
-	tbm.refreshHyperliquidBalance(chatID, privateKey, walletAddr)
+
+	// 异步刷新余额，避免阻塞主流程
+	go func() {
+		tbm.refreshHyperliquidBalance(chatID, privateKey, walletAddr)
+	}()
 }
 
 func (tbm *TelegramBotManager) refreshHyperliquidBalance(chatID int64, agentKey, walletAddr string) {
@@ -1147,14 +1151,34 @@ func (tbm *TelegramBotManager) refreshHyperliquidBalance(chatID int64, agentKey,
 		return
 	}
 
-	balanceMsg, err := tbm.hlService.GetBalance(agentKey, walletAddr, tbm.testnet)
-	if err != nil {
-		log.Printf("⚠️ 自动刷新 Hyperliquid 余额失败: %v", err)
-		tbm.sendMessage(chatID, "⚠️ 无法自动刷新 Hyperliquid 余额，请稍后使用 /balance 重试。")
+	// 等待一段时间让区块链处理交易
+	tbm.sendMessage(chatID, "⏳ 等待区块链确认充值交易...")
+	time.Sleep(10 * time.Second)
+
+	// 重试查询余额，最多重试5次
+	maxRetries := 5
+	retryInterval := 8 * time.Second // 初始重试间隔8秒
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		balanceMsg, err := tbm.hlService.GetBalance(agentKey, walletAddr, tbm.testnet)
+		if err != nil {
+			log.Printf("⚠️ 余额查询失败 (尝试 %d/%d): %v", attempt+1, maxRetries, err)
+			if attempt < maxRetries-1 {
+				time.Sleep(retryInterval)
+				retryInterval *= 2 // 指数退避
+			}
+			continue
+		}
+
+		// 成功获取余额
+		log.Printf("✅ 余额查询成功 (尝试 %d/%d)", attempt+1, maxRetries)
+		tbm.sendMessage(chatID, fmt.Sprintf("✅ 充值完成，最新余额如下：\n\n%s", balanceMsg))
 		return
 	}
 
-	tbm.sendMessage(chatID, fmt.Sprintf("✅ 充值完成，最新余额如下：\n\n%s", balanceMsg))
+	// 所有重试都失败
+	log.Printf("❌ 余额查询重试 %d 次后仍然失败", maxRetries)
+	tbm.sendMessage(chatID, "⚠️ 无法自动刷新 Hyperliquid 余额，请稍后使用 /balance 重试。")
 }
 
 func (tbm *TelegramBotManager) startAPIKeyUpdate(chatID int64, telegramID int64) bool {
