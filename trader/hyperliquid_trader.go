@@ -334,34 +334,49 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 		posMap["leverage"] = float64(position.Leverage.Value)
 		posMap["liquidationPrice"] = liquidationPx
 
-		// 匹配止盈/止损触发单
+		// 匹配止盈/止损触发单（使用 Hyperliquid 前端字段判断类型）
 		var stopLossPx, takeProfitPx float64
+		positionSide := "LONG"
+		if posAmt < 0 {
+			positionSide = "SHORT"
+		}
 		for _, ord := range frontendOrders {
-			if ord.Coin != position.Coin || !ord.ReduceOnly || !ord.IsTrigger {
+			if ord.Coin != position.Coin || !ord.ReduceOnly || !(ord.IsTrigger || ord.IsPositionTpSl) {
 				continue
 			}
 			triggerPx := ord.TriggerPx
 			if triggerPx <= 0 {
 				continue
 			}
-			if posAmt > 0 {
-				// 多仓：触发价低于开仓价视为止损，高于视为止盈
-				if triggerPx < entryPrice {
+
+			orderKind := strings.ToLower(ord.OrderType)
+			if orderKind != "tp" && orderKind != "sl" {
+				orderKind = classifyTpSl(ord, positionSide)
+			}
+			if orderKind == "" {
+				continue
+			}
+
+			if positionSide == "LONG" {
+				if orderKind == "sl" {
+					// price向下触发，取最靠近当前价格的最高触发价
 					if stopLossPx == 0 || triggerPx > stopLossPx {
 						stopLossPx = triggerPx
 					}
 				} else {
+					// take profit 向上触发，取最靠近当前价格的最低触发价
 					if takeProfitPx == 0 || triggerPx < takeProfitPx {
 						takeProfitPx = triggerPx
 					}
 				}
-			} else {
-				// 空仓：触发价高于开仓价视为止损，低于视为止盈
-				if triggerPx > entryPrice {
-					if stopLossPx == 0 || triggerPx < stopLossPx || stopLossPx == 0 {
+			} else { // SHORT
+				if orderKind == "sl" {
+					// price向上触发，取最靠近当前价格的最低触发价
+					if stopLossPx == 0 || triggerPx < stopLossPx {
 						stopLossPx = triggerPx
 					}
 				} else {
+					// take profit 向下触发，取最靠近当前价格的最高触发价
 					if takeProfitPx == 0 || triggerPx > takeProfitPx {
 						takeProfitPx = triggerPx
 					}
