@@ -421,25 +421,26 @@ func (at *AutoTrader) formatDecisionSummary(decisions []logger.DecisionAction) s
 		return "无操作"
 	}
 
-	// 特殊处理wait和hold决策（只有一个决策时）
-	if len(decisions) == 1 {
-		action := decisions[0].Action
-		if action == "wait" {
-			return "观望等待"
+	// 过滤掉 hold/wait，不在标题展示
+	filtered := make([]logger.DecisionAction, 0, len(decisions))
+	for _, d := range decisions {
+		if d.Action == "hold" || d.Action == "wait" {
+			continue
 		}
-		if action == "hold" {
-			return "持仓保持"
-		}
+		filtered = append(filtered, d)
+	}
+	if len(filtered) == 0 {
+		return ""
 	}
 
-	// 只展示新增开仓（open_long/open_short）；若不存在开仓，则回退到全部决策
+	// 优先展示新增开仓（open_long/open_short）；若不存在开仓，则展示其它非 hold/wait 操作
 	openDecisions := make([]logger.DecisionAction, 0)
-	for _, d := range decisions {
+	for _, d := range filtered {
 		if d.Action == "open_long" || d.Action == "open_short" {
 			openDecisions = append(openDecisions, d)
 		}
 	}
-	target := decisions
+	target := filtered
 	if len(openDecisions) > 0 {
 		target = openDecisions
 	}
@@ -531,8 +532,12 @@ func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) s
 
 	// 生成决策摘要
 	decisionSummary := at.formatDecisionSummary(record.Decisions)
+	title := "AI决策报告"
+	if decisionSummary != "" {
+		title += " - " + decisionSummary
+	}
 
-	msg := fmt.Sprintf(`%s AI决策报告 - %s
+	msg := fmt.Sprintf(`%s %s
 
 📊 周期信息
 • 决策时间: %s
@@ -540,7 +545,7 @@ func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) s
 
 🤖 AI思维链`,
 		statusEmoji,
-		decisionSummary,
+		title,
 		record.Timestamp.Format("2006-01-02 15:04:05"),
 		record.CycleNumber,
 	)
