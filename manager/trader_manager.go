@@ -925,6 +925,7 @@ func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord,
 	useQwen := provider == "qwen"
 	log.Printf("🤖 TG交易员 %s 将使用 %s 模型", tgTrader.Name, aiProviderDisplayNameInternal(provider))
 	log.Printf("💰 TG交易员 %s 初始余额: %.2f USDT (数据库加载)", tgTrader.Name, tgTrader.InitialBalance)
+	log.Printf("🧠 TG交易员 %s 使用的提示词模板: %s", tgTrader.Name, tgTrader.SystemPromptTemplate)
 
 	// 优先使用TG交易员自己的API KEY，如果为空则使用AI模型配置，最后回退到环境变量
 	var apiKey string
