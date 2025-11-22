@@ -407,6 +407,96 @@ func (at *AutoTrader) pushTradeExecutionToTelegram(action *logger.DecisionAction
 // 2. 避免使用特殊字符、控制字符、不可打印字符
 // 3. 使用标准ASCII和常见Unicode符号（如 ✅❌📊等）
 // 4. 不要直接复制粘贴系统提示词中的特殊字符（如 \u0026 等转义序列）
+// formatDecisionSummary 将AI决策转换为中文描述
+func (at *AutoTrader) formatDecisionSummary(decisions []logger.DecisionAction) string {
+	if len(decisions) == 0 {
+		return "无操作"
+	}
+
+	// 特殊处理wait和hold决策
+	if len(decisions) == 1 {
+		action := decisions[0].Action
+		if action == "wait" {
+			return "观望等待"
+		}
+		if action == "hold" {
+			return "持仓保持"
+		}
+	}
+
+	// 提取币种名称的辅助函数
+	getCoinName := func(symbol string) string {
+		// 移除USDT后缀，BTCUSDT -> BTC
+		if strings.HasSuffix(symbol, "USDT") {
+			return strings.TrimSuffix(symbol, "USDT")
+		}
+		return symbol
+	}
+
+	// 动作翻译
+	actionTranslation := map[string]string{
+		"open_long":         "做多开仓",
+		"open_short":        "做空开仓",
+		"close_long":        "做多平仓",
+		"close_short":       "做空平仓",
+		"update_stop_loss":  "调整止损",
+		"update_take_profit": "调整止盈",
+		"partial_close":     "部分平仓",
+	}
+
+	if len(decisions) == 1 {
+		// 单个决策
+		decision := decisions[0]
+		coinName := getCoinName(decision.Symbol)
+		actionText, exists := actionTranslation[decision.Action]
+		if !exists {
+			actionText = decision.Action
+		}
+
+		// 只有开仓和平仓操作显示杠杆
+		if decision.Leverage > 0 && (strings.Contains(decision.Action, "open") || strings.Contains(decision.Action, "close")) {
+			return fmt.Sprintf("%s(%dx)", coinName+actionText, decision.Leverage)
+		}
+		return coinName + actionText
+	} else {
+		// 多个决策
+		var coinNames []string
+		var leverages []string
+
+		for _, decision := range decisions {
+			coinNames = append(coinNames, getCoinName(decision.Symbol))
+			if decision.Leverage > 0 && (strings.Contains(decision.Action, "open") || strings.Contains(decision.Action, "close")) {
+				leverages = append(leverages, fmt.Sprintf("%dx", decision.Leverage))
+			} else {
+				leverages = append(leverages, "")
+			}
+		}
+
+		// 合并币种名称
+		coinsStr := strings.Join(coinNames, "/")
+
+		// 确定主要动作（通常第一个决策的动作）
+		mainAction := decisions[0].Action
+		actionText, exists := actionTranslation[mainAction]
+		if !exists {
+			actionText = mainAction
+		}
+
+		// 合并杠杆信息（如果有）
+		nonEmptyLeverages := []string{}
+		for _, lev := range leverages {
+			if lev != "" {
+				nonEmptyLeverages = append(nonEmptyLeverages, lev)
+			}
+		}
+
+		if len(nonEmptyLeverages) > 0 {
+			return fmt.Sprintf("%s%s(%s)", coinsStr, actionText, strings.Join(nonEmptyLeverages, "/"))
+		}
+		return coinsStr + actionText
+	}
+}
+
 // 5. 如果遇到编码错误，检查：
 //   - 数据源是否包含不可见字符
 //   - 字符串拼接是否正确处理了转义
@@ -419,6 +509,9 @@ func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) s
 		statusEmoji = "❌"
 	}
 
+	// 生成决策摘要
+	decisionSummary := at.formatDecisionSummary(record.Decisions)
+
 	msg := fmt.Sprintf(`%s AI决策报告 - %s
 
 📊 周期信息
@@ -427,7 +520,7 @@ func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) s
 
 🤖 AI思维链`,
 		statusEmoji,
-		at.name,
+		decisionSummary,
 		record.Timestamp.Format("2006-01-02 15:04:05"),
 		record.CycleNumber,
 	)

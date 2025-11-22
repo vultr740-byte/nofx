@@ -986,6 +986,9 @@ func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord,
 		deepSeekKey = apiKey
 	}
 
+	// 记录Prompt模板配置用于调试
+	log.Printf("🔧 TG交易员 %s 配置的Prompt模板: %s", tgTrader.Name, tgTrader.SystemPromptTemplate)
+
 	// 创建AutoTrader实例
 	trader, err := trader.NewAutoTrader(
 		trader.AutoTraderConfig{
@@ -1006,6 +1009,9 @@ func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord,
 			// 添加杠杆配置
 			BTCETHLeverage:  tgTrader.BTCETHLeverage,
 			AltcoinLeverage: tgTrader.AltcoinLeverage,
+			// 添加缺失的配置字段
+			SystemPromptTemplate:  tgTrader.SystemPromptTemplate, // 关键修复：Prompt模板配置
+			IsCrossMargin:         tgTrader.IsCrossMargin,
 		},
 		database,
 		fmt.Sprintf("%d", tgTrader.TgUserID), // TG用户ID作为UserID
