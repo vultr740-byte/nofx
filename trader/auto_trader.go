@@ -115,18 +115,18 @@ type AutoTraderConfig struct {
 
 // AutoTrader 自动交易器
 type AutoTrader struct {
-	id                    string // Trader唯一标识
-	name                  string // Trader显示名称
-	aiModel               string // AI模型名称
-	exchange              string // 交易平台名称
-	config                AutoTraderConfig
-	trader                Trader // 使用Trader接口（支持多平台）
-	mcpClient             *mcp.Client
-	decisionLogger        *logger.DecisionLogger // 决策日志记录器
+	id             string // Trader唯一标识
+	name           string // Trader显示名称
+	aiModel        string // AI模型名称
+	exchange       string // 交易平台名称
+	config         AutoTraderConfig
+	trader         Trader // 使用Trader接口（支持多平台）
+	mcpClient      *mcp.Client
+	decisionLogger *logger.DecisionLogger // 决策日志记录器
 
 	// 初始余额相关字段
-	initialBalance        float64  // 被自动同步覆盖的余额（仅用于同步显示）
-	userInitialBalance     float64  // 用户配置的初始投资余额（用于收益率计算）
+	initialBalance     float64 // 被自动同步覆盖的余额（仅用于同步显示）
+	userInitialBalance float64 // 用户配置的初始投资余额（用于收益率计算）
 
 	dailyPnL              float64
 	customPrompt          string   // 自定义交易策略prompt
@@ -260,18 +260,18 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 	}
 
 	return &AutoTrader{
-		id:                    config.ID,
-		name:                  config.Name,
-		aiModel:               config.AIModel,
-		exchange:              config.Exchange,
-		config:                config,
-		trader:                trader,
-		mcpClient:             mcpClient,
-		decisionLogger:        decisionLogger,
+		id:             config.ID,
+		name:           config.Name,
+		aiModel:        config.AIModel,
+		exchange:       config.Exchange,
+		config:         config,
+		trader:         trader,
+		mcpClient:      mcpClient,
+		decisionLogger: decisionLogger,
 
 		// 初始化余额字段
-		initialBalance:        config.InitialBalance,      // 被自动同步覆盖的余额
-		userInitialBalance:     config.InitialBalance,      // 用户配置的初始投资余额
+		initialBalance:     config.InitialBalance, // 被自动同步覆盖的余额
+		userInitialBalance: config.InitialBalance, // 用户配置的初始投资余额
 
 		systemPromptTemplate:  systemPromptTemplate,
 		defaultCoins:          config.DefaultCoins,
@@ -421,7 +421,7 @@ func (at *AutoTrader) formatDecisionSummary(decisions []logger.DecisionAction) s
 		return "无操作"
 	}
 
-	// 特殊处理wait和hold决策
+	// 特殊处理wait和hold决策（只有一个决策时）
 	if len(decisions) == 1 {
 		action := decisions[0].Action
 		if action == "wait" {
@@ -430,6 +430,18 @@ func (at *AutoTrader) formatDecisionSummary(decisions []logger.DecisionAction) s
 		if action == "hold" {
 			return "持仓保持"
 		}
+	}
+
+	// 只展示新增开仓（open_long/open_short）；若不存在开仓，则回退到全部决策
+	openDecisions := make([]logger.DecisionAction, 0)
+	for _, d := range decisions {
+		if d.Action == "open_long" || d.Action == "open_short" {
+			openDecisions = append(openDecisions, d)
+		}
+	}
+	target := decisions
+	if len(openDecisions) > 0 {
+		target = openDecisions
 	}
 
 	// 提取币种名称的辅助函数
@@ -443,18 +455,18 @@ func (at *AutoTrader) formatDecisionSummary(decisions []logger.DecisionAction) s
 
 	// 动作翻译
 	actionTranslation := map[string]string{
-		"open_long":         "做多开仓",
-		"open_short":        "做空开仓",
-		"close_long":        "做多平仓",
-		"close_short":       "做空平仓",
-		"update_stop_loss":  "调整止损",
+		"open_long":          "做多开仓",
+		"open_short":         "做空开仓",
+		"close_long":         "做多平仓",
+		"close_short":        "做空平仓",
+		"update_stop_loss":   "调整止损",
 		"update_take_profit": "调整止盈",
-		"partial_close":     "部分平仓",
+		"partial_close":      "部分平仓",
 	}
 
-	if len(decisions) == 1 {
+	if len(target) == 1 {
 		// 单个决策
-		decision := decisions[0]
+		decision := target[0]
 		coinName := getCoinName(decision.Symbol)
 		actionText, exists := actionTranslation[decision.Action]
 		if !exists {
@@ -471,7 +483,7 @@ func (at *AutoTrader) formatDecisionSummary(decisions []logger.DecisionAction) s
 		var coinNames []string
 		var leverages []string
 
-		for _, decision := range decisions {
+		for _, decision := range target {
 			coinNames = append(coinNames, getCoinName(decision.Symbol))
 			if decision.Leverage > 0 && (strings.Contains(decision.Action, "open") || strings.Contains(decision.Action, "close")) {
 				leverages = append(leverages, fmt.Sprintf("%dx", decision.Leverage))
@@ -484,7 +496,7 @@ func (at *AutoTrader) formatDecisionSummary(decisions []logger.DecisionAction) s
 		coinsStr := strings.Join(coinNames, "/")
 
 		// 确定主要动作（通常第一个决策的动作）
-		mainAction := decisions[0].Action
+		mainAction := target[0].Action
 		actionText, exists := actionTranslation[mainAction]
 		if !exists {
 			actionText = mainAction
@@ -2095,12 +2107,12 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 		"available_balance": availableBalance,      // 可用余额
 
 		// 盈亏统计
-		"total_pnl":            totalPnL,           // 总盈亏 = equity - initial
-		"total_pnl_pct":        totalPnLPct,        // 总盈亏百分比
-		"total_unrealized_pnl": totalUnrealizedPnL, // 未实现盈亏（从持仓计算）
-		"initial_balance":      at.userInitialBalance,   // 用户初始投资余额
-	"synced_initial_balance": at.initialBalance,       // 自动同步的余额
-		"daily_pnl":            at.dailyPnL,        // 日盈亏
+		"total_pnl":              totalPnL,              // 总盈亏 = equity - initial
+		"total_pnl_pct":          totalPnLPct,           // 总盈亏百分比
+		"total_unrealized_pnl":   totalUnrealizedPnL,    // 未实现盈亏（从持仓计算）
+		"initial_balance":        at.userInitialBalance, // 用户初始投资余额
+		"synced_initial_balance": at.initialBalance,     // 自动同步的余额
+		"daily_pnl":              at.dailyPnL,           // 日盈亏
 
 		// 持仓信息
 		"position_count":  len(positions),  // 持仓数量
