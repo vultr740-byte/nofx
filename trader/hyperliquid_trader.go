@@ -9,6 +9,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/sonirico/go-hyperliquid"
@@ -16,11 +18,19 @@ import (
 
 // HyperliquidTrader Hyperliquid交易器
 type HyperliquidTrader struct {
-	exchange      *hyperliquid.Exchange
-	ctx           context.Context
-	walletAddr    string
-	meta          *hyperliquid.Meta // 缓存meta信息（包含精度等）
-	isCrossMargin bool              // 是否为全仓模式
+	exchange         *hyperliquid.Exchange
+	ctx              context.Context
+	walletAddr       string
+	meta             *hyperliquid.Meta // 缓存meta信息（包含精度等）
+	isCrossMargin    bool              // 是否为全仓模式
+	orderMu          sync.Mutex
+	stopLossOrders   map[string]orderRef // symbol -> 最近一次止损挂单
+	takeProfitOrders map[string]orderRef // symbol -> 最近一次止盈挂单
+}
+
+type orderRef struct {
+	oid   int64
+	cloid string
 }
 
 // NewHyperliquidTrader 创建Hyperliquid交易器
@@ -120,11 +130,13 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 	}
 
 	return &HyperliquidTrader{
-		exchange:      exchange,
-		ctx:           ctx,
-		walletAddr:    walletAddr,
-		meta:          meta,
-		isCrossMargin: true, // 默认使用全仓模式
+		exchange:         exchange,
+		ctx:              ctx,
+		walletAddr:       walletAddr,
+		meta:             meta,
+		isCrossMargin:    true, // 默认使用全仓模式
+		stopLossOrders:   make(map[string]orderRef),
+		takeProfitOrders: make(map[string]orderRef),
 	}, nil
 }
 
@@ -657,20 +669,74 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (map[str
 
 // CancelStopOrders 取消该币种的止盈/止
 
-// CancelStopLossOrders 仅取消止损单（Hyperliquid 暂无法区分止损和止盈，取消所有）
+// CancelStopLossOrders 仅取消止损单（实时查询并分类）
 func (t *HyperliquidTrader) CancelStopLossOrders(symbol string) error {
-	// Hyperliquid SDK 的 OpenOrder 结构不暴露 trigger 字段
-	// 无法区分止损和止盈单，因此取消该币种的所有挂单
-	log.Printf("  ⚠️ Hyperliquid 无法区分止损/止盈单，将取消所有挂单")
-	return t.CancelStopOrders(symbol)
+	positionSide, err := t.getPositionSide(symbol)
+	if err != nil {
+		return err
+	}
+
+	triggerOrders, err := t.triggerOrdersBySymbol(symbol)
+	if err != nil {
+		return fmt.Errorf("获取触发挂单失败: %w", err)
+	}
+
+	coin := convertSymbolToHyperliquid(symbol)
+	canceled := 0
+	for _, ord := range triggerOrders {
+		if classifyTpSl(ord, positionSide) != "sl" {
+			continue
+		}
+		if _, err := t.exchange.Cancel(t.ctx, coin, ord.Oid); err != nil {
+			log.Printf("  ⚠ 取消止损单失败 (oid=%d): %v", ord.Oid, err)
+			continue
+		}
+		canceled++
+	}
+
+	if canceled == 0 {
+		log.Printf("  ℹ %s 未找到可取消的止损单", symbol)
+	} else {
+		log.Printf("  ✓ 已取消 %s 的 %d 个止损单", symbol, canceled)
+	}
+
+	t.clearOrderRef(symbol, true)
+	return nil
 }
 
-// CancelTakeProfitOrders 仅取消止盈单（Hyperliquid 暂无法区分止损和止盈，取消所有）
+// CancelTakeProfitOrders 仅取消止盈单（实时查询并分类）
 func (t *HyperliquidTrader) CancelTakeProfitOrders(symbol string) error {
-	// Hyperliquid SDK 的 OpenOrder 结构不暴露 trigger 字段
-	// 无法区分止损和止盈单，因此取消该币种的所有挂单
-	log.Printf("  ⚠️ Hyperliquid 无法区分止损/止盈单，将取消所有挂单")
-	return t.CancelStopOrders(symbol)
+	positionSide, err := t.getPositionSide(symbol)
+	if err != nil {
+		return err
+	}
+
+	triggerOrders, err := t.triggerOrdersBySymbol(symbol)
+	if err != nil {
+		return fmt.Errorf("获取触发挂单失败: %w", err)
+	}
+
+	coin := convertSymbolToHyperliquid(symbol)
+	canceled := 0
+	for _, ord := range triggerOrders {
+		if classifyTpSl(ord, positionSide) != "tp" {
+			continue
+		}
+		if _, err := t.exchange.Cancel(t.ctx, coin, ord.Oid); err != nil {
+			log.Printf("  ⚠ 取消止盈单失败 (oid=%d): %v", ord.Oid, err)
+			continue
+		}
+		canceled++
+	}
+
+	if canceled == 0 {
+		log.Printf("  ℹ %s 未找到可取消的止盈单", symbol)
+	} else {
+		log.Printf("  ✓ 已取消 %s 的 %d 个止盈单", symbol, canceled)
+	}
+
+	t.clearOrderRef(symbol, false)
+	return nil
 }
 
 // CancelAllOrders 取消该币种的所有挂单
@@ -694,6 +760,8 @@ func (t *HyperliquidTrader) CancelAllOrders(symbol string) error {
 	}
 
 	log.Printf("  ✓ 已取消 %s 的所有挂单", symbol)
+	t.clearOrderRef(symbol, true)
+	t.clearOrderRef(symbol, false)
 	return nil
 }
 
@@ -728,7 +796,151 @@ func (t *HyperliquidTrader) CancelStopOrders(symbol string) error {
 		log.Printf("  ✓ 已取消 %s 的 %d 个挂单（包括止盈/止损单）", symbol, canceledCount)
 	}
 
+	t.clearOrderRef(symbol, true)
+	t.clearOrderRef(symbol, false)
+
 	return nil
+}
+
+// cancelOrderByRef 使用已知的 oid 或 cloid 取消单个挂单
+func (t *HyperliquidTrader) cancelOrderByRef(symbol string, ref orderRef) error {
+	coin := convertSymbolToHyperliquid(symbol)
+
+	if ref.cloid != "" {
+		if _, err := t.exchange.CancelByCloid(t.ctx, coin, ref.cloid); err != nil {
+			return err
+		}
+		log.Printf("  ✓ 已通过 cloid 取消 %s 的挂单 (cloid=%s)", symbol, ref.cloid)
+		return nil
+	}
+
+	if ref.oid > 0 {
+		if _, err := t.exchange.Cancel(t.ctx, coin, ref.oid); err != nil {
+			return err
+		}
+		log.Printf("  ✓ 已取消 %s 的挂单 (oid=%d)", symbol, ref.oid)
+		return nil
+	}
+
+	return fmt.Errorf("未找到 %s 的订单标识，无法取消", symbol)
+}
+
+// buildCloid 生成可追踪的 cloid，用于后续精准取消挂单
+func (t *HyperliquidTrader) buildCloid(symbol, kind string) string {
+	cleanSymbol := strings.ToLower(symbol)
+	return fmt.Sprintf("%s-%s-%d", kind, cleanSymbol, time.Now().UnixNano())
+}
+
+func (t *HyperliquidTrader) rememberStopLossOrder(symbol string, status hyperliquid.OrderStatus, cloid string) {
+	t.orderMu.Lock()
+	defer t.orderMu.Unlock()
+	t.stopLossOrders[symbol] = orderRef{
+		oid:   extractOid(status),
+		cloid: cloid,
+	}
+}
+
+func (t *HyperliquidTrader) rememberTakeProfitOrder(symbol string, status hyperliquid.OrderStatus, cloid string) {
+	t.orderMu.Lock()
+	defer t.orderMu.Unlock()
+	t.takeProfitOrders[symbol] = orderRef{
+		oid:   extractOid(status),
+		cloid: cloid,
+	}
+}
+
+func (t *HyperliquidTrader) getOrderRef(symbol string, isStopLoss bool) (orderRef, bool) {
+	t.orderMu.Lock()
+	defer t.orderMu.Unlock()
+	if isStopLoss {
+		ref, ok := t.stopLossOrders[symbol]
+		return ref, ok
+	}
+	ref, ok := t.takeProfitOrders[symbol]
+	return ref, ok
+}
+
+func (t *HyperliquidTrader) clearOrderRef(symbol string, isStopLoss bool) {
+	t.orderMu.Lock()
+	defer t.orderMu.Unlock()
+	if isStopLoss {
+		delete(t.stopLossOrders, symbol)
+		return
+	}
+	delete(t.takeProfitOrders, symbol)
+}
+
+func extractOid(status hyperliquid.OrderStatus) int64 {
+	if status.Resting != nil {
+		return status.Resting.Oid
+	}
+	if status.Filled != nil {
+		return int64(status.Filled.Oid)
+	}
+	return 0
+}
+
+// triggerOrdersBySymbol 获取当前币种的触发类挂单（仅 ReduceOnly）
+func (t *HyperliquidTrader) triggerOrdersBySymbol(symbol string) ([]hyperliquid.FrontendOpenOrder, error) {
+	coin := convertSymbolToHyperliquid(symbol)
+	orders, err := t.exchange.Info().FrontendOpenOrders(t.ctx, t.walletAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []hyperliquid.FrontendOpenOrder
+	for _, ord := range orders {
+		if ord.Coin != coin {
+			continue
+		}
+		if !ord.ReduceOnly {
+			continue
+		}
+		if !(ord.IsTrigger || ord.IsPositionTpSl) {
+			continue
+		}
+		filtered = append(filtered, ord)
+	}
+	return filtered, nil
+}
+
+// classifyTpSl 基于持仓方向 + TriggerCondition 判定为止盈或止损
+func classifyTpSl(ord hyperliquid.FrontendOpenOrder, positionSide string) string {
+	side := strings.ToUpper(positionSide)
+	cond := ord.TriggerCondition
+	switch side {
+	case "LONG":
+		if cond == "<=" {
+			return "sl"
+		}
+		if cond == ">=" {
+			return "tp"
+		}
+	case "SHORT":
+		if cond == ">=" {
+			return "sl"
+		}
+		if cond == "<=" {
+			return "tp"
+		}
+	}
+	return ""
+}
+
+// getPositionSide 获取持仓方向（LONG/SHORT）
+func (t *HyperliquidTrader) getPositionSide(symbol string) (string, error) {
+	positions, err := t.GetPositions()
+	if err != nil {
+		return "", err
+	}
+	for _, pos := range positions {
+		sym, _ := pos["symbol"].(string)
+		side, _ := pos["side"].(string)
+		if sym == symbol && side != "" {
+			return strings.ToUpper(side), nil
+		}
+	}
+	return "", fmt.Errorf("持仓不存在: %s", symbol)
 }
 
 // GetMarketPrice 获取市场价格
@@ -758,6 +970,7 @@ func (t *HyperliquidTrader) SetStopLoss(symbol string, positionSide string, quan
 	coin := convertSymbolToHyperliquid(symbol)
 
 	isBuy := positionSide == "SHORT" // 空仓止损=买入，多仓止损=卖出
+	slCloid := t.buildCloid(symbol, "sl")
 
 	// ⚠️ 关键：根据币种精度要求，四舍五入数量
 	roundedQuantity := t.roundToSzDecimals(coin, quantity)
@@ -778,15 +991,17 @@ func (t *HyperliquidTrader) SetStopLoss(symbol string, positionSide string, quan
 				Tpsl:      "sl", // stop loss
 			},
 		},
-		ReduceOnly: true,
+		ReduceOnly:    true,
+		ClientOrderID: &slCloid,
 	}
 
-	_, err := t.exchange.Order(t.ctx, order, nil)
+	status, err := t.exchange.Order(t.ctx, order, nil)
 	if err != nil {
 		return fmt.Errorf("设置止损失败: %w", err)
 	}
 
-	log.Printf("  止损价设置: %.4f", roundedStopPrice)
+	t.rememberStopLossOrder(symbol, status, slCloid)
+	log.Printf("  止损价设置: %.4f (cloid=%s oid=%d)", roundedStopPrice, slCloid, extractOid(status))
 	return nil
 }
 
@@ -803,6 +1018,8 @@ func (t *HyperliquidTrader) SetTakeProfit(symbol string, positionSide string, qu
 	roundedTakeProfitPrice := t.roundPriceToSigfigs(takeProfitPrice)
 
 	// 使用 Trigger 订单设置止盈
+	tpCloid := t.buildCloid(symbol, "tp")
+
 	order := hyperliquid.CreateOrderRequest{
 		Coin:  coin,
 		IsBuy: isBuy,
@@ -815,15 +1032,17 @@ func (t *HyperliquidTrader) SetTakeProfit(symbol string, positionSide string, qu
 				Tpsl:      "tp", // take profit
 			},
 		},
-		ReduceOnly: true,
+		ReduceOnly:    true,
+		ClientOrderID: &tpCloid,
 	}
 
-	_, err := t.exchange.Order(t.ctx, order, nil)
+	status, err := t.exchange.Order(t.ctx, order, nil)
 	if err != nil {
 		return fmt.Errorf("设置止盈失败: %w", err)
 	}
 
-	log.Printf("  止盈价设置: %.4f", roundedTakeProfitPrice)
+	t.rememberTakeProfitOrder(symbol, status, tpCloid)
+	log.Printf("  止盈价设置: %.4f (cloid=%s oid=%d)", roundedTakeProfitPrice, tpCloid, extractOid(status))
 	return nil
 }
 
