@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"fmt"
+	"log"
 	"math/big"
 	"strings"
 	"time"
@@ -28,6 +29,9 @@ type ArbitrumService struct {
 	bridgeAddr   common.Address
 	callTimeout  time.Duration
 	transferWait time.Duration
+	// 可配置的gas费用设置
+	gasTipCap    *big.Int // Priority fee (Gwei)
+	gasFeeCap    *big.Int // Max fee (Gwei)
 }
 
 func NewArbitrumService(rpcURL string, chainID int64, usdcAddress string, bridgeAddress string) (*ArbitrumService, error) {
@@ -45,6 +49,11 @@ func NewArbitrumService(rpcURL string, chainID int64, usdcAddress string, bridge
 		return nil, fmt.Errorf("解析 ERC20 ABI 失败: %w", err)
 	}
 
+	// 初始化gas费用设置
+	// 默认值：Priority 0 ETH, Max 0.01 Gwei
+	gasTipCap := big.NewInt(0)               // 0 ETH priority fee
+	gasFeeCap := big.NewInt(10_000_000_000)   // 0.01 Gwei max fee
+
 	return &ArbitrumService{
 		client:       client,
 		rpcURL:       rpcURL,
@@ -54,6 +63,8 @@ func NewArbitrumService(rpcURL string, chainID int64, usdcAddress string, bridge
 		bridgeAddr:   common.HexToAddress(bridgeAddress),
 		callTimeout:  10 * time.Second,
 		transferWait: 2 * time.Second,
+		gasTipCap:    gasTipCap,
+		gasFeeCap:    gasFeeCap,
 	}, nil
 }
 
@@ -121,6 +132,16 @@ func (s *ArbitrumService) SendGas(privateKeyHex, toAddress string, amountWei *bi
 	}
 
 	tipCap, feeCap := s.getGasCaps(ctx)
+
+	// 验证gas费用设置
+	if err := s.validateGasSettings(tipCap, feeCap); err != nil {
+		return "", fmt.Errorf("gas费用验证失败: %w", err)
+	}
+
+	log.Printf("💰 发送ETH转账: 金额=%s ETH, Gas费用(Priority=%s Gwei, Max=%s Gwei)",
+		new(big.Float).Quo(new(big.Float).SetInt(amountWei), big.NewFloat(1e18)).String(),
+		new(big.Float).Quo(new(big.Float).SetInt(tipCap), big.NewFloat(1e9)).String(),
+		new(big.Float).Quo(new(big.Float).SetInt(feeCap), big.NewFloat(1e9)).String())
 
 	toAddr := common.HexToAddress(toAddress)
 	tx := types.NewTx(&types.DynamicFeeTx{
@@ -216,31 +237,41 @@ func (s *ArbitrumService) TransferUSDC(privateKeyHex string, amount *big.Int) (s
 	return signedTx.Hash().Hex(), nil
 }
 
-// getGasCaps 统一获取 tipCap 和 feeCap，确保 feeCap 至少覆盖 baseFee+tip，并增加冗余
-func (s *ArbitrumService) getGasCaps(ctx context.Context) (*big.Int, *big.Int) {
-	// 默认兜底值（约 0.015 / 0.03 gwei）
-	defaultTip := big.NewInt(15_000_000)
-	defaultBase := big.NewInt(30_000_000)
-
-	tipCap, err := s.client.SuggestGasTipCap(ctx)
-	if err != nil || tipCap == nil || tipCap.Sign() <= 0 {
-		tipCap = new(big.Int).Set(defaultTip)
+// validateGasSettings 验证gas费用设置的合理性
+func (s *ArbitrumService) validateGasSettings(tipCap, feeCap *big.Int) error {
+	// 验证费用不能为负数
+	if tipCap.Sign() < 0 {
+		return fmt.Errorf("priority fee不能为负数: %s", tipCap.String())
 	}
-
-	// 读取最新区块 baseFee
-	baseFee := new(big.Int).Set(defaultBase)
-	if head, err := s.client.HeaderByNumber(ctx, nil); err == nil && head.BaseFee != nil && head.BaseFee.Sign() > 0 {
-		baseFee = new(big.Int).Set(head.BaseFee)
-	}
-
-	// feeCap = baseFee*2 + tip，留冗余避免 maxFee < baseFee
-	feeCap := new(big.Int).Mul(baseFee, big.NewInt(2))
-	feeCap.Add(feeCap, tipCap)
-
-	// 极端兜底
 	if feeCap.Sign() <= 0 {
-		feeCap = new(big.Int).Add(defaultBase, tipCap)
+		return fmt.Errorf("max fee必须大于0: %s", feeCap.String())
 	}
+
+	// 验证max fee不小于priority fee
+	if feeCap.Cmp(tipCap) < 0 {
+		return fmt.Errorf("max fee (%s) 不能小于 priority fee (%s)", feeCap.String(), tipCap.String())
+	}
+
+	return nil
+}
+
+// getGasCaps 使用配置的gas费用设置
+func (s *ArbitrumService) getGasCaps(ctx context.Context) (*big.Int, *big.Int) {
+	// 使用配置的gas费用
+	tipCap := new(big.Int).Set(s.gasTipCap)
+	feeCap := new(big.Int).Set(s.gasFeeCap)
+
+	// 验证费用设置
+	if err := s.validateGasSettings(tipCap, feeCap); err != nil {
+		// 如果验证失败，使用紧急默认值
+		log.Printf("⚠️ 配置的Gas费用设置验证失败，使用默认值: %v", err)
+		tipCap = big.NewInt(15_000_000)    // 0.015 Gwei
+		feeCap = big.NewInt(30_000_000)    // 0.03 Gwei
+	}
+
+	log.Printf("🔧 Gas费用设置: Priority=%s Gwei, Max=%s Gwei",
+		new(big.Float).Quo(new(big.Float).SetInt(tipCap), big.NewFloat(1e9)).String(),
+		new(big.Float).Quo(new(big.Float).SetInt(feeCap), big.NewFloat(1e9)).String())
 
 	return tipCap, feeCap
 }
