@@ -311,7 +311,7 @@ func buildSystemPrompt(accountEquity float64, btcEthLeverage, altcoinLeverage in
 
 	// 2. 硬约束（风险控制）- 动态生成
 	sb.WriteString("# 硬约束（风险控制）\n\n")
-	sb.WriteString("1. 风险回报比: 必须 ≥ 1:3（冒1%风险，赚3%+收益）\n")
+	sb.WriteString("1. 禁止未确认的支撑/压力位直接开仓\n")
 	sb.WriteString("2. 最多持仓: 3个币种（质量>数量）\n")
 	sb.WriteString(fmt.Sprintf("3. 单币仓位: 山寨%.0f-%.0f U | BTC/ETH %.0f-%.0f U\n",
 		accountEquity*0.8, accountEquity*1.5, accountEquity*5, accountEquity*10))
@@ -769,15 +769,16 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 			}
 		}
 
-		// 验证风险回报比（必须≥1:3）
-		// 计算入场价（假设当前市价）
+		// 注意：硬约束已从"风险回报比≥1:3"改为"禁止未确认的支撑/压力位直接开仓"
+		// 这是一个技术分析要求，无法通过简单的数值验证来 enforce
+		// AI 应该在决策时自行确认支撑/压力位的技术依据
+		// 以下是风险计算代码，仅作参考用途
+		/*
 		var entryPrice float64
 		if d.Action == "open_long" {
-			// 做多：入场价在止损和止盈之间
-			entryPrice = d.StopLoss + (d.TakeProfit-d.StopLoss)*0.2 // 假设在20%位置入场
+			entryPrice = d.StopLoss + (d.TakeProfit-d.StopLoss)*0.2
 		} else {
-			// 做空：入场价在止损和止盈之间
-			entryPrice = d.StopLoss - (d.StopLoss-d.TakeProfit)*0.2 // 假设在20%位置入场
+			entryPrice = d.StopLoss - (d.StopLoss-d.TakeProfit)*0.2
 		}
 
 		var riskPercent, rewardPercent, riskRewardRatio float64
@@ -794,12 +795,7 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 				riskRewardRatio = rewardPercent / riskPercent
 			}
 		}
-
-		// 硬约束：风险回报比必须≥3.0
-		if riskRewardRatio < 3.0 {
-			return fmt.Errorf("风险回报比过低(%.2f:1)，必须≥3.0:1 [风险:%.2f%% 收益:%.2f%%] [止损:%.2f 止盈:%.2f]",
-				riskRewardRatio, riskPercent, rewardPercent, d.StopLoss, d.TakeProfit)
-		}
+		*/
 	}
 
 	// 动态调整止损验证
