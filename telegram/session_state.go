@@ -184,30 +184,30 @@ func (us *UserSession) isExpired() bool {
 func GetAvailablePromptTemplates() []PromptTemplate {
 	return []PromptTemplate{
 		{
-			Name:                "Hansen",
-			DisplayName:         "🛡️ 纪律趋势策略",
-			PlainName:           "纪律趋势策略",
-			Description:         "顺势低频、强调资金保全与长持的稳健模型",
+			Name:                "default",
+			DisplayName:         "🛡️ 结构趋势策略",
+			PlainName:           "结构趋势策略",
+			Description:         "多时间框架趋势跟随策略，以BTC为主导，强调结构一致性和严格风控",
 			RiskLevel:           "保守",
 			BTCETHLeverage:      3,
 			AltcoinLeverage:     2,
-			ScanIntervalMinutes: 60,
+			ScanIntervalMinutes: 15,
 		},
 		{
-			Name:                "default",
-			DisplayName:         "⚖️ 平衡动量策略",
-			PlainName:           "平衡动量策略",
-			Description:         "日内动量 + 严格风控的均衡型逻辑",
+			Name:                "Hansen",
+			DisplayName:         "⚖️ 夏普比率优化",
+			PlainName:           "夏普比率优化",
+			Description:         "夏普比率优化策略，专注高质量低频交易，严格资金管理和绩效反馈驱动",
 			RiskLevel:           "标准",
 			BTCETHLeverage:      5,
 			AltcoinLeverage:     3,
-			ScanIntervalMinutes: 30,
+			ScanIntervalMinutes: 15,
 		},
 		{
 			Name:                "nof1",
-			DisplayName:         "🔧 技术突破策略",
-			PlainName:           "技术突破策略",
-			Description:         "中高频技术共振 + 严格止损的突破型逻辑",
+			DisplayName:         "🔧 系统化交易策略",
+			PlainName:           "系统化交易策略",
+			Description:         "系统化交易代理，严格按技术指标和风控参数执行，注重风险调整后收益",
 			RiskLevel:           "中等",
 			BTCETHLeverage:      10,
 			AltcoinLeverage:     5,
@@ -217,11 +217,11 @@ func GetAvailablePromptTemplates() []PromptTemplate {
 			Name:                "taro_long_prompts",
 			DisplayName:         "🧠 多周期专家策略",
 			PlainName:           "多周期专家策略",
-			Description:         "高频多周期结构分析 + 主动止盈的专业模型",
+			Description:         "多周期趋势确认策略，强调自主分析和持续学习，通过多时间框架共振优化收益",
 			RiskLevel:           "激进",
 			BTCETHLeverage:      12,
 			AltcoinLeverage:     8,
-			ScanIntervalMinutes: 5,
+			ScanIntervalMinutes: 15,
 		},
 	}
 }
@@ -246,5 +246,5 @@ func GetLeverageOptions() map[string][]int {
 
 // GetIntervalOptions 获取扫描间隔选项
 func GetIntervalOptions() []int {
-	return []int{1, 2, 3, 5, 10} // 分钟
+	return []int{1, 3, 5, 10, 15, 30, 60} // 分钟
 }
