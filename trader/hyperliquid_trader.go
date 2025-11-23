@@ -341,7 +341,11 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 			positionSide = "SHORT"
 		}
 		for _, ord := range frontendOrders {
-			if ord.Coin != position.Coin || !ord.ReduceOnly || !(ord.IsTrigger || ord.IsPositionTpSl) {
+			if !strings.EqualFold(ord.Coin, position.Coin) {
+				continue
+			}
+			// 只看触发类或显式标记为TP/SL的委托
+			if !(ord.IsTrigger || ord.IsPositionTpSl) {
 				continue
 			}
 			triggerPx := ord.TriggerPx
@@ -349,10 +353,7 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 				continue
 			}
 
-			orderKind := strings.ToLower(ord.OrderType)
-			if orderKind != "tp" && orderKind != "sl" {
-				orderKind = classifyTpSl(ord, positionSide)
-			}
+			orderKind := detectOrderKind(ord, positionSide)
 			if orderKind == "" {
 				continue
 			}
@@ -929,20 +930,66 @@ func (t *HyperliquidTrader) triggerOrdersBySymbol(symbol string) ([]hyperliquid.
 // classifyTpSl 基于持仓方向 + TriggerCondition 判定为止盈或止损
 func classifyTpSl(ord hyperliquid.FrontendOpenOrder, positionSide string) string {
 	side := strings.ToUpper(positionSide)
-	cond := ord.TriggerCondition
-	switch side {
-	case "LONG":
-		if cond == "<=" {
+	cond := normalizeTriggerCond(ord.TriggerCondition)
+	return classifyByCond(side, cond, ord.IsTrigger)
+}
+
+// detectOrderKind 优先使用 OrderType，其次使用 TriggerCondition
+func detectOrderKind(ord hyperliquid.FrontendOpenOrder, positionSide string) string {
+	orderType := strings.ToLower(strings.TrimSpace(ord.OrderType))
+	switch {
+	case orderType == "tp":
+		return "tp"
+	case orderType == "sl":
+		return "sl"
+	case strings.Contains(orderType, "tp") && !strings.Contains(orderType, "sl"):
+		return "tp"
+	case strings.Contains(orderType, "sl") && !strings.Contains(orderType, "tp"):
+		return "sl"
+	}
+
+	cond := normalizeTriggerCond(ord.TriggerCondition)
+	kind := classifyByCond(strings.ToUpper(positionSide), cond, ord.IsTrigger)
+	return kind
+}
+
+func normalizeTriggerCond(cond string) string {
+	c := strings.TrimSpace(strings.ToLower(cond))
+	switch c {
+	case "<", "<=", "lte":
+		return "<="
+	case ">", ">=", "gte":
+		return ">="
+	default:
+		return c
+	}
+}
+
+func classifyByCond(side, cond string, isTrigger bool) string {
+	isDown := cond == "<" || cond == "<="
+	isUp := cond == ">" || cond == ">="
+
+	if !isDown && !isUp {
+		if isTrigger {
+			// 兜底：无条件字符串但标记为触发单，猜测为止损（更保守）
 			return "sl"
 		}
-		if cond == ">=" {
+		return ""
+	}
+
+	switch side {
+	case "LONG":
+		if isDown {
+			return "sl"
+		}
+		if isUp {
 			return "tp"
 		}
 	case "SHORT":
-		if cond == ">=" {
+		if isUp {
 			return "sl"
 		}
-		if cond == "<=" {
+		if isDown {
 			return "tp"
 		}
 	}
