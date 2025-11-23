@@ -527,6 +527,7 @@ func extractDecisions(response string) ([]Decision, error) {
 		jsonContent := strings.TrimSpace(m[1])
 		jsonContent = compactArrayOpen(jsonContent) // 把 "[ {" 规整为 "[{"
 		jsonContent = fixMissingQuotes(jsonContent) // 二次修复（防止 regex 提取后还有残留全角）
+		jsonContent = stripThousandSeparators(jsonContent)
 		if err := validateJSONFormat(jsonContent); err != nil {
 			return nil, fmt.Errorf("JSON格式验证失败: %w\nJSON内容: %s\n完整响应:\n%s", err, jsonContent, response)
 		}
@@ -563,6 +564,7 @@ func extractDecisions(response string) ([]Decision, error) {
 	// 🔧 规整格式（此时全角字符已在前面修复过）
 	jsonContent = compactArrayOpen(jsonContent)
 	jsonContent = fixMissingQuotes(jsonContent) // 二次修复（防止 regex 提取后还有残留全角）
+	jsonContent = stripThousandSeparators(jsonContent)
 
 	// 🔧 验证 JSON 格式（检测常见错误）
 	if err := validateJSONFormat(jsonContent); err != nil {
@@ -656,6 +658,22 @@ func removeInvisibleRunes(s string) string {
 // compactArrayOpen 规整开头的 "[ {" → "[{"
 func compactArrayOpen(s string) string {
 	return reArrayOpenSpace.ReplaceAllString(strings.TrimSpace(s), "[{")
+}
+
+// stripThousandSeparators 移除数字中的千位分隔逗号（例如 86,000 -> 86000）
+func stripThousandSeparators(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch == ',' {
+			if i > 0 && i+1 < len(s) && s[i-1] >= '0' && s[i-1] <= '9' && s[i+1] >= '0' && s[i+1] <= '9' {
+				continue // 跳过数字中的分隔逗号
+			}
+		}
+		b.WriteByte(ch)
+	}
+	return b.String()
 }
 
 // validateDecisions 验证所有决策（需要账户信息和杠杆配置）
@@ -777,27 +795,27 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 		// AI 应该在决策时自行确认支撑/压力位的技术依据
 		// 以下是风险计算代码，仅作参考用途
 		/*
-		var entryPrice float64
-		if d.Action == "open_long" {
-			entryPrice = d.StopLoss + (d.TakeProfit-d.StopLoss)*0.2
-		} else {
-			entryPrice = d.StopLoss - (d.StopLoss-d.TakeProfit)*0.2
-		}
+			var entryPrice float64
+			if d.Action == "open_long" {
+				entryPrice = d.StopLoss + (d.TakeProfit-d.StopLoss)*0.2
+			} else {
+				entryPrice = d.StopLoss - (d.StopLoss-d.TakeProfit)*0.2
+			}
 
-		var riskPercent, rewardPercent, riskRewardRatio float64
-		if d.Action == "open_long" {
-			riskPercent = (entryPrice - d.StopLoss) / entryPrice * 100
-			rewardPercent = (d.TakeProfit - entryPrice) / entryPrice * 100
-			if riskPercent > 0 {
-				riskRewardRatio = rewardPercent / riskPercent
+			var riskPercent, rewardPercent, riskRewardRatio float64
+			if d.Action == "open_long" {
+				riskPercent = (entryPrice - d.StopLoss) / entryPrice * 100
+				rewardPercent = (d.TakeProfit - entryPrice) / entryPrice * 100
+				if riskPercent > 0 {
+					riskRewardRatio = rewardPercent / riskPercent
+				}
+			} else {
+				riskPercent = (d.StopLoss - entryPrice) / entryPrice * 100
+				rewardPercent = (entryPrice - d.TakeProfit) / entryPrice * 100
+				if riskPercent > 0 {
+					riskRewardRatio = rewardPercent / riskPercent
+				}
 			}
-		} else {
-			riskPercent = (d.StopLoss - entryPrice) / entryPrice * 100
-			rewardPercent = (entryPrice - d.TakeProfit) / entryPrice * 100
-			if riskPercent > 0 {
-				riskRewardRatio = rewardPercent / riskPercent
-			}
-		}
 		*/
 	}
 
