@@ -100,7 +100,7 @@ func (m *WSMonitor) initializeHistoricalData() error {
 				log.Printf("已加载 %s 的历史K线数据-3m: %d 条", s, len(klines))
 			}
 			// 获取历史K线数据
-			klines4h, err := apiClient.GetKlines(s, "4h", 50)
+			klines4h, err := apiClient.GetKlines(s, "4h", 100)
 			if err != nil {
 				log.Printf("获取 %s 历史数据失败: %v", s, err)
 				return
@@ -222,9 +222,6 @@ func (m *WSMonitor) processKlineUpdate(symbol string, wsData KlineWSData, _time 
 
 			// 保持数据长度
 			maxLen := 100
-			if _time == "4h" {
-				maxLen = 50
-			}
 			if len(klines) > maxLen {
 				klines = klines[1:]
 			}
@@ -242,11 +239,7 @@ func (m *WSMonitor) GetCurrentKlines(symbol string, _time string) ([]Kline, erro
 	if !exists {
 		// 如果Ws数据未初始化完成时,单独使用api获取 - 兼容性代码 (防止在未初始化完成是,已经有交易员运行)
 		apiClient := NewAPIClient()
-		limit := 100
-		if _time == "4h" {
-			limit = 50
-		}
-		klines, err := apiClient.GetKlines(symbol, _time, limit)
+		klines, err := apiClient.GetKlines(symbol, _time, 100)
 		if err != nil {
 			return nil, fmt.Errorf("获取%v分钟K线失败: %v", _time, err)
 		}
