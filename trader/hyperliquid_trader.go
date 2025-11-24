@@ -699,16 +699,32 @@ func (t *HyperliquidTrader) CancelStopLossOrders(symbol string) error {
 		return fmt.Errorf("获取触发挂单失败: %w", err)
 	}
 
+	if len(triggerOrders) == 0 {
+		log.Printf("  ℹ %s 无触发挂单", symbol)
+		return nil
+	}
+
+	log.Printf("  🔍 %s 发现 %d 个触发挂单，开始分类...", symbol, len(triggerOrders))
+
 	coin := convertSymbolToHyperliquid(symbol)
 	canceled := 0
 	for _, ord := range triggerOrders {
-		if classifyTpSl(ord, positionSide) != "sl" {
+		// 详细分类日志
+		orderKind := classifyTpSl(ord, positionSide)
+		log.Printf("    📋 订单 OID=%d: OrderType='%s', IsPositionTpSl=%t, TriggerCondition='%s', 分类结果='%s'",
+			ord.Oid, ord.OrderType, ord.IsPositionTpSl, ord.TriggerCondition, orderKind)
+
+		if orderKind != "sl" {
+			log.Printf("      ⏭️  跳过非止损单 (%s)", orderKind)
 			continue
 		}
+
+		log.Printf("      🎯 准备取消止损单 (OID=%d)", ord.Oid)
 		if _, err := t.exchange.Cancel(t.ctx, coin, ord.Oid); err != nil {
-			log.Printf("  ⚠ 取消止损单失败 (oid=%d): %v", ord.Oid, err)
+			log.Printf("      ⚠ 取消止损单失败 (oid=%d): %v", ord.Oid, err)
 			continue
 		}
+		log.Printf("      ✅ 成功取消止损单 (OID=%d)", ord.Oid)
 		canceled++
 	}
 
@@ -927,15 +943,23 @@ func (t *HyperliquidTrader) triggerOrdersBySymbol(symbol string) ([]hyperliquid.
 	return filtered, nil
 }
 
-// classifyTpSl 基于持仓方向 + TriggerCondition 判定为止盈或止损
+// classifyTpSl 优先使用 OrderType，其次使用 TriggerCondition 判定为止盈或止损
 func classifyTpSl(ord hyperliquid.FrontendOpenOrder, positionSide string) string {
+	// 优先使用 detectOrderKind，它会检查 OrderType 等更可靠的信息
+	kind := detectOrderKind(ord, positionSide)
+	if kind != "" {
+		return kind
+	}
+
+	// 如果 detectOrderKind 无法确定，再尝试使用触发条件
 	side := strings.ToUpper(positionSide)
 	cond := normalizeTriggerCond(ord.TriggerCondition)
 	return classifyByCond(side, cond, ord.IsTrigger)
 }
 
-// detectOrderKind 优先使用 OrderType，其次使用 TriggerCondition
+// detectOrderKind 优先使用 OrderType，其次使用其他字段特征
 func detectOrderKind(ord hyperliquid.FrontendOpenOrder, positionSide string) string {
+	// 1. 首先检查 OrderType 字段（最可靠）
 	orderType := strings.ToLower(strings.TrimSpace(ord.OrderType))
 	switch {
 	case orderType == "tp":
@@ -948,9 +972,14 @@ func detectOrderKind(ord hyperliquid.FrontendOpenOrder, positionSide string) str
 		return "sl"
 	}
 
-	cond := normalizeTriggerCond(ord.TriggerCondition)
-	kind := classifyByCond(strings.ToUpper(positionSide), cond, ord.IsTrigger)
-	return kind
+	// 2. 如果 OrderType 不明确，但订单明确标记为止盈止损单，则返回空字符串
+	// 让调用方使用其他方式判断，避免误分类
+	if ord.IsPositionTpSl {
+		return "" // 无法确定类型，避免猜测
+	}
+
+	// 3. 如果无法确定，返回空字符串而不是猜测
+	return ""
 }
 
 func normalizeTriggerCond(cond string) string {
@@ -970,10 +999,8 @@ func classifyByCond(side, cond string, isTrigger bool) string {
 	isUp := cond == ">" || cond == ">="
 
 	if !isDown && !isUp {
-		if isTrigger {
-			// 兜底：无条件字符串但标记为触发单，猜测为止损（更保守）
-			return "sl"
-		}
+		// 修复：对于模糊的触发条件，不要轻易分类为止损单
+		// 返回空字符串，让上层逻辑使用更可靠的方式判断
 		return ""
 	}
 
