@@ -266,6 +266,13 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 		frontendOrders = nil
 	}
 
+	// 额外获取普通挂单，用于兜底（部分 reduce-only 限价单没有触发标记）
+	openOrders, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
+	if err != nil {
+		log.Printf("⚠️ 获取 OpenOrders 失败，无法兜底识别 reduce-only 限价单: %v", err)
+		openOrders = nil
+	}
+
 	var result []map[string]interface{}
 
 	// 遍历所有持仓
@@ -354,9 +361,20 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 			}
 
 			orderKind := detectOrderKind(ord, positionSide)
+
+			// 新增兜底：部分触发单（尤其是 reduce-only）可能没有TP/SL标记
+			if orderKind == "" && triggerPx > 0 && (ord.ReduceOnly || ord.IsTrigger || ord.IsPositionTpSl) {
+				log.Printf("📋 订单 OID=%d 无法直接识别，使用价格启发式 (OrderType='%s', IsPositionTpSl=%t, TriggerCondition='%s', ReduceOnly=%t)",
+					ord.Oid, ord.OrderType, ord.IsPositionTpSl, ord.TriggerCondition, ord.ReduceOnly)
+				if kind := t.classifyOrderByPriceHeuristic(ord, positionSide, triggerPx); kind != "" {
+					orderKind = kind
+					log.Printf("✅ 订单 OID=%d 启发式分类成功: %s", ord.Oid, orderKind)
+				}
+			}
+
 			if orderKind == "" {
-				log.Printf("📋 跳过订单 OID=%d: 无法确定订单类型 (OrderType='%s', IsPositionTpSl=%t, TriggerCondition='%s')",
-					ord.Oid, ord.OrderType, ord.IsPositionTpSl, ord.TriggerCondition)
+				log.Printf("📋 跳过订单 OID=%d: 无法确定订单类型 (OrderType='%s', IsPositionTpSl=%t, TriggerCondition='%s', ReduceOnly=%t)",
+					ord.Oid, ord.OrderType, ord.IsPositionTpSl, ord.TriggerCondition, ord.ReduceOnly)
 				continue
 			}
 
@@ -406,6 +424,68 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 		}
 		if takeProfitPx > 0 {
 			posMap["takeProfit"] = takeProfitPx
+		}
+
+		// 🔄 兜底：如果仍未识别出止盈/止损，再尝试根据 reduce-only 限价挂单推断
+		if (stopLossPx == 0 || takeProfitPx == 0) && len(openOrders) > 0 {
+			refPx := entryPrice
+			if refPx == 0 {
+				refPx = markPrice
+			}
+
+			bestSL := stopLossPx
+			bestTP := takeProfitPx
+
+			for _, ord := range openOrders {
+				if !strings.EqualFold(ord.Coin, position.Coin) {
+					continue
+				}
+				side := strings.ToUpper(ord.Side)
+
+				// 判断是否为减少仓位方向的单子（无 reduceOnly 字段时的近似判断）
+				isClosing := (posAmt > 0 && side == "A") || (posAmt < 0 && side == "B")
+				if !isClosing {
+					continue
+				}
+
+				px := ord.LimitPx
+				if px <= 0 {
+					continue
+				}
+
+				if posAmt > 0 { // LONG: 卖出平仓
+					if px < refPx { // 更低价格 -> 更像止损，取最接近参考价的最高价
+						if bestSL == 0 || px > bestSL {
+							bestSL = px
+						}
+					} else if px > refPx { // 更高价格 -> 更像止盈，取最接近的最低价
+						if bestTP == 0 || px < bestTP {
+							bestTP = px
+						}
+					}
+				} else { // SHORT: 买入平仓
+					if px > refPx { // 更高价格 -> 止损，取最接近的最低价
+						if bestSL == 0 || px < bestSL {
+							bestSL = px
+						}
+					} else if px < refPx { // 更低价格 -> 止盈，取最接近的最高价
+						if bestTP == 0 || px > bestTP {
+							bestTP = px
+						}
+					}
+				}
+			}
+
+			if stopLossPx == 0 && bestSL > 0 {
+				stopLossPx = bestSL
+				posMap["stopLoss"] = stopLossPx
+				log.Printf("✅ %s 通过限价挂单兜底识别到止损价: %.4f", symbol, stopLossPx)
+			}
+			if takeProfitPx == 0 && bestTP > 0 {
+				takeProfitPx = bestTP
+				posMap["takeProfit"] = takeProfitPx
+				log.Printf("✅ %s 通过限价挂单兜底识别到止盈价: %.4f", symbol, takeProfitPx)
+			}
 		}
 
 		result = append(result, posMap)
