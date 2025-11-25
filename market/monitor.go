@@ -23,6 +23,18 @@ type WSMonitor struct {
 	symbolStats    sync.Map // 存储币种统计信息
 	FilterSymbol   []string //经过筛选的币种
 }
+
+// getKlineLimit 根据时间周期返回对应的K线数据根数
+func getKlineLimit(timeframe string) int {
+	switch timeframe {
+	case "3m":
+		return 20  // 15分钟数据：20根 = 5小时历史
+	case "4h":
+		return 25  // 4小时数据：25根 = 4.2天历史
+	default:
+		return 100 // 默认值
+	}
+}
 type SymbolStats struct {
 	LastActiveTime   time.Time
 	AlertCount       int
@@ -90,7 +102,7 @@ func (m *WSMonitor) initializeHistoricalData() error {
 			defer func() { <-semaphore }()
 
 			// 获取历史K线数据
-			klines, err := apiClient.GetKlines(s, "3m", 100)
+			klines, err := apiClient.GetKlines(s, "3m", 20)
 			if err != nil {
 				log.Printf("获取 %s 历史数据失败: %v", s, err)
 				return
@@ -100,7 +112,7 @@ func (m *WSMonitor) initializeHistoricalData() error {
 				log.Printf("已加载 %s 的历史K线数据-3m: %d 条", s, len(klines))
 			}
 			// 获取历史K线数据
-			klines4h, err := apiClient.GetKlines(s, "4h", 100)
+			klines4h, err := apiClient.GetKlines(s, "4h", 25)
 			if err != nil {
 				log.Printf("获取 %s 历史数据失败: %v", s, err)
 				return
@@ -221,7 +233,7 @@ func (m *WSMonitor) processKlineUpdate(symbol string, wsData KlineWSData, _time 
 			klines = append(klines, kline)
 
 			// 保持数据长度
-			maxLen := 100
+			maxLen := getKlineLimit(_time)
 			if len(klines) > maxLen {
 				klines = klines[1:]
 			}
@@ -239,7 +251,8 @@ func (m *WSMonitor) GetCurrentKlines(symbol string, _time string) ([]Kline, erro
 	if !exists {
 		// 如果Ws数据未初始化完成时,单独使用api获取 - 兼容性代码 (防止在未初始化完成是,已经有交易员运行)
 		apiClient := NewAPIClient()
-		klines, err := apiClient.GetKlines(symbol, _time, 100)
+		limit := getKlineLimit(_time)
+		klines, err := apiClient.GetKlines(symbol, _time, limit)
 		if err != nil {
 			return nil, fmt.Errorf("获取%v分钟K线失败: %v", _time, err)
 		}
