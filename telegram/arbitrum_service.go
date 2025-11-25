@@ -133,17 +133,35 @@ func (s *ArbitrumService) SendGas(privateKeyHex, toAddress string, amountWei *bi
 
 	tipCap, feeCap := s.getGasCaps(ctx)
 
-	log.Printf("💰 发送ETH转账: 金额=%s ETH, Gas费用(Base=Max=%.3f Gwei, Priority=0 Gwei)",
+	// 动态估算 ETH 转账的 Gas 需求
+	toAddr := common.HexToAddress(toAddress)
+	gasLimit, err := s.client.EstimateGas(ctx, ethereum.CallMsg{
+		From:  fromAddr,
+		To:    &toAddr,
+		Value: amountWei,
+	})
+
+	// 添加 5% 安全缓冲
+	if err != nil || gasLimit == 0 {
+		gasLimit = 22000  // 提高默认值
+		log.Printf("⚠️ ETH 转账 Gas 估算失败，使用默认值: %v", err)
+	} else {
+		buffer := gasLimit / 20  // 5% = gasLimit / 20
+		gasLimit += buffer
+		log.Printf("🔧 ETH 转账 Gas 估算: 基础=%d, 缓冲=%d, 最终=%d", gasLimit-buffer, buffer, gasLimit)
+	}
+
+	log.Printf("💰 发送ETH转账: 金额=%s ETH, Gas=%d, Gas费用(Base=Max=%.3f Gwei, Priority=0 Gwei)",
 		new(big.Float).Quo(new(big.Float).SetInt(amountWei), big.NewFloat(1e18)).String(),
+		gasLimit,
 		new(big.Float).Quo(new(big.Float).SetInt(feeCap), big.NewFloat(1e9)).String())
 
-	toAddr := common.HexToAddress(toAddress)
 	tx := types.NewTx(&types.DynamicFeeTx{
 		ChainID:   s.chainID,
 		Nonce:     nonce,
 		GasTipCap: tipCap,
 		GasFeeCap: feeCap,
-		Gas:       21000,
+		Gas:       gasLimit,
 		To:        &toAddr,
 		Value:     amountWei,
 		Data:      nil,
