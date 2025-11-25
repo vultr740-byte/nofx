@@ -245,10 +245,14 @@ func (s *ArbitrumService) getGasCaps(ctx context.Context) (*big.Int, *big.Int) {
 	}
 
 	tipCap := big.NewInt(0)        // Priority Fee = 0 (不给矿工小费)
-	feeCap := new(big.Int).Set(baseFee)  // Max Fee = Base Fee
 
-	log.Printf("🔧 Gas费用设置: Priority=0 Gwei, Max=%.3f Gwei (实时Base Fee)",
-		new(big.Float).Quo(new(big.Float).SetInt(feeCap), big.NewFloat(1e9)).String())
+	// 在 baseFee 基础上添加 0.5% 缓冲
+	buffer := new(big.Int).Div(baseFee, big.NewInt(200))  // 0.5% = baseFee / 200
+	feeCap := new(big.Int).Add(baseFee, buffer)  // Max Fee = Base Fee + 0.5% 缓冲
+
+	log.Printf("🔧 Gas费用设置: Priority=0 Gwei, Max=%.3f Gwei (Base Fee %.3f Gwei + 0.5%% 缓冲)",
+		new(big.Float).Quo(new(big.Float).SetInt(feeCap), big.NewFloat(1e9)).String(),
+		new(big.Float).Quo(new(big.Float).SetInt(baseFee), big.NewFloat(1e9)).String())
 
 	return tipCap, feeCap
 }
