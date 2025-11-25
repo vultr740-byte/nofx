@@ -354,9 +354,12 @@ func buildUserPrompt(ctx *Context) string {
 
 	// BTC 市场
 	if btcData, hasBTC := ctx.MarketDataMap["BTCUSDT"]; hasBTC {
-		sb.WriteString(fmt.Sprintf("BTC: %.2f (1h: %+.2f%%, 4h: %+.2f%%) | MACD: %.4f | RSI: %.2f\n\n",
-			btcData.CurrentPrice, btcData.PriceChange1h, btcData.PriceChange4h,
-			btcData.CurrentMACD, btcData.CurrentRSI7))
+		sb.WriteString(fmt.Sprintf("BTC: %.2f (1h: %+.2f%%, 4h: %+.2f%%)\n\n",
+			btcData.CurrentPrice, btcData.PriceChange1h, btcData.PriceChange4h))
+		// 注释掉技术指标显示，default.txt 策略只使用结构分析
+		// sb.WriteString(fmt.Sprintf("BTC: %.2f (1h: %+.2f%%, 4h: %+.2f%%) | MACD: %.4f | RSI: %.2f\n\n",
+		// 	btcData.CurrentPrice, btcData.PriceChange1h, btcData.PriceChange4h,
+		// 	btcData.CurrentMACD, btcData.CurrentRSI7))
 	}
 
 	// 账户

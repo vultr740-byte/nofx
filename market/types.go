@@ -8,9 +8,10 @@ type Data struct {
 	CurrentPrice      float64
 	PriceChange1h     float64 // 1小时价格变化百分比
 	PriceChange4h     float64 // 4小时价格变化百分比
-	CurrentEMA20      float64
-	CurrentMACD       float64
-	CurrentRSI7       float64
+	// 注释掉技术指标字段，default.txt 策略只使用结构分析
+	// CurrentEMA20      float64
+	// CurrentMACD       float64
+	// CurrentRSI7       float64
 	OpenInterest      *OIData
 	FundingRate       float64
 	IntradaySeries    *IntradayData
@@ -26,22 +27,24 @@ type OIData struct {
 // IntradayData 日内数据(3分钟间隔)
 type IntradayData struct {
 	MidPrices   []float64
-	EMA20Values []float64
-	MACDValues  []float64
-	RSI7Values  []float64
-	RSI14Values []float64
+	// 注释掉技术指标字段，default.txt 策略只使用结构分析
+	// EMA20Values []float64
+	// MACDValues  []float64
+	// RSI7Values  []float64
+	// RSI14Values []float64
 }
 
 // LongerTermData 长期数据(4小时时间框架)
 type LongerTermData struct {
-	EMA20         float64
-	EMA50         float64
+	// 注释掉技术指标字段，default.txt 策略只使用结构分析
+	// EMA20         float64
+	// EMA50         float64
 	ATR3          float64
 	ATR14         float64
 	CurrentVolume float64
 	AverageVolume float64
-	MACDValues    []float64
-	RSI14Values   []float64
+	// MACDValues    []float64
+	// RSI14Values   []float64
 }
 
 // Binance API 响应结构

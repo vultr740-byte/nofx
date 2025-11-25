@@ -30,11 +30,12 @@ func Get(symbol string) (*Data, error) {
 		return nil, fmt.Errorf("获取4小时K线失败: %v", err)
 	}
 
-	// 计算当前指标 (基于15分钟最新数据)
+	// 计算当前价格 (基于15分钟最新数据)
 	currentPrice := klines15m[len(klines15m)-1].Close
-	currentEMA20 := calculateEMA(klines15m, 20)
-	currentMACD := calculateMACD(klines15m)
-	currentRSI7 := calculateRSI(klines15m, 7)
+	// 注释掉技术指标计算，default.txt 策略只使用结构分析
+	// currentEMA20 := calculateEMA(klines15m, 20)
+	// currentMACD := calculateMACD(klines15m)
+	// currentRSI7 := calculateRSI(klines15m, 7)
 
 	// 计算价格变化百分比
 	// 1小时价格变化 = 4个15分钟K线前的价格 (4 * 15 = 60分钟)
@@ -76,9 +77,10 @@ func Get(symbol string) (*Data, error) {
 		CurrentPrice:      currentPrice,
 		PriceChange1h:     priceChange1h,
 		PriceChange4h:     priceChange4h,
-		CurrentEMA20:      currentEMA20,
-		CurrentMACD:       currentMACD,
-		CurrentRSI7:       currentRSI7,
+		// 注释掉技术指标字段，default.txt 策略只使用结构分析
+		// CurrentEMA20:      currentEMA20,
+		// CurrentMACD:       currentMACD,
+		// CurrentRSI7:       currentRSI7,
 		OpenInterest:      oiData,
 		FundingRate:       fundingRate,
 		IntradaySeries:    intradayData,
@@ -204,10 +206,11 @@ func calculateATR(klines []Kline, period int) float64 {
 func calculateIntradaySeries(klines []Kline) *IntradayData {
 	data := &IntradayData{
 		MidPrices:   make([]float64, 0, 16),
-		EMA20Values: make([]float64, 0, 16),
-		MACDValues:  make([]float64, 0, 16),
-		RSI7Values:  make([]float64, 0, 16),
-		RSI14Values: make([]float64, 0, 16),
+		// 注释掉技术指标字段，default.txt 策略只使用结构分析
+		// EMA20Values: make([]float64, 0, 16),
+		// MACDValues:  make([]float64, 0, 16),
+		// RSI7Values:  make([]float64, 0, 16),
+		// RSI14Values: make([]float64, 0, 16),
 	}
 
 	// 获取最近16个数据点 (16 * 15分钟 = 4小时历史)
@@ -219,27 +222,25 @@ func calculateIntradaySeries(klines []Kline) *IntradayData {
 	for i := start; i < len(klines); i++ {
 		data.MidPrices = append(data.MidPrices, klines[i].Close)
 
-		// 计算每个点的EMA20
-		if i >= 19 {
-			ema20 := calculateEMA(klines[:i+1], 20)
-			data.EMA20Values = append(data.EMA20Values, ema20)
-		}
+		// 注释掉技术指标计算，default.txt 策略只使用结构分析
+		// if i >= 19 {
+		// 	ema20 := calculateEMA(klines[:i+1], 20)
+		// 	data.EMA20Values = append(data.EMA20Values, ema20)
+		// }
 
-		// 计算每个点的MACD
-		if i >= 25 {
-			macd := calculateMACD(klines[:i+1])
-			data.MACDValues = append(data.MACDValues, macd)
-		}
+		// if i >= 25 {
+		// 	macd := calculateMACD(klines[:i+1])
+		// 	data.MACDValues = append(data.MACDValues, macd)
+		// }
 
-		// 计算每个点的RSI
-		if i >= 7 {
-			rsi7 := calculateRSI(klines[:i+1], 7)
-			data.RSI7Values = append(data.RSI7Values, rsi7)
-		}
-		if i >= 14 {
-			rsi14 := calculateRSI(klines[:i+1], 14)
-			data.RSI14Values = append(data.RSI14Values, rsi14)
-		}
+		// if i >= 7 {
+		// 	rsi7 := calculateRSI(klines[:i+1], 7)
+		// 	data.RSI7Values = append(data.RSI7Values, rsi7)
+		// }
+		// if i >= 14 {
+		// 	rsi14 := calculateRSI(klines[:i+1], 14)
+		// 	data.RSI14Values = append(data.RSI14Values, rsi14)
+		// }
 	}
 
 	return data
@@ -248,13 +249,14 @@ func calculateIntradaySeries(klines []Kline) *IntradayData {
 // calculateLongerTermData 计算长期数据
 func calculateLongerTermData(klines []Kline) *LongerTermData {
 	data := &LongerTermData{
-		MACDValues:  make([]float64, 0, 10),
-		RSI14Values: make([]float64, 0, 10),
+		// 注释掉技术指标字段，default.txt 策略只使用结构分析
+		// MACDValues:  make([]float64, 0, 10),
+		// RSI14Values: make([]float64, 0, 10),
 	}
 
-	// 计算EMA
-	data.EMA20 = calculateEMA(klines, 20)
-	data.EMA50 = calculateEMA(klines, 50)
+	// 注释掉EMA计算，default.txt 策略只使用结构分析
+	// data.EMA20 = calculateEMA(klines, 20)
+	// data.EMA50 = calculateEMA(klines, 50)
 
 	// 计算ATR
 	data.ATR3 = calculateATR(klines, 3)
@@ -277,16 +279,17 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 		start = 0
 	}
 
-	for i := start; i < len(klines); i++ {
-		if i >= 25 {
-			macd := calculateMACD(klines[:i+1])
-			data.MACDValues = append(data.MACDValues, macd)
-		}
-		if i >= 14 {
-			rsi14 := calculateRSI(klines[:i+1], 14)
-			data.RSI14Values = append(data.RSI14Values, rsi14)
-		}
-	}
+	// 注释掉MACD和RSI计算，default.txt 策略只使用结构分析
+	// for i := start; i < len(klines); i++ {
+	// 	if i >= 25 {
+	// 		macd := calculateMACD(klines[:i+1])
+	// 		data.MACDValues = append(data.MACDValues, macd)
+	// 	}
+	// 	if i >= 14 {
+	// 		rsi14 := calculateRSI(klines[:i+1], 14)
+	// 		data.RSI14Values = append(data.RSI14Values, rsi14)
+	// 	}
+	// }
 
 	return data
 }
@@ -386,8 +389,10 @@ func Format(data *Data) string {
 
 	// 使用动态精度格式化价格
 	priceStr := formatPriceWithDynamicPrecision(data.CurrentPrice)
-	sb.WriteString(fmt.Sprintf("current_price = %s, current_ema20 = %.3f, current_macd = %.3f, current_rsi (7 period, 15m) = %.3f\n\n",
-		priceStr, data.CurrentEMA20, data.CurrentMACD, data.CurrentRSI7))
+	sb.WriteString(fmt.Sprintf("current_price = %s\n\n", priceStr))
+	// 注释掉技术指标显示，default.txt 策略只使用结构分析
+	// sb.WriteString(fmt.Sprintf("current_price = %s, current_ema20 = %.3f, current_macd = %.3f, current_rsi (7 period, 15m) = %.3f\n\n",
+	// 	priceStr, data.CurrentEMA20, data.CurrentMACD, data.CurrentRSI7))
 
 	sb.WriteString(fmt.Sprintf("In addition, here is the latest %s open interest and funding rate for perps:\n\n",
 		data.Symbol))
@@ -409,42 +414,46 @@ func Format(data *Data) string {
 			sb.WriteString(fmt.Sprintf("Mid prices: %s\n\n", formatFloatSlice(data.IntradaySeries.MidPrices)))
 		}
 
-		if len(data.IntradaySeries.EMA20Values) > 0 {
-			sb.WriteString(fmt.Sprintf("EMA indicators (20‑period): %s\n\n", formatFloatSlice(data.IntradaySeries.EMA20Values)))
-		}
+		// 注释掉技术指标显示，default.txt 策略只使用结构分析
+		// if len(data.IntradaySeries.EMA20Values) > 0 {
+		// 	sb.WriteString(fmt.Sprintf("EMA indicators (20‑period): %s\n\n", formatFloatSlice(data.IntradaySeries.EMA20Values)))
+		// }
 
-		if len(data.IntradaySeries.MACDValues) > 0 {
-			sb.WriteString(fmt.Sprintf("MACD indicators: %s\n\n", formatFloatSlice(data.IntradaySeries.MACDValues)))
-		}
+		// if len(data.IntradaySeries.MACDValues) > 0 {
+		// 	sb.WriteString(fmt.Sprintf("MACD indicators: %s\n\n", formatFloatSlice(data.IntradaySeries.MACDValues)))
+		// }
 
-		if len(data.IntradaySeries.RSI7Values) > 0 {
-			sb.WriteString(fmt.Sprintf("RSI indicators (7‑Period): %s\n\n", formatFloatSlice(data.IntradaySeries.RSI7Values)))
-		}
+		// if len(data.IntradaySeries.RSI7Values) > 0 {
+		// 	sb.WriteString(fmt.Sprintf("RSI indicators (7‑Period): %s\n\n", formatFloatSlice(data.IntradaySeries.RSI7Values)))
+		// }
 
-		if len(data.IntradaySeries.RSI14Values) > 0 {
-			sb.WriteString(fmt.Sprintf("RSI indicators (14‑Period): %s\n\n", formatFloatSlice(data.IntradaySeries.RSI14Values)))
-		}
+		// if len(data.IntradaySeries.RSI14Values) > 0 {
+		// 	sb.WriteString(fmt.Sprintf("RSI indicators (14‑Period): %s\n\n", formatFloatSlice(data.IntradaySeries.RSI14Values)))
+		// }
 	}
 
 	if data.LongerTermContext != nil {
 		sb.WriteString("Longer‑term context (4‑hour timeframe):\n\n")
 
-		sb.WriteString(fmt.Sprintf("20‑Period EMA: %.3f vs. 50‑Period EMA: %.3f\n\n",
-			data.LongerTermContext.EMA20, data.LongerTermContext.EMA50))
+		// 注释掉EMA显示，default.txt 策略只使用结构分析
+		// sb.WriteString(fmt.Sprintf("20‑Period EMA: %.3f vs. 50‑Period EMA: %.3f\n\n",
+		// 	data.LongerTermContext.EMA20, data.LongerTermContext.EMA50))
 
+		// 保留ATR和成交量数据，这些对结构分析和风险管理很重要
 		sb.WriteString(fmt.Sprintf("3‑Period ATR: %.3f vs. 14‑Period ATR: %.3f\n\n",
 			data.LongerTermContext.ATR3, data.LongerTermContext.ATR14))
 
 		sb.WriteString(fmt.Sprintf("Current Volume: %.3f vs. Average Volume: %.3f\n\n",
 			data.LongerTermContext.CurrentVolume, data.LongerTermContext.AverageVolume))
 
-		if len(data.LongerTermContext.MACDValues) > 0 {
-			sb.WriteString(fmt.Sprintf("MACD indicators: %s\n\n", formatFloatSlice(data.LongerTermContext.MACDValues)))
-		}
+		// 注释掉技术指标显示，default.txt 策略只使用结构分析
+		// if len(data.LongerTermContext.MACDValues) > 0 {
+		// 	sb.WriteString(fmt.Sprintf("MACD indicators: %s\n\n", formatFloatSlice(data.LongerTermContext.MACDValues)))
+		// }
 
-		if len(data.LongerTermContext.RSI14Values) > 0 {
-			sb.WriteString(fmt.Sprintf("RSI indicators (14‑Period): %s\n\n", formatFloatSlice(data.LongerTermContext.RSI14Values)))
-		}
+		// if len(data.LongerTermContext.RSI14Values) > 0 {
+		// 	sb.WriteString(fmt.Sprintf("RSI indicators (14‑Period): %s\n\n", formatFloatSlice(data.LongerTermContext.RSI14Values)))
+		// }
 	}
 
 	return sb.String()
