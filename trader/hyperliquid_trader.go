@@ -355,7 +355,24 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 
 			orderKind := detectOrderKind(ord, positionSide)
 			if orderKind == "" {
+				log.Printf("📋 跳过订单 OID=%d: 无法确定订单类型 (OrderType='%s', IsPositionTpSl=%t, TriggerCondition='%s')",
+					ord.Oid, ord.OrderType, ord.IsPositionTpSl, ord.TriggerCondition)
 				continue
+			}
+
+			// 对于无法确定类型的订单，使用启发式方法判断
+			if orderKind == "unknown" {
+				log.Printf("📋 订单 OID=%d 需要启发式判断 (OrderType='%s', TriggerCondition='%s')",
+					ord.Oid, ord.OrderType, ord.TriggerCondition)
+				if kind := t.classifyOrderByPriceHeuristic(ord, positionSide, triggerPx); kind != "" {
+					orderKind = kind
+					log.Printf("✅ 订单 OID=%d 启发式判断成功: %s", ord.Oid, orderKind)
+				} else {
+					log.Printf("❌ 订单 OID=%d 启发式判断失败，跳过", ord.Oid)
+					continue // 启发式判断也失败，跳过
+				}
+			} else {
+				log.Printf("📋 订单 OID=%d 直接识别: %s (OrderType='%s')", ord.Oid, orderKind, ord.OrderType)
 			}
 
 			if positionSide == "LONG" {
@@ -943,43 +960,79 @@ func (t *HyperliquidTrader) triggerOrdersBySymbol(symbol string) ([]hyperliquid.
 	return filtered, nil
 }
 
-// classifyTpSl 优先使用 OrderType，其次使用 TriggerCondition 判定为止盈或止损
+// classifyTpSl 统一的订单类型分类函数
+// 封装 detectOrderKind，提供更清晰的接口
 func classifyTpSl(ord hyperliquid.FrontendOpenOrder, positionSide string) string {
-	// 优先使用 detectOrderKind，它会检查 OrderType 等更可靠的信息
-	kind := detectOrderKind(ord, positionSide)
-	if kind != "" {
+	return detectOrderKind(ord, positionSide)
+}
+
+// detectOrderKind 智能检测订单类型（止盈/止损）
+// 使用多层检测策略，基于 v0.24.0 SDK 的特性进行优化
+func detectOrderKind(ord hyperliquid.FrontendOpenOrder, positionSide string) string {
+	// 第1层：直接检查 OrderType 字段（最高优先级）
+	if kind := checkOrderTypeField(ord); kind != "" {
 		return kind
 	}
 
-	// 如果 detectOrderKind 无法确定，再尝试使用触发条件
-	side := strings.ToUpper(positionSide)
-	cond := normalizeTriggerCond(ord.TriggerCondition)
-	return classifyByCond(side, cond, ord.IsTrigger)
+	// 第2层：对于明确标记为TP/SL的订单，使用触发条件判断
+	if ord.IsPositionTpSl {
+		if kind := checkTriggerCondition(ord, positionSide); kind != "" {
+			return kind
+		}
+		// 无法通过触发条件判断，标记为需要启发式处理
+		return "unknown"
+	}
+
+	// 第3层：对于非TP/SL标记的触发单，尝试触发条件判断
+	if ord.IsTrigger {
+		if kind := checkTriggerCondition(ord, positionSide); kind != "" {
+			return kind
+		}
+	}
+
+	// 完全无法判断
+	return ""
 }
 
-// detectOrderKind 优先使用 OrderType，其次使用其他字段特征
-func detectOrderKind(ord hyperliquid.FrontendOpenOrder, positionSide string) string {
-	// 1. 首先检查 OrderType 字段（最可靠）
+// checkOrderTypeField 检查 OrderType 字段
+func checkOrderTypeField(ord hyperliquid.FrontendOpenOrder) string {
 	orderType := strings.ToLower(strings.TrimSpace(ord.OrderType))
-	switch {
-	case orderType == "tp":
+
+	// 精确匹配（最高优先级）
+	switch orderType {
+	case "tp":
 		return "tp"
-	case orderType == "sl":
+	case "sl":
 		return "sl"
+	}
+
+	// 包含匹配（中等优先级）
+	switch {
 	case strings.Contains(orderType, "tp") && !strings.Contains(orderType, "sl"):
 		return "tp"
 	case strings.Contains(orderType, "sl") && !strings.Contains(orderType, "tp"):
 		return "sl"
 	}
 
-	// 2. 如果 OrderType 不明确，但订单明确标记为止盈止损单，则返回空字符串
-	// 让调用方使用其他方式判断，避免误分类
-	if ord.IsPositionTpSl {
-		return "" // 无法确定类型，避免猜测
+	// 特殊值处理
+	switch orderType {
+	case "takeprofit", "take_profit":
+		return "tp"
+	case "stoploss", "stop_loss":
+		return "sl"
 	}
 
-	// 3. 如果无法确定，返回空字符串而不是猜测
 	return ""
+}
+
+// checkTriggerCondition 通过触发条件判断订单类型
+func checkTriggerCondition(ord hyperliquid.FrontendOpenOrder, positionSide string) string {
+	cond := normalizeTriggerCond(ord.TriggerCondition)
+	if cond == "" {
+		return ""
+	}
+
+	return classifyByCond(strings.ToUpper(positionSide), cond, ord.IsTrigger)
 }
 
 func normalizeTriggerCond(cond string) string {
@@ -1256,4 +1309,51 @@ func absFloat(x float64) float64 {
 		return -x
 	}
 	return x
+}
+
+// classifyOrderByPriceHeuristic 基于价格启发式判断订单类型
+// 当其他方法无法确定时，使用触发价格与当前价格的相对关系来判断
+func (t *HyperliquidTrader) classifyOrderByPriceHeuristic(ord hyperliquid.FrontendOpenOrder, positionSide string, triggerPx float64) string {
+	// 获取当前市场价格
+	allMids, err := t.exchange.Info().AllMids(t.ctx)
+	if err != nil {
+		log.Printf("⚠️ 获取市场价格失败，无法进行启发式判断: %v", err)
+		return ""
+	}
+
+	priceStr, ok := allMids[ord.Coin]
+	if !ok {
+		log.Printf("⚠️ 找不到币种 %s 的市场价格", ord.Coin)
+		return ""
+	}
+
+	currentPx, err := strconv.ParseFloat(priceStr, 64)
+	if err != nil {
+		log.Printf("⚠️ 解析市场价格失败: %v", err)
+		return ""
+	}
+
+	// 基于持仓方向和价格相对关系判断
+	switch strings.ToUpper(positionSide) {
+	case "LONG":
+		if triggerPx < currentPx {
+			log.Printf("📊 启发式判断: 多头订单 触发价(%.4f) < 当前价(%.4f) = 止损", triggerPx, currentPx)
+			return "sl"
+		} else if triggerPx > currentPx {
+			log.Printf("📊 启发式判断: 多头订单 触发价(%.4f) > 当前价(%.4f) = 止盈", triggerPx, currentPx)
+			return "tp"
+		}
+	case "SHORT":
+		if triggerPx > currentPx {
+			log.Printf("📊 启发式判断: 空头订单 触发价(%.4f) > 当前价(%.4f) = 止损", triggerPx, currentPx)
+			return "sl"
+		} else if triggerPx < currentPx {
+			log.Printf("📊 启发式判断: 空头订单 触发价(%.4f) < 当前价(%.4f) = 止盈", triggerPx, currentPx)
+			return "tp"
+		}
+	}
+
+	// 价格等于当前价格，无法判断
+	log.Printf("⚠️ 启发式判断失败: 触发价(%.4f) == 当前价(%.4f)，无法区分止盈止损", triggerPx, currentPx)
+	return ""
 }
