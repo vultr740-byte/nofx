@@ -233,18 +233,21 @@ func (s *ArbitrumService) TransferUSDC(privateKeyHex string, amount *big.Int) (s
 
 // getGasCaps 动态获取网络Base Fee，设置Max Fee = Base Fee
 func (s *ArbitrumService) getGasCaps(ctx context.Context) (*big.Int, *big.Int) {
-	// 动态获取网络Base Fee
-	baseFee, err := s.client.SuggestGasPrice(ctx)
-	if err != nil || baseFee == nil || baseFee.Sign() <= 0 {
+	// 获取最新区块的 Base Fee
+	header, err := s.client.HeaderByNumber(ctx, nil)
+	var baseFee *big.Int
+	if err != nil || header == nil || header.BaseFee == nil || header.BaseFee.Sign() <= 0 {
 		// 获取失败时使用默认值：0.01 Gwei = 10,000,000 Wei
-		log.Printf("⚠️ 获取网络Base Fee失败，使用默认值: %v", err)
+		log.Printf("⚠️ 获取区块Base Fee失败，使用默认值: %v", err)
 		baseFee = big.NewInt(10_000_000)  // 0.01 Gwei
+	} else {
+		baseFee = header.BaseFee
 	}
 
 	tipCap := big.NewInt(0)        // Priority Fee = 0 (不给矿工小费)
 	feeCap := new(big.Int).Set(baseFee)  // Max Fee = Base Fee
 
-	log.Printf("🔧 Gas费用设置: Priority=0 Gwei, Max=%.3f Gwei (动态Base Fee)",
+	log.Printf("🔧 Gas费用设置: Priority=0 Gwei, Max=%.3f Gwei (实时Base Fee)",
 		new(big.Float).Quo(new(big.Float).SetInt(feeCap), big.NewFloat(1e9)).String())
 
 	return tipCap, feeCap
