@@ -1013,6 +1013,7 @@ func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord,
 			// 添加缺失的配置字段
 			SystemPromptTemplate:  tgTrader.SystemPromptTemplate, // 关键修复：Prompt模板配置
 			IsCrossMargin:         tgTrader.IsCrossMargin,
+			ReverseTrading:        tgTrader.ReverseTrading,      // 反向交易配置
 		},
 		database,
 		fmt.Sprintf("%d", tgTrader.TgUserID), // TG用户ID作为UserID
