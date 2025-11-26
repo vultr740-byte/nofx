@@ -1337,9 +1337,19 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, act
 		switch decision.Action {
 		case "open_long":
 			log.Printf("[REVERSED] %s: AI建议开多，实际执行开空", at.name)
+			// 反向交易时需要反转止损止盈价格
+			originalStopLoss := decision.StopLoss
+			originalTakeProfit := decision.TakeProfit
+			decision.StopLoss = originalTakeProfit    // 止损变为止盈
+			decision.TakeProfit = originalStopLoss    // 止盈变为止损
 			return at.executeOpenShortWithRecord(decision, actionRecord)
 		case "open_short":
 			log.Printf("[REVERSED] %s: AI建议开空，实际执行开多", at.name)
+			// 反向交易时需要反转止损止盈价格
+			originalStopLoss := decision.StopLoss
+			originalTakeProfit := decision.TakeProfit
+			decision.StopLoss = originalTakeProfit    // 止损变为止盈
+			decision.TakeProfit = originalStopLoss    // 止盈变为止损
 			return at.executeOpenLongWithRecord(decision, actionRecord)
 		// close操作保持不变，不进行反向
 		case "close_long":
