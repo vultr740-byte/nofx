@@ -28,9 +28,9 @@ type WSMonitor struct {
 func getKlineLimit(timeframe string) int {
 	switch timeframe {
 	case "3m":
-		return 20  // 15分钟数据：20根 = 5小时历史
+		return 20  // 3分钟数据：20根 = 1小时历史
 	case "4h":
-		return 25  // 4小时数据：25根 = 4.2天历史
+		return 50  // 4小时数据：50根 = 8.3天历史
 	default:
 		return 100 // 默认值
 	}
@@ -102,7 +102,7 @@ func (m *WSMonitor) initializeHistoricalData() error {
 			defer func() { <-semaphore }()
 
 			// 获取历史K线数据
-			klines, err := apiClient.GetKlines(s, "3m", 20)
+			klines, err := apiClient.GetKlines(s, "3m", getKlineLimit("3m"))
 			if err != nil {
 				log.Printf("获取 %s 历史数据失败: %v", s, err)
 				return
@@ -112,7 +112,7 @@ func (m *WSMonitor) initializeHistoricalData() error {
 				log.Printf("已加载 %s 的历史K线数据-3m: %d 条", s, len(klines))
 			}
 			// 获取历史K线数据
-			klines4h, err := apiClient.GetKlines(s, "4h", 25)
+			klines4h, err := apiClient.GetKlines(s, "4h", getKlineLimit("4h"))
 			if err != nil {
 				log.Printf("获取 %s 历史数据失败: %v", s, err)
 				return
