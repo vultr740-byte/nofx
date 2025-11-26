@@ -105,6 +105,9 @@ type AutoTraderConfig struct {
 	// 仓位模式
 	IsCrossMargin bool // true=全仓模式, false=逐仓模式
 
+	// 反向交易配置
+	ReverseTrading bool // 是否启用反向交易（true=开多时做空，开空时做多）
+
 	// 币种配置
 	DefaultCoins []string // 默认币种列表（从数据库获取）
 	TradingCoins []string // 实际交易币种列表
@@ -148,6 +151,7 @@ type AutoTrader struct {
 	database              interface{}        // 数据库引用（用于自动更新余额）
 	userID                string             // 用户ID
 	telegramBotManager    interface{}        // Telegram Bot管理器引用（用于TG交易员推送决策）
+	reverseTrading        bool               // 是否启用反向交易（true=开多时做空，开空时做多）
 }
 
 // NewAutoTrader 创建自动交易器
@@ -289,12 +293,18 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 		database:              database,
 		userID:                userID,
 		telegramBotManager:    nil, // 初始化为空，后续通过SetTelegramBotManager设置
+		reverseTrading:        config.ReverseTrading, // 从配置中读取反向交易设置
 	}, nil
 }
 
 // SetTelegramBotManager 设置Telegram Bot管理器（用于TG交易员推送决策）
 func (at *AutoTrader) SetTelegramBotManager(telegramBotManager interface{}) {
 	at.telegramBotManager = telegramBotManager
+}
+
+// GetReverseTrading 获取反向交易配置
+func (at *AutoTrader) GetReverseTrading() bool {
+	return at.reverseTrading
 }
 
 // IsTGTrader 判断是否为TG交易员（userID为纯数字的Telegram ID）
@@ -1322,6 +1332,35 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 
 // executeDecisionWithRecord 执行AI决策并记录详细信息
 func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
+	// 反向交易逻辑：当启用反向交易时，调换开多和开空的操作
+	if at.reverseTrading {
+		switch decision.Action {
+		case "open_long":
+			log.Printf("[REVERSED] %s: AI建议开多，实际执行开空", at.name)
+			return at.executeOpenShortWithRecord(decision, actionRecord)
+		case "open_short":
+			log.Printf("[REVERSED] %s: AI建议开空，实际执行开多", at.name)
+			return at.executeOpenLongWithRecord(decision, actionRecord)
+		// close操作保持不变，不进行反向
+		case "close_long":
+			return at.executeCloseLongWithRecord(decision, actionRecord)
+		case "close_short":
+			return at.executeCloseShortWithRecord(decision, actionRecord)
+		case "update_stop_loss":
+			return at.executeUpdateStopLossWithRecord(decision, actionRecord)
+		case "update_take_profit":
+			return at.executeUpdateTakeProfitWithRecord(decision, actionRecord)
+		case "partial_close":
+			return at.executePartialCloseWithRecord(decision, actionRecord)
+		case "hold", "wait":
+			// 无需执行，仅记录
+			return nil
+		default:
+			return fmt.Errorf("未知的决策类型: %s", decision.Action)
+		}
+	}
+
+	// 正常交易逻辑
 	switch decision.Action {
 	case "open_long":
 		return at.executeOpenLongWithRecord(decision, actionRecord)
