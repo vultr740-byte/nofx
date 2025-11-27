@@ -349,8 +349,20 @@ func (tbm *TelegramBotManager) handlePositions(update tgbotapi.Update) {
 		return
 	}
 
-	// 发送持仓信息
-	tbm.sendMessage(chatID, positionsMsg)
+	// 发送持仓信息并添加按钮
+	tradeURL := fmt.Sprintf("https://app.trade.xyz/trade?market=XYZ100&ghost=%s", walletAddr)
+	hyperbotURL := fmt.Sprintf("https://hyperbot.network/trader/%s", walletAddr)
+
+	// 创建内联键盘
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonURL("查看 Trade", tradeURL),
+			tgbotapi.NewInlineKeyboardButtonURL("查看 Hyperbot", hyperbotURL),
+		),
+	)
+
+	// 发送带按钮的持仓信息
+	tbm.sendMessageWithInlineKeyboard(chatID, positionsMsg, keyboard)
 }
 
 // handleLeaderboard 处理 /leaderboard 命令
