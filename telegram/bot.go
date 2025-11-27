@@ -342,15 +342,35 @@ func (tbm *TelegramBotManager) handlePositions(update tgbotapi.Update) {
 	}
 
 	// 查询持仓
-	positionsMsg, err := tbm.hlService.GetPositions(agentKey, walletAddr, tbm.testnet)
+	positionsMsg, positions, err := tbm.hlService.GetPositionsWithData(agentKey, walletAddr, tbm.testnet)
 	if err != nil {
 		log.Printf("查询持仓失败: %v", err)
 		tbm.sendMessage(chatID, "❌ 查询持仓失败，请稍后重试")
 		return
 	}
 
-	// 发送持仓信息并添加按钮
-	tradeURL := fmt.Sprintf("https://app.trade.xyz/trade?market=XYZ100&ghost=%s", walletAddr)
+	// 提取第一个持仓的资产名称
+	assetName := ""
+	if len(positions) > 0 {
+		symbol, ok := positions[0]["symbol"].(string)
+		if ok {
+			// 去掉USDT或USDC后缀
+			assetName = strings.TrimSuffix(symbol, "USDT")
+			if assetName == symbol { // 如果没有USDT后缀，尝试去掉USDC后缀
+				assetName = strings.TrimSuffix(symbol, "USDC")
+			}
+		}
+	}
+
+	// 动态构造Trade链接
+	var tradeURL string
+	if assetName != "" {
+		// 有持仓时：包含market参数（资产名称-USDC）
+		tradeURL = fmt.Sprintf("https://app.trade.xyz/trade?market=%s-USDC&ghost=%s", assetName, walletAddr)
+	} else {
+		// 无持仓时：不包含market参数
+		tradeURL = fmt.Sprintf("https://app.trade.xyz/trade?ghost=%s", walletAddr)
+	}
 	hyperbotURL := fmt.Sprintf("https://hyperbot.network/trader/%s", walletAddr)
 
 	// 创建内联键盘

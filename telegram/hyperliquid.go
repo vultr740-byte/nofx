@@ -61,6 +61,25 @@ func (s *HyperliquidService) GetPositions(agentKey, walletAddr string, testnet b
 	return s.formatPositionsMessage(positions), nil
 }
 
+// GetPositionsWithData 获取持仓并返回消息和原始数据
+func (s *HyperliquidService) GetPositionsWithData(agentKey, walletAddr string, testnet bool) (string, []map[string]interface{}, error) {
+	// 创建 Hyperliquid 交易器
+	trader, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
+	if err != nil {
+		return "", nil, fmt.Errorf("创建 Hyperliquid 交易器失败: %w", err)
+	}
+
+	// 获取持仓
+	positions, err := trader.GetPositions()
+	if err != nil {
+		return "", nil, fmt.Errorf("获取持仓失败: %w", err)
+	}
+
+	// 格式化持仓信息
+	message := s.formatPositionsMessage(positions)
+	return message, positions, nil
+}
+
 // formatBalanceMessage 格式化余额消息
 func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}) string {
 	totalWalletBalance, _ := balance["totalWalletBalance"].(float64)
