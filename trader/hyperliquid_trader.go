@@ -1303,6 +1303,30 @@ func (t *HyperliquidTrader) getSzDecimals(coin string) int {
 	return 4 // 默认精度
 }
 
+// GetMeta 获取meta信息
+func (t *HyperliquidTrader) GetMeta() *hyperliquid.Meta {
+	return t.meta
+}
+
+// GetAllAssets 获取所有资产信息
+func (t *HyperliquidTrader) GetAllAssets() ([]interface{}, error) {
+	if t.meta == nil {
+		return nil, fmt.Errorf("meta信息为空")
+	}
+
+	if t.meta.Universe == nil {
+		return nil, fmt.Errorf("资产信息为空")
+	}
+
+	// 转换为通用接口类型
+	var result []interface{}
+	for _, asset := range t.meta.Universe {
+		result = append(result, asset)
+	}
+
+	return result, nil
+}
+
 // roundToSzDecimals 将数量四舍五入到正确的精度
 func (t *HyperliquidTrader) roundToSzDecimals(coin string, quantity float64) float64 {
 	szDecimals := t.getSzDecimals(coin)

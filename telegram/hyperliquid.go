@@ -3,6 +3,7 @@ package telegram
 import (
 	"fmt"
 	"log"
+	"reflect"
 	"strings"
 
 	"nofx/trader"
@@ -278,27 +279,54 @@ func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) (
 		}
 	}()
 
-	// 获取meta信息
-	if trader.GetMeta() == nil {
+	// 直接使用反射获取meta信息
+	meta := trader.GetMeta()
+	if meta == nil {
 		return nil, fmt.Errorf("meta信息为空")
 	}
 
-	var assets []map[string]interface{}
+	if meta.Universe == nil {
+		return nil, fmt.Errorf("资产信息为空")
+	}
 
-	// 从meta.Universe中提取资产信息
-	if trader.GetMeta().Universe != nil {
-		for _, asset := range trader.GetMeta().Universe {
-			assetMap := map[string]interface{}{
-				"name":        asset.Name,
-				"sz_decimals": asset.SzDecimals,
-				"px_decimals": asset.PxDecimals,
-				"is_perp":     asset.IsPerp,
+	var result []map[string]interface{}
+
+	// 转换为通用格式
+	for _, asset := range meta.Universe {
+		// 使用反射获取资产信息
+		assetValue := reflect.ValueOf(asset)
+		if assetValue.Kind() == reflect.Struct {
+			assetMap := map[string]interface{}{}
+
+			// 获取结构体字段
+			assetType := assetValue.Type()
+			for i := 0; i < assetValue.NumField(); i++ {
+				field := assetType.Field(i)
+				fieldValue := assetValue.Field(i)
+
+				// 只处理可导出的字段
+				if field.IsExported() {
+					// 转换字段名
+					switch field.Name {
+					case "Name":
+						assetMap["name"] = fieldValue.Interface()
+					case "SzDecimals":
+						assetMap["sz_decimals"] = fieldValue.Interface()
+					case "PxDecimals":
+						assetMap["px_decimals"] = fieldValue.Interface()
+					case "IsPerp":
+						assetMap["is_perp"] = fieldValue.Interface()
+					default:
+						assetMap[strings.ToLower(field.Name)] = fieldValue.Interface()
+					}
+				}
 			}
-			assets = append(assets, assetMap)
+
+			result = append(result, assetMap)
 		}
 	}
 
-	return assets, nil
+	return result, nil
 }
 
 // extractStockAssets 从所有资产中筛选HIP-3股票资产
