@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"nofx/trader"
@@ -63,6 +64,13 @@ func (s *HyperliquidService) GetPositions(agentKey, walletAddr string, testnet b
 
 // GetPositionsWithData 获取持仓并返回消息和原始数据
 func (s *HyperliquidService) GetPositionsWithData(agentKey, walletAddr string, testnet bool) (string, []map[string]interface{}, error) {
+	// 添加panic恢复机制，防止整个程序崩溃
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("GetPositionsWithData panic recovered: %v", r)
+		}
+	}()
+
 	// 创建 Hyperliquid 交易器
 	trader, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
 	if err != nil {

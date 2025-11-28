@@ -315,6 +315,15 @@ func (tbm *TelegramBotManager) handleBalance(update tgbotapi.Update) {
 
 // handlePositions 处理 /positions 命令
 func (tbm *TelegramBotManager) handlePositions(update tgbotapi.Update) {
+	// 添加panic恢复机制，防止整个程序崩溃
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("handlePositions panic recovered: %v", r)
+			chatID := update.Message.Chat.ID
+			tbm.sendMessage(chatID, "❌ 查询持仓时发生错误，请稍后重试")
+		}
+	}()
+
 	chatID := update.Message.Chat.ID
 	telegramID := update.Message.From.ID
 
