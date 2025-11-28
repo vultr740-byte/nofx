@@ -336,6 +336,13 @@ func (s *HyperliquidService) callAllPerpMetasAPI() ([]map[string]interface{}, er
 	log.Printf("🔍 调试：allPerpMetas API响应状态: %d", resp.StatusCode)
 	log.Printf("🔍 调试：allPerpMetas API响应长度: %d 字节", len(body))
 
+	// 输出原始响应内容用于调试（前500个字符）
+	bodyPreview := string(body)
+	if len(bodyPreview) > 500 {
+		bodyPreview = bodyPreview[:500] + "..."
+	}
+	log.Printf("🔍 调试：API响应原始内容: %s", bodyPreview)
+
 	// 检查响应状态
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API返回错误状态码: %d, 响应: %s", resp.StatusCode, string(body))
@@ -347,35 +354,63 @@ func (s *HyperliquidService) callAllPerpMetasAPI() ([]map[string]interface{}, er
 		return nil, fmt.Errorf("解析响应JSON失败: %w, 响应: %s", err, string(body))
 	}
 
+	// 输出响应结构调试信息
+	log.Printf("🔍 调试：JSON解析成功，响应结构:")
+	for key, value := range response {
+		switch v := value.(type) {
+		case []interface{}:
+			log.Printf("🔍 调试：   %s: [数组，长度 %d]", key, len(v))
+		case map[string]interface{}:
+			log.Printf("🔍 调试：   %s: [对象，字段数 %d]", key, len(v))
+		default:
+			log.Printf("🔍 调试：   %s: %v (类型: %T)", key, v, v)
+		}
+	}
+
 	// 提取universe数组
+	log.Printf("🔍 调试：开始提取universe数组...")
 	universe, ok := response["universe"].([]interface{})
 	if !ok {
+		log.Printf("🔍 调试：universe字段不存在或类型不匹配，尝试universes字段")
 		// 尝试其他可能的字段名
 		if altUniverse, altOk := response["universes"].([]interface{}); altOk {
 			universe = altUniverse
 			log.Printf("🔍 调试：使用universes字段，长度: %d", len(universe))
 		} else {
+			log.Printf("🔍 调试：响应中找到的字段:")
+			for key, value := range response {
+				log.Printf("🔍 调试：   字段 '%s'，类型: %T", key, value)
+			}
 			return nil, fmt.Errorf("响应中找不到universe或universes字段，响应结构: %+v", response)
 		}
 	} else {
-		log.Printf("🔍 调试：universe数组长度: %d", len(universe))
+		log.Printf("🔍 调试：成功找到universe字段，数组长度: %d", len(universe))
 	}
 
 	var result []map[string]interface{}
 	colonCount := 0
 
+	log.Printf("🔍 调试：开始处理 %d 个universe资产...", len(universe))
+
 	// 转换资产数据
 	for i, assetInterface := range universe {
+		log.Printf("🔍 调试：处理资产 #%d", i+1)
+
 		asset, ok := assetInterface.(map[string]interface{})
 		if !ok {
-			log.Printf("🔍 调试：资产 #%d 不是有效的map结构", i+1)
+			log.Printf("🔍 调试：资产 #%d 不是有效的map结构，实际类型: %T", i+1, assetInterface)
 			continue
 		}
 
 		name, ok := asset["name"].(string)
 		if !ok {
-			log.Printf("🔍 调试：资产 #%d 缺少name字段", i+1)
+			log.Printf("🔍 调试：资产 #%d 缺少name字段，可用字段: %v", i+1, getAvailableFields(asset))
 			continue
+		}
+
+		// 输出前5个资产的详细信息
+		if i < 5 {
+			log.Printf("🔍 调试：资产 #%d - Name: '%s', 字段数: %d", i+1, name, len(asset))
 		}
 
 		// 检查是否包含冒号（HIP-3资产）
@@ -386,15 +421,10 @@ func (s *HyperliquidService) callAllPerpMetasAPI() ([]map[string]interface{}, er
 			}
 		}
 
-		// 输出前10个资产的详细信息
-		if i < 10 {
-			log.Printf("🔍 调试：资产 #%d - Name: '%s'", i+1, name)
-		}
-
 		result = append(result, asset)
 	}
 
-	log.Printf("🔍 调试：成功处理 %d 个资产，包含冒号的资产数量：%d", len(result), colonCount)
+	log.Printf("🔍 调试：资产处理完成 - 总数: %d, 包含冒号的资产数量: %d", len(result), colonCount)
 	return result, nil
 }
 
@@ -528,4 +558,13 @@ func absFloat(x float64) float64 {
 		return -x
 	}
 	return x
+}
+
+// getAvailableFields 获取map中所有可用的字段名，用于调试
+func getAvailableFields(asset map[string]interface{}) []string {
+	var fields []string
+	for key := range asset {
+		fields = append(fields, key)
+	}
+	return fields
 }
