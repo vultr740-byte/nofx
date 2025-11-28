@@ -13,6 +13,24 @@ import (
 	"nofx/trader"
 )
 
+// PerpMetaAsset 描述 allPerpMetas 返回的资产元数据
+type PerpMetaAsset struct {
+	Name          string `json:"name"`
+	SzDecimals    int    `json:"szDecimals"`
+	PxDecimals    *int   `json:"pxDecimals,omitempty"`
+	MaxLeverage   int    `json:"maxLeverage"`
+	MarginTableID int    `json:"marginTableId"`
+	IsDelisted    bool   `json:"isDelisted,omitempty"`
+	OnlyIsolated  bool   `json:"onlyIsolated,omitempty"`
+	MarginMode    string `json:"marginMode,omitempty"`
+	GrowthMode    string `json:"growthMode,omitempty"`
+}
+
+// PerpMetaResponse 对应 allPerpMetas 的单个响应对象（顶层是数组）
+type PerpMetaResponse struct {
+	Universe []PerpMetaAsset `json:"universe"`
+}
+
 // HyperliquidService Hyperliquid 服务
 type HyperliquidService struct{}
 
@@ -274,9 +292,8 @@ func (s *HyperliquidService) GetStockAssets(agentKey, walletAddr string, testnet
 	return s.formatStocksMessage(stocks), nil
 }
 
-
 // GetAllPerpMetas 获取所有永续合约元数据（使用直接API调用）
-func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) ([]map[string]interface{}, error) {
+func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) ([]PerpMetaAsset, error) {
 	// 添加panic恢复机制
 	defer func() {
 		if r := recover(); r != nil {
@@ -295,7 +312,7 @@ func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) (
 }
 
 // callAllPerpMetasAPI 直接调用Hyperliquid allPerpMetas API
-func (s *HyperliquidService) callAllPerpMetasAPI() ([]map[string]interface{}, error) {
+func (s *HyperliquidService) callAllPerpMetasAPI() ([]PerpMetaAsset, error) {
 	// 创建HTTP客户端
 	client := &http.Client{
 		Timeout: 10 * time.Second,
@@ -342,39 +359,20 @@ func (s *HyperliquidService) callAllPerpMetasAPI() ([]map[string]interface{}, er
 	}
 
 	// 解析响应 - API返回的是数组，不是对象
-	var response []interface{}
+	var response []PerpMetaResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("解析响应JSON失败: %w, 响应: %s", err, string(body))
 	}
 
 	// 收集所有universe数组中的资产
-	var allAssets []map[string]interface{}
+	var allAssets []PerpMetaAsset
 	colonCount := 0
 
 	// 遍历数组中的每个对象
-	for _, responseObj := range response {
-		responseMap, ok := responseObj.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		// 查找universe字段
-		universe, ok := responseMap["universe"].([]interface{})
-		if !ok {
-			continue
-		}
-
+	for _, resp := range response {
 		// 处理该universe中的所有资产
-		for _, assetInterface := range universe {
-			asset, ok := assetInterface.(map[string]interface{})
-			if !ok {
-				continue
-			}
-
-			name, ok := asset["name"].(string)
-			if !ok {
-				continue
-			}
+		for _, asset := range resp.Universe {
+			name := asset.Name
 
 			// 检查是否包含冒号（HIP-3资产）
 			if strings.Contains(name, ":") {
@@ -390,36 +388,18 @@ func (s *HyperliquidService) callAllPerpMetasAPI() ([]map[string]interface{}, er
 }
 
 // extractStockAssets 从所有资产中筛选HIP-3股票资产
-func (s *HyperliquidService) extractStockAssets(assets []map[string]interface{}) []map[string]interface{} {
-	var stocks []map[string]interface{}
+func (s *HyperliquidService) extractStockAssets(assets []PerpMetaAsset) []PerpMetaAsset {
+	var stocks []PerpMetaAsset
 
 	for _, asset := range assets {
-		name, ok := asset["name"].(string)
-		if !ok {
-			continue
-		}
+		name := asset.Name
 
 		// HIP-3 股票资产使用带冒号的前缀（如 xyz:NVDA、flx:TSLA 等）
 		if !strings.Contains(name, ":") {
 			continue
 		}
 
-		// 分割前缀和股票代码
-		parts := strings.Split(name, ":")
-		if len(parts) != 2 {
-			continue
-		}
-
-		prefix := parts[0]
-		symbol := parts[1]
-
-		// 添加股票特有信息
-		stockAsset := asset
-		stockAsset["prefix"] = prefix
-		stockAsset["symbol"] = symbol
-		stockAsset["type"] = "stock"
-
-		stocks = append(stocks, stockAsset)
+		stocks = append(stocks, asset)
 	}
 
 	log.Printf("📊 HIP-3股票筛选完成: %d个总资产中找到 %d个HIP-3股票", len(assets), len(stocks))
@@ -428,7 +408,7 @@ func (s *HyperliquidService) extractStockAssets(assets []map[string]interface{})
 }
 
 // formatStocksMessage 格式化股票资产信息消息
-func (s *HyperliquidService) formatStocksMessage(stocks []map[string]interface{}) string {
+func (s *HyperliquidService) formatStocksMessage(stocks []PerpMetaAsset) string {
 	if len(stocks) == 0 {
 		return `📊 <b>HIP-3 股票资产</b>
 
@@ -443,9 +423,8 @@ func (s *HyperliquidService) formatStocksMessage(stocks []map[string]interface{}
 	// 按前缀分组统计
 	prefixCount := make(map[string]int)
 	for _, stock := range stocks {
-		if prefix, ok := stock["prefix"].(string); ok {
-			prefixCount[prefix]++
-		}
+		prefix := strings.SplitN(stock.Name, ":", 2)[0]
+		prefixCount[prefix]++
 	}
 
 	// 显示统计信息
@@ -464,17 +443,24 @@ func (s *HyperliquidService) formatStocksMessage(stocks []map[string]interface{}
 
 	for i := 0; i < maxDisplay; i++ {
 		stock := stocks[i]
-		name := stock["name"].(string)
-		prefix := stock["prefix"].(string)
-		symbol := stock["symbol"].(string)
-		szDecimals := stock["sz_decimals"].(int)
-		pxDecimals := stock["px_decimals"].(int)
+		name := stock.Name
+		parts := strings.SplitN(name, ":", 2)
+		prefix := parts[0]
+		symbol := ""
+		if len(parts) == 2 {
+			symbol = parts[1]
+		}
+
+		pxDecimals := "未提供"
+		if stock.PxDecimals != nil {
+			pxDecimals = fmt.Sprintf("%d 位小数", *stock.PxDecimals)
+		}
 
 		message.WriteString(fmt.Sprintf("<b>%d. %s</b>\n", i+1, name))
 		message.WriteString(fmt.Sprintf("   • 前缀: <code>%s</code>\n", prefix))
 		message.WriteString(fmt.Sprintf("   • 股票代码: <code>%s</code>\n", symbol))
-		message.WriteString(fmt.Sprintf("   • 数量精度: %d 位小数\n", szDecimals))
-		message.WriteString(fmt.Sprintf("   • 价格精度: %d 位小数\n", pxDecimals))
+		message.WriteString(fmt.Sprintf("   • 数量精度: %d 位小数\n", stock.SzDecimals))
+		message.WriteString(fmt.Sprintf("   • 价格精度: %s\n", pxDecimals))
 		message.WriteString("   • 类型: 股票合约\n\n")
 	}
 
@@ -497,18 +483,4 @@ func absFloat(x float64) float64 {
 		return -x
 	}
 	return x
-}
-
-// getAvailableFields 获取map中所有可用的字段名，用于调试
-func getAvailableFields(asset map[string]interface{}) []string {
-	var fields []string
-	for key := range asset {
-		fields = append(fields, key)
-	}
-	return fields
-}
-
-// getAvailableFieldsFromMap 获取map中所有可用的字段名，用于调试（别名）
-func getAvailableFieldsFromMap(m map[string]interface{}) []string {
-	return getAvailableFields(m)
 }
