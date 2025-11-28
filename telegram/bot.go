@@ -785,11 +785,11 @@ func (tbm *TelegramBotManager) setupCommands() {
 		},
 		{
 			Command:     "balance",
-			Description: "💰 查看账户余额",
+			Description: "💰 账户余额",
 		},
 		{
 			Command:     "positions",
-			Description: "📊 查看当前持仓",
+			Description: "💹 当前持仓",
 		},
 		{
 			Command:     "stocks",
