@@ -793,7 +793,7 @@ func (tbm *TelegramBotManager) setupCommands() {
 		},
 		{
 			Command:     "stocks",
-			Description: "📈 查看HIP-3股票资产",
+			Description: "🏛️ 股票资产",
 		},
 		{
 			Command:     "create_trader",
