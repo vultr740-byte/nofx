@@ -3,7 +3,6 @@ package telegram
 import (
 	"fmt"
 	"log"
-	"reflect"
 	"strings"
 
 	"nofx/trader"
@@ -279,7 +278,7 @@ func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) (
 		}
 	}()
 
-	// 直接使用反射获取meta信息
+	// 直接获取meta信息
 	meta := trader.GetMeta()
 	if meta == nil {
 		return nil, fmt.Errorf("meta信息为空")
@@ -289,49 +288,32 @@ func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) (
 		return nil, fmt.Errorf("资产信息为空")
 	}
 
+	log.Printf("🔍 调试：meta.Universe包含 %d 个资产", len(meta.Universe))
+
 	var result []map[string]interface{}
 
-	// 转换为通用格式
+	// 直接使用字段访问，不需要反射
 	for _, asset := range meta.Universe {
-		// 使用反射获取资产信息
-		assetValue := reflect.ValueOf(asset)
-		if assetValue.Kind() == reflect.Struct {
-			assetMap := map[string]interface{}{}
-
-			// 获取结构体字段
-			assetType := assetValue.Type()
-			for i := 0; i < assetValue.NumField(); i++ {
-				field := assetType.Field(i)
-				fieldValue := assetValue.Field(i)
-
-				// 只处理可导出的字段
-				if field.IsExported() {
-					// 转换字段名
-					switch field.Name {
-					case "Name":
-						assetMap["name"] = fieldValue.Interface()
-					case "SzDecimals":
-						assetMap["sz_decimals"] = fieldValue.Interface()
-					case "PxDecimals":
-						assetMap["px_decimals"] = fieldValue.Interface()
-					case "IsPerp":
-						assetMap["is_perp"] = fieldValue.Interface()
-					default:
-						assetMap[strings.ToLower(field.Name)] = fieldValue.Interface()
-					}
-				}
-			}
-
-			result = append(result, assetMap)
+		assetMap := map[string]interface{}{
+			"name":         asset.Name,
+			"sz_decimals":  asset.SzDecimals,
+			"max_leverage": asset.MaxLeverage,
+			"margin_table_id": asset.MarginTableId,
+			"only_isolated": asset.OnlyIsolated,
+			"is_delisted":  asset.IsDelisted,
 		}
+		result = append(result, assetMap)
 	}
 
+	log.Printf("🔍 调试：成功处理 %d 个资产", len(result))
 	return result, nil
 }
 
 // extractStockAssets 从所有资产中筛选HIP-3股票资产
 func (s *HyperliquidService) extractStockAssets(assets []map[string]interface{}) []map[string]interface{} {
 	var stocks []map[string]interface{}
+
+	log.Printf("🔍 调试：开始筛选HIP-3股票资产，总资产数：%d", len(assets))
 
 	for _, asset := range assets {
 		name, ok := asset["name"].(string)
@@ -362,6 +344,7 @@ func (s *HyperliquidService) extractStockAssets(assets []map[string]interface{})
 		stocks = append(stocks, stockAsset)
 	}
 
+	log.Printf("🔍 调试：找到 %d 个HIP-3股票资产", len(stocks))
 	return stocks
 }
 
