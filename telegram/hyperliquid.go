@@ -283,11 +283,10 @@ func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) (
 		}
 	}()
 
-	// 首先尝试直接调用allPerpMetas API
+	// 直接调用allPerpMetas API
 	assets, err := s.callAllPerpMetasAPI()
 	if err != nil {
-		log.Printf("🔍 调试：直接API调用失败: %v，回退到SDK方法", err)
-		return s.getAllPerpMetasFromSDK(trader)
+		return nil, fmt.Errorf("调用Hyperliquid API失败: %w", err)
 	}
 
 	log.Printf("🔍 调试：从直接API获取到 %d 个资产", len(assets))
@@ -396,61 +395,6 @@ func (s *HyperliquidService) callAllPerpMetasAPI() ([]map[string]interface{}, er
 	}
 
 	log.Printf("🔍 调试：成功处理 %d 个资产，包含冒号的资产数量：%d", len(result), colonCount)
-	return result, nil
-}
-
-// getAllPerpMetasFromSDK 从SDK获取资产（备用方法）
-func (s *HyperliquidService) getAllPerpMetasFromSDK(trader *trader.HyperliquidTrader) ([]map[string]interface{}, error) {
-	log.Printf("🔍 调试：使用SDK备用方法获取资产")
-
-	// 直接获取meta信息
-	meta := trader.GetMeta()
-	if meta == nil {
-		return nil, fmt.Errorf("meta信息为空")
-	}
-
-	if meta.Universe == nil {
-		return nil, fmt.Errorf("资产信息为空")
-	}
-
-	log.Printf("🔍 调试：SDK meta.Universe包含 %d 个资产", len(meta.Universe))
-
-	var result []map[string]interface{}
-
-	// 直接使用字段访问，不需要反射
-	for i, asset := range meta.Universe {
-		// 输出前10个资产的详细信息用于调试
-		if i < 10 {
-			log.Printf("🔍 调试：SDK资产 #%d - Name: '%s', SzDecimals: %d, MaxLeverage: %d, OnlyIsolated: %v, IsDelisted: %v",
-				i+1, asset.Name, asset.SzDecimals, asset.MaxLeverage, asset.OnlyIsolated, asset.IsDelisted)
-		}
-
-		// 检查是否包含冒号（可能的HIP-3资产）
-		if strings.Contains(asset.Name, ":") {
-			log.Printf("🎯 SDK发现可能的HIP-3资产：'%s'", asset.Name)
-		}
-
-		assetMap := map[string]interface{}{
-			"name":         asset.Name,
-			"sz_decimals":  asset.SzDecimals,
-			"max_leverage": asset.MaxLeverage,
-			"margin_table_id": asset.MarginTableId,
-			"only_isolated": asset.OnlyIsolated,
-			"is_delisted":  asset.IsDelisted,
-		}
-		result = append(result, assetMap)
-	}
-
-	log.Printf("🔍 调试：SDK成功处理 %d 个资产", len(result))
-
-	// 统计包含冒号的资产数量
-	colonCount := 0
-	for _, asset := range meta.Universe {
-		if strings.Contains(asset.Name, ":") {
-			colonCount++
-		}
-	}
-	log.Printf("🔍 调试：SDK包含冒号的资产数量：%d", colonCount)
 	return result, nil
 }
 
