@@ -1,9 +1,14 @@
 package telegram
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"strings"
+	"time"
 
 	"nofx/trader"
 )
@@ -269,7 +274,7 @@ func (s *HyperliquidService) GetStockAssets(agentKey, walletAddr string, testnet
 	return s.formatStocksMessage(stocks), nil
 }
 
-// GetAllPerpMetas 获取所有永续合约元数据
+// GetAllPerpMetas 获取所有永续合约元数据（使用直接API调用）
 func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) ([]map[string]interface{}, error) {
 	// 添加panic恢复机制
 	defer func() {
@@ -277,6 +282,126 @@ func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) (
 			log.Printf("GetAllPerpMetas panic recovered: %v", r)
 		}
 	}()
+
+	// 首先尝试直接调用allPerpMetas API
+	assets, err := s.callAllPerpMetasAPI()
+	if err != nil {
+		log.Printf("🔍 调试：直接API调用失败: %v，回退到SDK方法", err)
+		return s.getAllPerpMetasFromSDK(trader)
+	}
+
+	log.Printf("🔍 调试：从直接API获取到 %d 个资产", len(assets))
+	return assets, nil
+}
+
+// callAllPerpMetasAPI 直接调用Hyperliquid allPerpMetas API
+func (s *HyperliquidService) callAllPerpMetasAPI() ([]map[string]interface{}, error) {
+	// 创建HTTP客户端
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// 准备请求体
+	requestBody := map[string]string{
+		"type": "allPerpMetas",
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("序列化请求体失败: %w", err)
+	}
+
+	// 创建请求
+	req, err := http.NewRequest("POST", "https://api.hyperliquid.xyz/info", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+
+	// 设置请求头
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "NOFX-Telegram-Bot")
+
+	// 发送请求
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("API请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	log.Printf("🔍 调试：allPerpMetas API响应状态: %d", resp.StatusCode)
+	log.Printf("🔍 调试：allPerpMetas API响应长度: %d 字节", len(body))
+
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API返回错误状态码: %d, 响应: %s", resp.StatusCode, string(body))
+	}
+
+	// 解析响应
+	var response map[string]interface{}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("解析响应JSON失败: %w, 响应: %s", err, string(body))
+	}
+
+	// 提取universe数组
+	universe, ok := response["universe"].([]interface{})
+	if !ok {
+		// 尝试其他可能的字段名
+		if altUniverse, altOk := response["universes"].([]interface{}); altOk {
+			universe = altUniverse
+			log.Printf("🔍 调试：使用universes字段，长度: %d", len(universe))
+		} else {
+			return nil, fmt.Errorf("响应中找不到universe或universes字段，响应结构: %+v", response)
+		}
+	} else {
+		log.Printf("🔍 调试：universe数组长度: %d", len(universe))
+	}
+
+	var result []map[string]interface{}
+	colonCount := 0
+
+	// 转换资产数据
+	for i, assetInterface := range universe {
+		asset, ok := assetInterface.(map[string]interface{})
+		if !ok {
+			log.Printf("🔍 调试：资产 #%d 不是有效的map结构", i+1)
+			continue
+		}
+
+		name, ok := asset["name"].(string)
+		if !ok {
+			log.Printf("🔍 调试：资产 #%d 缺少name字段", i+1)
+			continue
+		}
+
+		// 检查是否包含冒号（HIP-3资产）
+		if strings.Contains(name, ":") {
+			colonCount++
+			if colonCount <= 10 {
+				log.Printf("🎯 发现HIP-3资产 #%d: '%s'", colonCount, name)
+			}
+		}
+
+		// 输出前10个资产的详细信息
+		if i < 10 {
+			log.Printf("🔍 调试：资产 #%d - Name: '%s'", i+1, name)
+		}
+
+		result = append(result, asset)
+	}
+
+	log.Printf("🔍 调试：成功处理 %d 个资产，包含冒号的资产数量：%d", len(result), colonCount)
+	return result, nil
+}
+
+// getAllPerpMetasFromSDK 从SDK获取资产（备用方法）
+func (s *HyperliquidService) getAllPerpMetasFromSDK(trader *trader.HyperliquidTrader) ([]map[string]interface{}, error) {
+	log.Printf("🔍 调试：使用SDK备用方法获取资产")
 
 	// 直接获取meta信息
 	meta := trader.GetMeta()
@@ -288,7 +413,7 @@ func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) (
 		return nil, fmt.Errorf("资产信息为空")
 	}
 
-	log.Printf("🔍 调试：meta.Universe包含 %d 个资产", len(meta.Universe))
+	log.Printf("🔍 调试：SDK meta.Universe包含 %d 个资产", len(meta.Universe))
 
 	var result []map[string]interface{}
 
@@ -296,13 +421,13 @@ func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) (
 	for i, asset := range meta.Universe {
 		// 输出前10个资产的详细信息用于调试
 		if i < 10 {
-			log.Printf("🔍 调试：资产 #%d - Name: '%s', SzDecimals: %d, MaxLeverage: %d, OnlyIsolated: %v, IsDelisted: %v",
+			log.Printf("🔍 调试：SDK资产 #%d - Name: '%s', SzDecimals: %d, MaxLeverage: %d, OnlyIsolated: %v, IsDelisted: %v",
 				i+1, asset.Name, asset.SzDecimals, asset.MaxLeverage, asset.OnlyIsolated, asset.IsDelisted)
 		}
 
 		// 检查是否包含冒号（可能的HIP-3资产）
 		if strings.Contains(asset.Name, ":") {
-			log.Printf("🎯 发现可能的HIP-3资产：'%s'", asset.Name)
+			log.Printf("🎯 SDK发现可能的HIP-3资产：'%s'", asset.Name)
 		}
 
 		assetMap := map[string]interface{}{
@@ -316,7 +441,7 @@ func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) (
 		result = append(result, assetMap)
 	}
 
-	log.Printf("🔍 调试：成功处理 %d 个资产", len(result))
+	log.Printf("🔍 调试：SDK成功处理 %d 个资产", len(result))
 
 	// 统计包含冒号的资产数量
 	colonCount := 0
@@ -325,7 +450,7 @@ func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) (
 			colonCount++
 		}
 	}
-	log.Printf("🔍 调试：包含冒号的资产数量：%d", colonCount)
+	log.Printf("🔍 调试：SDK包含冒号的资产数量：%d", colonCount)
 	return result, nil
 }
 
