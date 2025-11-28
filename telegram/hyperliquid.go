@@ -293,7 +293,18 @@ func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) (
 	var result []map[string]interface{}
 
 	// 直接使用字段访问，不需要反射
-	for _, asset := range meta.Universe {
+	for i, asset := range meta.Universe {
+		// 输出前10个资产的详细信息用于调试
+		if i < 10 {
+			log.Printf("🔍 调试：资产 #%d - Name: '%s', SzDecimals: %d, MaxLeverage: %d, OnlyIsolated: %v, IsDelisted: %v",
+				i+1, asset.Name, asset.SzDecimals, asset.MaxLeverage, asset.OnlyIsolated, asset.IsDelisted)
+		}
+
+		// 检查是否包含冒号（可能的HIP-3资产）
+		if strings.Contains(asset.Name, ":") {
+			log.Printf("🎯 发现可能的HIP-3资产：'%s'", asset.Name)
+		}
+
 		assetMap := map[string]interface{}{
 			"name":         asset.Name,
 			"sz_decimals":  asset.SzDecimals,
@@ -306,6 +317,15 @@ func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) (
 	}
 
 	log.Printf("🔍 调试：成功处理 %d 个资产", len(result))
+
+	// 统计包含冒号的资产数量
+	colonCount := 0
+	for _, asset := range meta.Universe {
+		if strings.Contains(asset.Name, ":") {
+			colonCount++
+		}
+	}
+	log.Printf("🔍 调试：包含冒号的资产数量：%d", colonCount)
 	return result, nil
 }
 
@@ -315,10 +335,23 @@ func (s *HyperliquidService) extractStockAssets(assets []map[string]interface{})
 
 	log.Printf("🔍 调试：开始筛选HIP-3股票资产，总资产数：%d", len(assets))
 
-	for _, asset := range assets {
+	colonAssetCount := 0
+	processedCount := 0
+
+	for i, asset := range assets {
+		processedCount++
 		name, ok := asset["name"].(string)
 		if !ok {
+			log.Printf("🔍 调试：资产 #%d - 无法获取name字段", i+1)
 			continue
+		}
+
+		// 输出前10个包含冒号的资产的详细信息
+		if strings.Contains(name, ":") {
+			colonAssetCount++
+			if colonAssetCount <= 10 {
+				log.Printf("🔍 调试：冒号资产 #%d - Name: '%s'", colonAssetCount, name)
+			}
 		}
 
 		// HIP-3 股票资产使用带冒号的前缀（如 xyz:NVDA、flx:TSLA 等）
@@ -326,14 +359,19 @@ func (s *HyperliquidService) extractStockAssets(assets []map[string]interface{})
 			continue
 		}
 
+		log.Printf("🔍 调试：正在处理HIP-3候选资产：'%s'", name)
+
 		// 分割前缀和股票代码
 		parts := strings.Split(name, ":")
 		if len(parts) != 2 {
+			log.Printf("🔍 调试：分割失败 - %s 分割后长度：%d", name, len(parts))
 			continue
 		}
 
 		prefix := parts[0]
 		symbol := parts[1]
+
+		log.Printf("🔍 调试：HIP-3资产解析成功 - 前缀: '%s', 符号: '%s'", prefix, symbol)
 
 		// 添加股票特有信息
 		stockAsset := asset
@@ -342,9 +380,12 @@ func (s *HyperliquidService) extractStockAssets(assets []map[string]interface{})
 		stockAsset["type"] = "stock"
 
 		stocks = append(stocks, stockAsset)
+		log.Printf("🔍 调试：成功添加HIP-3资产到结果列表：'%s'", name)
 	}
 
-	log.Printf("🔍 调试：找到 %d 个HIP-3股票资产", len(stocks))
+	log.Printf("🔍 调试：筛选完成 - 处理了 %d 个资产，其中 %d 个包含冒号，找到 %d 个HIP-3股票资产",
+		processedCount, colonAssetCount, len(stocks))
+
 	return stocks
 }
 
