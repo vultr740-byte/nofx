@@ -172,6 +172,8 @@ func (tbm *TelegramBotManager) handleCommand(update tgbotapi.Update) {
 		tbm.handleBalance(update)
 	case "positions":
 		tbm.handlePositions(update)
+	case "stocks":
+		tbm.handleStocks(update)
 	case "deposit":
 		tbm.handleDeposit(update)
 	case "create_trader":
@@ -392,6 +394,55 @@ func (tbm *TelegramBotManager) handlePositions(update tgbotapi.Update) {
 
 	// 发送带按钮的持仓信息
 	tbm.sendMessageWithInlineKeyboard(chatID, positionsMsg, keyboard)
+}
+
+// handleStocks 处理 /stocks 命令
+func (tbm *TelegramBotManager) handleStocks(update tgbotapi.Update) {
+	// 添加panic恢复机制，防止整个程序崩溃
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("handleStocks panic recovered: %v", r)
+			chatID := update.Message.Chat.ID
+			tbm.sendMessage(chatID, "❌ 查询股票资产时发生错误，请稍后重试")
+		}
+	}()
+
+	chatID := update.Message.Chat.ID
+	telegramID := update.Message.From.ID
+
+	// 获取用户信息
+	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
+		return
+	}
+
+	// 检查是否有 Hyperliquid 账号
+	if !tbm.hasHyperliquidAccount(telegramID) {
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 完成账号初始化")
+		return
+	}
+
+	// 发送查询中消息
+	tbm.sendMessage(chatID, "🔄 正在获取HIP-3股票资产列表，请稍候...")
+
+	// 提取 Agent Key 和 Wallet Address
+	agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID)
+	if err != nil {
+		log.Printf("提取账号信息失败: %v", err)
+		tbm.sendMessage(chatID, "❌ 获取账号信息失败，请稍后重试")
+		return
+	}
+
+	// 获取股票资产信息
+	stocksMsg, err := tbm.hlService.GetStockAssets(agentKey, walletAddr, tbm.testnet)
+	if err != nil {
+		log.Printf("获取股票资产失败: %v", err)
+		tbm.sendMessage(chatID, "❌ 获取股票资产失败，请稍后重试")
+		return
+	}
+
+	// 发送股票资产信息
+	tbm.sendMessage(chatID, stocksMsg)
 }
 
 // handleLeaderboard 处理 /leaderboard 命令
@@ -739,6 +790,10 @@ func (tbm *TelegramBotManager) setupCommands() {
 		{
 			Command:     "positions",
 			Description: "📊 查看当前持仓",
+		},
+		{
+			Command:     "stocks",
+			Description: "📈 查看HIP-3股票资产",
 		},
 		{
 			Command:     "create_trader",

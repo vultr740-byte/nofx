@@ -248,6 +248,159 @@ func (s *HyperliquidService) ValidateAddress(address string) bool {
 	return strings.HasPrefix(address, "0x") && len(address) == 42
 }
 
+// GetStockAssets 获取所有HIP-3股票资产
+func (s *HyperliquidService) GetStockAssets(agentKey, walletAddr string, testnet bool) (string, error) {
+	// 创建 Hyperliquid 交易器
+	trader, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
+	if err != nil {
+		return "", fmt.Errorf("创建 Hyperliquid 交易器失败: %w", err)
+	}
+
+	// 获取所有资产信息
+	assets, err := s.GetAllPerpMetas(trader)
+	if err != nil {
+		return "", fmt.Errorf("获取资产信息失败: %w", err)
+	}
+
+	// 筛选股票资产
+	stocks := s.extractStockAssets(assets)
+
+	// 格式化股票信息
+	return s.formatStocksMessage(stocks), nil
+}
+
+// GetAllPerpMetas 获取所有永续合约元数据
+func (s *HyperliquidService) GetAllPerpMetas(trader *trader.HyperliquidTrader) ([]map[string]interface{}, error) {
+	// 添加panic恢复机制
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("GetAllPerpMetas panic recovered: %v", r)
+		}
+	}()
+
+	// 获取meta信息
+	if trader.GetMeta() == nil {
+		return nil, fmt.Errorf("meta信息为空")
+	}
+
+	var assets []map[string]interface{}
+
+	// 从meta.Universe中提取资产信息
+	if trader.GetMeta().Universe != nil {
+		for _, asset := range trader.GetMeta().Universe {
+			assetMap := map[string]interface{}{
+				"name":        asset.Name,
+				"sz_decimals": asset.SzDecimals,
+				"px_decimals": asset.PxDecimals,
+				"is_perp":     asset.IsPerp,
+			}
+			assets = append(assets, assetMap)
+		}
+	}
+
+	return assets, nil
+}
+
+// extractStockAssets 从所有资产中筛选HIP-3股票资产
+func (s *HyperliquidService) extractStockAssets(assets []map[string]interface{}) []map[string]interface{} {
+	var stocks []map[string]interface{}
+
+	for _, asset := range assets {
+		name, ok := asset["name"].(string)
+		if !ok {
+			continue
+		}
+
+		// HIP-3 股票资产使用带冒号的前缀（如 xyz:NVDA、flx:TSLA 等）
+		if !strings.Contains(name, ":") {
+			continue
+		}
+
+		// 分割前缀和股票代码
+		parts := strings.Split(name, ":")
+		if len(parts) != 2 {
+			continue
+		}
+
+		prefix := parts[0]
+		symbol := parts[1]
+
+		// 添加股票特有信息
+		stockAsset := asset
+		stockAsset["prefix"] = prefix
+		stockAsset["symbol"] = symbol
+		stockAsset["type"] = "stock"
+
+		stocks = append(stocks, stockAsset)
+	}
+
+	return stocks
+}
+
+// formatStocksMessage 格式化股票资产信息消息
+func (s *HyperliquidService) formatStocksMessage(stocks []map[string]interface{}) string {
+	if len(stocks) == 0 {
+		return `📊 <b>HIP-3 股票资产</b>
+
+暂无可用的HIP-3股票资产
+
+💡 HIP-3股票资产使用冒号前缀格式（如 xyz:NVDA）`
+	}
+
+	var message strings.Builder
+	message.WriteString("📊 <b>HIP-3 股票资产列表</b>\n\n")
+
+	// 按前缀分组统计
+	prefixCount := make(map[string]int)
+	for _, stock := range stocks {
+		if prefix, ok := stock["prefix"].(string); ok {
+			prefixCount[prefix]++
+		}
+	}
+
+	// 显示统计信息
+	message.WriteString("📈 <b>资产统计</b>\n")
+	for prefix, count := range prefixCount {
+		message.WriteString(fmt.Sprintf("• %s: %d 个资产\n", prefix, count))
+	}
+
+	message.WriteString(fmt.Sprintf("\n📋 <b>详细信息</b> (共 %d 个资产)\n\n", len(stocks)))
+
+	// 显示前20个资产的详细信息
+	maxDisplay := 20
+	if len(stocks) < maxDisplay {
+		maxDisplay = len(stocks)
+	}
+
+	for i := 0; i < maxDisplay; i++ {
+		stock := stocks[i]
+		name := stock["name"].(string)
+		prefix := stock["prefix"].(string)
+		symbol := stock["symbol"].(string)
+		szDecimals := stock["sz_decimals"].(int)
+		pxDecimals := stock["px_decimals"].(int)
+
+		message.WriteString(fmt.Sprintf("<b>%d. %s</b>\n", i+1, name))
+		message.WriteString(fmt.Sprintf("   • 前缀: <code>%s</code>\n", prefix))
+		message.WriteString(fmt.Sprintf("   • 股票代码: <code>%s</code>\n", symbol))
+		message.WriteString(fmt.Sprintf("   • 数量精度: %d 位小数\n", szDecimals))
+		message.WriteString(fmt.Sprintf("   • 价格精度: %d 位小数\n", pxDecimals))
+		message.WriteString("   • 类型: 股票合约\n\n")
+	}
+
+	// 如果资产数量超过显示限制，添加提示
+	if len(stocks) > maxDisplay {
+		message.WriteString(fmt.Sprintf("📝 还有 %d 个资产未显示...\n\n", len(stocks)-maxDisplay))
+	}
+
+	message.WriteString("💡 <b>提示</b>\n")
+	message.WriteString("• HIP-3股票资产支持多空交易\n")
+	message.WriteString("• 使用 /start 初始化后可进行股票交易\n")
+	message.WriteString("• 股票交易时间遵循美股交易时间")
+
+	return message.String()
+}
+
 // absFloat 返回浮点数的绝对值
 func absFloat(x float64) float64 {
 	if x < 0 {
