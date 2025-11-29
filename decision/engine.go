@@ -400,21 +400,29 @@ func buildUserPrompt(ctx *Context) string {
 				}
 			}
 
-			sb.WriteString(fmt.Sprintf("%d. %s %s | 入场价%.4f 当前价%.4f | 盈亏%+.2f%% | 杠杆%dx | 保证金%.0f | 强平价%.4f%s\n\n",
-				i+1, pos.Symbol, strings.ToUpper(pos.Side),
-				pos.EntryPrice, pos.MarkPrice, pos.UnrealizedPnLPct,
-				pos.Leverage, pos.MarginUsed, pos.LiquidationPrice, holdingDuration))
-
 			// 已有止盈止损（取当前最优一档）
-			tpText := "未设置"
+			var tpText, slText string
+			hasTpSl := false
 			if pos.BestTakeProfit != nil && pos.BestTakeProfit.Price > 0 {
-				tpText = fmt.Sprintf("%.4f (OID=%d)", pos.BestTakeProfit.Price, pos.BestTakeProfit.OrderID)
+				tpText = fmt.Sprintf(" | 止盈:%.4f (OID=%d)", pos.BestTakeProfit.Price, pos.BestTakeProfit.OrderID)
+				hasTpSl = true
 			}
-			slText := "未设置"
 			if pos.BestStopLoss != nil && pos.BestStopLoss.Price > 0 {
-				slText = fmt.Sprintf("%.4f (OID=%d)", pos.BestStopLoss.Price, pos.BestStopLoss.OrderID)
+				slText = fmt.Sprintf(" | 止损:%.4f (OID=%d)", pos.BestStopLoss.Price, pos.BestStopLoss.OrderID)
+				hasTpSl = true
 			}
-			sb.WriteString(fmt.Sprintf("   当前止盈: %s | 当前止损: %s\n\n", tpText, slText))
+
+			if !hasTpSl {
+				sb.WriteString(fmt.Sprintf("%d. %s %s | 入场价%.4f 当前价%.4f | 盈亏%+.2f%% | 杠杆%dx | 保证金%.0f | 强平价%.4f%s\n\n",
+					i+1, pos.Symbol, strings.ToUpper(pos.Side),
+					pos.EntryPrice, pos.MarkPrice, pos.UnrealizedPnLPct,
+					pos.Leverage, pos.MarginUsed, pos.LiquidationPrice, holdingDuration))
+			} else {
+				sb.WriteString(fmt.Sprintf("%d. %s %s | 入场价%.4f 当前价%.4f | 盈亏%+.2f%% | 杠杆%dx | 保证金%.0f | 强平价%.4f%s%s%s\n\n",
+					i+1, pos.Symbol, strings.ToUpper(pos.Side),
+					pos.EntryPrice, pos.MarkPrice, pos.UnrealizedPnLPct,
+					pos.Leverage, pos.MarginUsed, pos.LiquidationPrice, tpText, slText, holdingDuration))
+			}
 
 			// 使用FormatMarketData输出完整市场数据
 			if marketData, ok := ctx.MarketDataMap[pos.Symbol]; ok {
