@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/sonirico/go-hyperliquid"
 )
 
 // decodeUnicodeEscapes 解码Unicode转义序列，确保UTF-8安全
@@ -292,7 +294,7 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 		lastBalanceSyncTime:   time.Now(), // 初始化为当前时间
 		database:              database,
 		userID:                userID,
-		telegramBotManager:    nil, // 初始化为空，后续通过SetTelegramBotManager设置
+		telegramBotManager:    nil,                   // 初始化为空，后续通过SetTelegramBotManager设置
 		reverseTrading:        config.ReverseTrading, // 从配置中读取反向交易设置
 	}, nil
 }
@@ -1233,6 +1235,17 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		marginUsed := (quantity * markPrice) / float64(leverage)
 		totalMarginUsed += marginUsed
 
+		// 把当前币种的止盈/止损传递给AI（选择距离当前价格最近的一个）
+		var bestSL *decision.TpSlOrderInfo
+		var bestTP *decision.TpSlOrderInfo
+		if hlTrader, ok := at.trader.(*HyperliquidTrader); ok {
+			if triggerOrders, err := hlTrader.ListActiveTpSlOrders(symbol); err != nil {
+				log.Printf("⚠️ [%s] 获取触发挂单失败: %v", symbol, err)
+			} else if len(triggerOrders) > 0 {
+				bestSL, bestTP = pickBestTpSlOrders(triggerOrders, side, markPrice)
+			}
+		}
+
 		// 跟踪持仓首次出现时间
 		posKey := symbol + "_" + side
 		currentPositionKeys[posKey] = true
@@ -1254,6 +1267,8 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 			LiquidationPrice: liquidationPrice,
 			MarginUsed:       marginUsed,
 			UpdateTime:       updateTime,
+			BestStopLoss:     bestSL,
+			BestTakeProfit:   bestTP,
 		})
 	}
 
@@ -1330,6 +1345,48 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 	return ctx, nil
 }
 
+// pickBestTpSlOrders 从触发挂单中选出距离当前价格最近的止盈/止损单
+func pickBestTpSlOrders(orders []hyperliquid.FrontendOpenOrder, positionSide string, markPrice float64) (*decision.TpSlOrderInfo, *decision.TpSlOrderInfo) {
+	var bestSL *decision.TpSlOrderInfo
+	var bestTP *decision.TpSlOrderInfo
+
+	for _, ord := range orders {
+		kind := classifyTpSl(ord, positionSide)
+		if kind != "tp" && kind != "sl" {
+			continue
+		}
+
+		price := ord.TriggerPx
+		if price == 0 && ord.LimitPx > 0 {
+			price = ord.LimitPx
+		}
+		if price == 0 {
+			continue
+		}
+
+		info := &decision.TpSlOrderInfo{
+			OrderID:          ord.Oid,
+			Kind:             kind,
+			Price:            price,
+			TriggerCondition: ord.TriggerCondition,
+			ReduceOnly:       ord.ReduceOnly,
+		}
+
+		dist := math.Abs(price - markPrice)
+		if kind == "tp" {
+			if bestTP == nil || math.Abs(bestTP.Price-markPrice) > dist {
+				bestTP = info
+			}
+		} else {
+			if bestSL == nil || math.Abs(bestSL.Price-markPrice) > dist {
+				bestSL = info
+			}
+		}
+	}
+
+	return bestSL, bestTP
+}
+
 // executeDecisionWithRecord 执行AI决策并记录详细信息
 func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
 	// 反向交易逻辑：当启用反向交易时，调换开多和开空的操作
@@ -1340,16 +1397,16 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, act
 			// 反向交易时需要反转止损止盈价格
 			originalStopLoss := decision.StopLoss
 			originalTakeProfit := decision.TakeProfit
-			decision.StopLoss = originalTakeProfit    // 止损变为止盈
-			decision.TakeProfit = originalStopLoss    // 止盈变为止损
+			decision.StopLoss = originalTakeProfit // 止损变为止盈
+			decision.TakeProfit = originalStopLoss // 止盈变为止损
 			return at.executeOpenShortWithRecord(decision, actionRecord)
 		case "open_short":
 			log.Printf("[REVERSED] %s: AI建议开空，实际执行开多", at.name)
 			// 反向交易时需要反转止损止盈价格
 			originalStopLoss := decision.StopLoss
 			originalTakeProfit := decision.TakeProfit
-			decision.StopLoss = originalTakeProfit    // 止损变为止盈
-			decision.TakeProfit = originalStopLoss    // 止盈变为止损
+			decision.StopLoss = originalTakeProfit // 止损变为止盈
+			decision.TakeProfit = originalStopLoss // 止盈变为止损
 			return at.executeOpenLongWithRecord(decision, actionRecord)
 		// close操作保持不变，不进行反向
 		case "close_long":

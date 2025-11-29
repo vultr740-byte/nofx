@@ -29,17 +29,28 @@ var (
 
 // PositionInfo 持仓信息
 type PositionInfo struct {
-	Symbol           string  `json:"symbol"`
-	Side             string  `json:"side"` // "long" or "short"
-	EntryPrice       float64 `json:"entry_price"`
-	MarkPrice        float64 `json:"mark_price"`
-	Quantity         float64 `json:"quantity"`
-	Leverage         int     `json:"leverage"`
-	UnrealizedPnL    float64 `json:"unrealized_pnl"`
-	UnrealizedPnLPct float64 `json:"unrealized_pnl_pct"`
-	LiquidationPrice float64 `json:"liquidation_price"`
-	MarginUsed       float64 `json:"margin_used"`
-	UpdateTime       int64   `json:"update_time"` // 持仓更新时间戳（毫秒）
+	Symbol           string         `json:"symbol"`
+	Side             string         `json:"side"` // "long" or "short"
+	EntryPrice       float64        `json:"entry_price"`
+	MarkPrice        float64        `json:"mark_price"`
+	Quantity         float64        `json:"quantity"`
+	Leverage         int            `json:"leverage"`
+	UnrealizedPnL    float64        `json:"unrealized_pnl"`
+	UnrealizedPnLPct float64        `json:"unrealized_pnl_pct"`
+	LiquidationPrice float64        `json:"liquidation_price"`
+	MarginUsed       float64        `json:"margin_used"`
+	UpdateTime       int64          `json:"update_time"`                // 持仓更新时间戳（毫秒）
+	BestStopLoss     *TpSlOrderInfo `json:"best_stop_loss,omitempty"`   // 当前最优止损单
+	BestTakeProfit   *TpSlOrderInfo `json:"best_take_profit,omitempty"` // 当前最优止盈单
+}
+
+// TpSlOrderInfo 当前生效的止盈/止损挂单摘要
+type TpSlOrderInfo struct {
+	OrderID          int64   `json:"order_id"`
+	Kind             string  `json:"kind"` // tp | sl
+	Price            float64 `json:"price"`
+	TriggerCondition string  `json:"trigger_condition,omitempty"`
+	ReduceOnly       bool    `json:"reduce_only,omitempty"`
 }
 
 // AccountInfo 账户信息
@@ -393,6 +404,17 @@ func buildUserPrompt(ctx *Context) string {
 				i+1, pos.Symbol, strings.ToUpper(pos.Side),
 				pos.EntryPrice, pos.MarkPrice, pos.UnrealizedPnLPct,
 				pos.Leverage, pos.MarginUsed, pos.LiquidationPrice, holdingDuration))
+
+			// 已有止盈止损（取当前最优一档）
+			tpText := "未设置"
+			if pos.BestTakeProfit != nil && pos.BestTakeProfit.Price > 0 {
+				tpText = fmt.Sprintf("%.4f (OID=%d)", pos.BestTakeProfit.Price, pos.BestTakeProfit.OrderID)
+			}
+			slText := "未设置"
+			if pos.BestStopLoss != nil && pos.BestStopLoss.Price > 0 {
+				slText = fmt.Sprintf("%.4f (OID=%d)", pos.BestStopLoss.Price, pos.BestStopLoss.OrderID)
+			}
+			sb.WriteString(fmt.Sprintf("   当前止盈: %s | 当前止损: %s\n\n", tpText, slText))
 
 			// 使用FormatMarketData输出完整市场数据
 			if marketData, ok := ctx.MarketDataMap[pos.Symbol]; ok {

@@ -1040,6 +1040,11 @@ func (t *HyperliquidTrader) triggerOrdersBySymbol(symbol string) ([]hyperliquid.
 	return filtered, nil
 }
 
+// ListActiveTpSlOrders 列出某个币种的当前触发类止盈/止损单（仅ReduceOnly）
+func (t *HyperliquidTrader) ListActiveTpSlOrders(symbol string) ([]hyperliquid.FrontendOpenOrder, error) {
+	return t.triggerOrdersBySymbol(symbol)
+}
+
 // classifyTpSl 统一的订单类型分类函数
 // 封装 detectOrderKind，提供更清晰的接口
 func classifyTpSl(ord hyperliquid.FrontendOpenOrder, positionSide string) string {
