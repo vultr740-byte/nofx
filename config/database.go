@@ -76,6 +76,8 @@ type DatabaseInterface interface {
 	UpdateTgGasSponsorshipProgress(id int64, status string, gasTxHash string, bridgeTxHash string, usdcAmount string) error
 	GetActiveGasSponsorship(walletAddr string) (*TgGasSponsorshipRecord, error)
 	HasRecentGasSponsorship(walletAddr string, withinHours int) (bool, error)
+	GetActiveGasSponsorshipForUser(walletAddr string, tgUserID int64) (*TgGasSponsorshipRecord, error)
+	HasRecentGasSponsorshipForUser(walletAddr string, tgUserID int64, withinHours int) (bool, error)
 	UpdateTgTraderConfig(tgUserID int64, traderID string, traderRecord *TgTraderRecord) error
 	DeleteTgTrader(tgUserID int64, traderID string) error
 	GetTgTraderConfig(tgUserID int64, traderID string) (*TgTraderRecord, error)
@@ -1139,7 +1141,7 @@ type TgTraderRecord struct {
 	IsCrossMargin        bool      `json:"is_cross_margin"`
 	UseDefaultCoins      bool      `json:"use_default_coins"`
 	CustomCoins          string    `json:"custom_coins"`
-	ReverseTrading       bool      `json:"reverse_trading"`        // 是否启用反向交易（true=开多时做空，开空时做多）
+	ReverseTrading       bool      `json:"reverse_trading"` // 是否启用反向交易（true=开多时做空，开空时做多）
 	SystemPromptTemplate string    `json:"system_prompt_template"`
 	AIModelAPIKey        string    `json:"ai_model_api_key"`
 	AIModelAPIURL        string    `json:"ai_model_api_url"`
@@ -3247,6 +3249,27 @@ func (d *Database) HasRecentGasSponsorship(walletAddr string, withinHours int) (
 	return count > 0, nil
 }
 
+// HasRecentGasSponsorshipForUser 判断近期是否已经赞助过 gas（按用户+地址）
+func (d *Database) HasRecentGasSponsorshipForUser(walletAddr string, tgUserID int64, withinHours int) (bool, error) {
+	cutoff := time.Now().Add(-time.Duration(withinHours) * time.Hour)
+	var query string
+	var count int
+	var err error
+
+	if d.usePostgreSQL {
+		query = `SELECT COUNT(*) FROM tg_gas_sponsorships WHERE wallet_address = $1 AND tg_user_id = $2 AND created_at >= $3 AND status IN ('gas_sent','completed')`
+		err = d.db.QueryRow(query, walletAddr, tgUserID, cutoff).Scan(&count)
+	} else {
+		query = `SELECT COUNT(*) FROM tg_gas_sponsorships WHERE wallet_address = ? AND tg_user_id = ? AND created_at >= ? AND status IN ('gas_sent','completed')`
+		err = d.db.QueryRow(query, walletAddr, tgUserID, cutoff.Format("2006-01-02 15:04:05")).Scan(&count)
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("查询Gas赞助记录失败: %w", err)
+	}
+	return count > 0, nil
+}
+
 // GetActiveGasSponsorship 获取尚未完成的赞助记录
 func (d *Database) GetActiveGasSponsorship(walletAddr string) (*TgGasSponsorshipRecord, error) {
 	var query string
@@ -3270,6 +3293,54 @@ func (d *Database) GetActiveGasSponsorship(walletAddr string) (*TgGasSponsorship
 			LIMIT 1
 		`
 		row = d.db.QueryRow(query, walletAddr)
+	}
+
+	var record TgGasSponsorshipRecord
+	err := row.Scan(
+		&record.ID,
+		&record.TgUserID,
+		&record.WalletAddress,
+		&record.AmountWei,
+		&record.USDCAmount,
+		&record.GasTxHash,
+		&record.BridgeTxHash,
+		&record.Status,
+		&record.CreatedAt,
+		&record.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("查询Gas赞助记录失败: %w", err)
+	}
+	return &record, nil
+}
+
+// GetActiveGasSponsorshipForUser 获取指定用户+地址尚未完成的赞助记录
+func (d *Database) GetActiveGasSponsorshipForUser(walletAddr string, tgUserID int64) (*TgGasSponsorshipRecord, error) {
+	var query string
+	var row *sql.Row
+	if d.usePostgreSQL {
+		query = `
+			SELECT id, tg_user_id, wallet_address, amount_wei, usdc_amount, gas_tx_hash, bridge_tx_hash, status, created_at, updated_at
+			FROM tg_gas_sponsorships
+			WHERE wallet_address = $1 AND tg_user_id = $2 AND status NOT IN ('completed','failed')
+			ORDER BY created_at DESC
+			LIMIT 1
+		`
+		row = d.db.QueryRow(query, walletAddr, tgUserID)
+	} else {
+		query = `
+			SELECT id, tg_user_id, wallet_address, amount_wei, usdc_amount, gas_tx_hash, bridge_tx_hash, status, created_at, updated_at
+			FROM tg_gas_sponsorships
+			WHERE wallet_address = ?
+			  AND tg_user_id = ?
+			  AND status NOT IN ('completed','failed')
+			ORDER BY created_at DESC
+			LIMIT 1
+		`
+		row = d.db.QueryRow(query, walletAddr, tgUserID)
 	}
 
 	var record TgGasSponsorshipRecord

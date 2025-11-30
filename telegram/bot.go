@@ -30,6 +30,8 @@ type TelegramBotManager struct {
 	debugMu       sync.Mutex
 	gasSponsorKey string
 	gasSponsorWei *big.Int
+	gasProcMu     sync.Mutex
+	gasProcessing map[string]struct{}
 }
 
 func esc(v interface{}) string {
@@ -86,6 +88,7 @@ func NewTelegramBotManager(cfg *config.TelegramBotConfig, db config.DatabaseInte
 		tgTraderMgr:   tgTraderMgr,
 		configWizard:  configWizard,
 		gasSponsorKey: cfg.GasPayerPrivateKey,
+		gasProcessing: make(map[string]struct{}),
 	}
 
 	if cfg.GasSponsorshipETH > 0 {
@@ -1105,6 +1108,32 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 		return
 	}
 
+	key := fmt.Sprintf("%d:%s", telegramID, strings.ToLower(walletAddr))
+	tbm.gasProcMu.Lock()
+	if _, exists := tbm.gasProcessing[key]; exists {
+		tbm.gasProcMu.Unlock()
+		log.Printf("ℹ️ 跳过重复 Gas 赞助请求 (user=%d, wallet=%s)", telegramID, walletAddr)
+		return
+	}
+	tbm.gasProcessing[key] = struct{}{}
+	tbm.gasProcMu.Unlock()
+	defer func() {
+		tbm.gasProcMu.Lock()
+		delete(tbm.gasProcessing, key)
+		tbm.gasProcMu.Unlock()
+	}()
+
+	// 用户级别冷却：提前拦截，避免重复创建记录
+	inCooldown, err := tbm.db.HasRecentGasSponsorshipForUser(walletAddr, telegramID, int(gasSponsorshipCooldown.Hours()))
+	if err != nil {
+		log.Printf("⚠️ 查询 Gas 冷却状态失败: %v", err)
+		return
+	}
+	if inCooldown {
+		log.Printf("ℹ️ 用户 %d 地址 %s 仍在 Gas 冷却期内，跳过自动赞助", telegramID, walletAddr)
+		return
+	}
+
 	usdcBal, err := tbm.arbService.GetUSDCBalance(walletAddr)
 	if err != nil {
 		log.Printf("⚠️ 查询 USDC 余额失败: %v", err)
@@ -1114,13 +1143,13 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 		return
 	}
 
-	record, err := tbm.db.GetActiveGasSponsorship(walletAddr)
+	record, err := tbm.db.GetActiveGasSponsorshipForUser(walletAddr, telegramID)
 	if err != nil {
 		log.Printf("⚠️ 查询 Gas 赞助记录失败: %v", err)
 	}
 
 	requiredEth := big.NewInt(0)
-	if tbm.gasSponsorWei != nil {
+	if tbm.gasSponsorWei != nil && tbm.gasSponsorWei.Sign() > 0 {
 		requiredEth.Set(tbm.gasSponsorWei)
 	}
 
@@ -1138,6 +1167,7 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 			return
 		}
 		record.ID = recordID
+		log.Printf("🧾 创建 Gas 赞助记录: user=%d wallet=%s id=%d", telegramID, walletAddr, recordID)
 	} else if record.USDCAmount == "" || usdcBal.Cmp(stringToBig(record.USDCAmount)) > 0 {
 		record.USDCAmount = usdcBal.String()
 		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, "", "", "", record.USDCAmount)
@@ -1155,8 +1185,13 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 		log.Printf("⚠️ 估算 USDC 充值 Gas 失败: %v", err)
 		return
 	}
-	if gasCost.Cmp(requiredEth) > 0 {
+	if gasCost.Sign() > 0 && gasCost.Cmp(requiredEth) > 0 {
 		requiredEth = gasCost
+		log.Printf("ℹ️ 使用估算 Gas 费用覆盖配置值: %s wei", gasCost.String())
+	}
+	if requiredEth.Sign() == 0 {
+		log.Printf("⚠️ 无法确定所需 Gas，跳过赞助流程 (user=%d wallet=%s)", telegramID, walletAddr)
+		return
 	}
 	record.AmountWei = requiredEth.String()
 	_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, "", "", "", record.AmountWei)
@@ -1182,7 +1217,7 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 				tbm.sendMessage(chatID, "⏳ Gas 赞助已发送，等待到账后再执行 /balance。")
 				return
 			}
-			recent, err := tbm.db.HasRecentGasSponsorship(walletAddr, int(gasSponsorshipCooldown.Hours()))
+			recent, err := tbm.db.HasRecentGasSponsorshipForUser(walletAddr, telegramID, int(gasSponsorshipCooldown.Hours()))
 			if err != nil {
 				log.Printf("⚠️ 查询 Gas 赞助记录失败: %v", err)
 			}
