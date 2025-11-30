@@ -1399,11 +1399,11 @@ func pickBestTpSlOrders(orders []hyperliquid.FrontendOpenOrder, positionSide str
 
 // executeDecisionWithRecord 执行AI决策并记录详细信息
 func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
-	// 反向交易逻辑：当启用反向交易时，调换开多和开空的操作
-	if at.reverseTrading {
+	// 反向交易逻辑：需要同时满足配置启用ReverseTrading且AI决策的trade_setup为"pullback"
+	if at.reverseTrading && decision.TradeSetup == "pullback" {
 		switch decision.Action {
 		case "open_long":
-			log.Printf("[REVERSED] %s: AI建议开多，实际执行开空", at.name)
+			log.Printf("[REVERSE TRADING + PULLBACK] %s: AI建议开多，但配置启用pullback反向交易，执行开空", at.name)
 			// 反向交易时需要反转止损止盈价格
 			originalStopLoss := decision.StopLoss
 			originalTakeProfit := decision.TakeProfit
@@ -1411,7 +1411,7 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, act
 			decision.TakeProfit = originalStopLoss // 止盈变为止损
 			return at.executeOpenShortWithRecord(decision, actionRecord)
 		case "open_short":
-			log.Printf("[REVERSED] %s: AI建议开空，实际执行开多", at.name)
+			log.Printf("[REVERSE TRADING + PULLBACK] %s: AI建议开空，但配置启用pullback反向交易，执行开多", at.name)
 			// 反向交易时需要反转止损止盈价格
 			originalStopLoss := decision.StopLoss
 			originalTakeProfit := decision.TakeProfit
