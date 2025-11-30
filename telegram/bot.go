@@ -565,9 +565,9 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 	}
 
 	// 生成充值消息（使用与首次创建相同的地址展示格式，方便复制）
-	depositMsg := fmt.Sprintf(`💰 USDC 充值地址
+	depositMsg := fmt.Sprintf(`💰 USDC 充值地址（Arbitrum 网络）
 
-<code>%s</code>
+<code>%s</code>（点击复制）
 
 📋 充值说明:
 • 支持资产: USDC
