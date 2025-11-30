@@ -571,7 +571,7 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 
 📋 充值说明:
 • 支持资产: USDC
-• 网络: Arbitrum One
+• 支持网络: Arbitrum One
 • 最小充值: 20 USDC
 • 到账时间: 通常 2-5 分钟
 
