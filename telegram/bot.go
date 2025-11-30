@@ -43,7 +43,7 @@ const (
 	gasSponsorshipCooldown   = 6 * time.Hour
 )
 
-var minUSDCBridgeAmount = new(big.Int).Mul(big.NewInt(19), big.NewInt(1_000_000))
+var minUSDCBridgeAmount = new(big.Int).Mul(big.NewInt(20), big.NewInt(1_000_000))
 
 const (
 	gasStatusProcessing = "processing"
@@ -572,7 +572,7 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 📋 充值说明:
 • 支持资产: USDC
 • 支持网络: Arbitrum One
-• 最小充值: 19 USDC
+• 最小充值: 20 USDC
 • 到账时间: 通常 2-5 分钟
 
 ⚠️ 注意事项:
