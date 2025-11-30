@@ -97,7 +97,7 @@ docker compose up -d
 
 - **网络**: Arbitrum One
 - **币种**: USDC
-- **最小充值**: 1 USDC
+- **最小充值**: 19 USDC
 - **到账时间**: 通常 2-5 分钟
 
 ### 充值步骤
