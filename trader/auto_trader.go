@@ -1021,7 +1021,7 @@ func (at *AutoTrader) runCycle() error {
 
 	// 保存持仓快照
 	for _, pos := range ctx.Positions {
-		record.Positions = append(record.Positions, logger.PositionSnapshot{
+		snapshot := logger.PositionSnapshot{
 			Symbol:           pos.Symbol,
 			Side:             pos.Side,
 			PositionAmt:      pos.Quantity,
@@ -1030,7 +1030,17 @@ func (at *AutoTrader) runCycle() error {
 			UnrealizedProfit: pos.UnrealizedPnL,
 			Leverage:         float64(pos.Leverage),
 			LiquidationPrice: pos.LiquidationPrice,
-		})
+		}
+
+		// 提取止盈止损价格信息
+		if pos.BestStopLoss != nil {
+			snapshot.StopLossPrice = pos.BestStopLoss.Price
+		}
+		if pos.BestTakeProfit != nil {
+			snapshot.TakeProfitPrice = pos.BestTakeProfit.Price
+		}
+
+		record.Positions = append(record.Positions, snapshot)
 	}
 
 	log.Print(strings.Repeat("=", 70))

@@ -46,6 +46,8 @@ type PositionSnapshot struct {
 	UnrealizedProfit float64 `json:"unrealized_profit"`
 	Leverage         float64 `json:"leverage"`
 	LiquidationPrice float64 `json:"liquidation_price"`
+	StopLossPrice    float64 `json:"stop_loss_price,omitempty"`
+	TakeProfitPrice  float64 `json:"take_profit_price,omitempty"`
 }
 
 // DecisionAction 决策动作
