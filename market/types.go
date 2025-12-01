@@ -4,10 +4,10 @@ import "time"
 
 // Data 市场数据结构
 type Data struct {
-	Symbol            string
-	CurrentPrice      float64
-	PriceChange1h     float64 // 1小时价格变化百分比
-	PriceChange4h     float64 // 4小时价格变化百分比
+	Symbol        string
+	CurrentPrice  float64
+	PriceChange1h float64 // 1小时价格变化百分比
+	PriceChange4h float64 // 4小时价格变化百分比
 	// 注释掉技术指标字段，default.txt 策略只使用结构分析
 	// CurrentEMA20      float64
 	// CurrentMACD       float64
@@ -26,7 +26,7 @@ type OIData struct {
 
 // IntradayData 日内数据(3分钟间隔)
 type IntradayData struct {
-	MidPrices   []float64
+	MidPrices []float64
 	// 注释掉技术指标字段，default.txt 策略只使用结构分析
 	// EMA20Values []float64
 	// MACDValues  []float64
@@ -43,6 +43,9 @@ type LongerTermData struct {
 	ATR14         float64
 	CurrentVolume float64
 	AverageVolume float64
+	Closes        []float64
+	Highs         []float64
+	Lows          []float64
 	// MACDValues    []float64
 	// RSI14Values   []float64
 }
