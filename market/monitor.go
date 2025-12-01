@@ -15,13 +15,14 @@ type WSMonitor struct {
 	symbols        []string
 	featuresMap    sync.Map
 	alertsChan     chan Alert
-	klineDataMap3m sync.Map // 存储每个交易对的K线历史数据
-	klineDataMap4h sync.Map // 存储每个交易对的K线历史数据
-	tickerDataMap  sync.Map // 存储每个交易对的ticker数据
-	batchSize      int
-	filterSymbols  sync.Map // 使用sync.Map来存储需要监控的币种和其状态
-	symbolStats    sync.Map // 存储币种统计信息
-	FilterSymbol   []string //经过筛选的币种
+	klineDataMap3m  sync.Map // 存储每个交易对的K线历史数据
+	klineDataMap15m sync.Map // 存储每个交易对的15分钟K线历史数据
+	klineDataMap4h  sync.Map // 存储每个交易对的K线历史数据
+	tickerDataMap   sync.Map // 存储每个交易对的ticker数据
+	batchSize       int
+	filterSymbols   sync.Map // 使用sync.Map来存储需要监控的币种和其状态
+	symbolStats     sync.Map // 存储币种统计信息
+	FilterSymbol    []string //经过筛选的币种
 }
 
 // getKlineLimit 根据时间周期返回对应的K线数据根数
@@ -29,6 +30,8 @@ func getKlineLimit(timeframe string) int {
 	switch timeframe {
 	case "3m":
 		return 20  // 3分钟数据：20根 = 1小时历史
+	case "15m":
+		return 32  // 15分钟数据：32根 = 8小时历史
 	case "4h":
 		return 50  // 4小时数据：50根 = 8.3天历史
 	default:
@@ -44,7 +47,7 @@ type SymbolStats struct {
 }
 
 var WSMonitorCli *WSMonitor
-var subKlineTime = []string{"3m", "4h"} // 管理订阅流的K线周期
+var subKlineTime = []string{"3m", "15m", "4h"} // 管理订阅流的K线周期
 
 func NewWSMonitor(batchSize int) *WSMonitor {
 	WSMonitorCli = &WSMonitor{
@@ -110,6 +113,16 @@ func (m *WSMonitor) initializeHistoricalData() error {
 			if len(klines) > 0 {
 				m.klineDataMap3m.Store(s, klines)
 				log.Printf("已加载 %s 的历史K线数据-3m: %d 条", s, len(klines))
+			}
+			// 获取15分钟历史K线数据
+			klines15m, err := apiClient.GetKlines(s, "15m", getKlineLimit("15m"))
+			if err != nil {
+				log.Printf("获取 %s 15分钟历史数据失败: %v", s, err)
+				return
+			}
+			if len(klines15m) > 0 {
+				m.klineDataMap15m.Store(s, klines15m)
+				log.Printf("已加载 %s 的历史K线数据-15m: %d 条", s, len(klines15m))
 			}
 			// 获取历史K线数据
 			klines4h, err := apiClient.GetKlines(s, "4h", getKlineLimit("4h"))
@@ -194,6 +207,8 @@ func (m *WSMonitor) getKlineDataMap(_time string) *sync.Map {
 	var klineDataMap *sync.Map
 	if _time == "3m" {
 		klineDataMap = &m.klineDataMap3m
+	} else if _time == "15m" {
+		klineDataMap = &m.klineDataMap15m
 	} else if _time == "4h" {
 		klineDataMap = &m.klineDataMap4h
 	} else {
