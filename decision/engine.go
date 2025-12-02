@@ -25,6 +25,8 @@ var (
 	// 新增：XML标签提取（支持思维链中包含任何字符）
 	reReasoningTag = regexp.MustCompile(`(?s)<reasoning>(.*?)</reasoning>`)
 	reDecisionTag  = regexp.MustCompile(`(?s)<decision>(.*?)</decision>`)
+	// 兼容 AI 输出的区间数值（如 1.2~1.5），后续会压缩为单值
+	reRangeNumber = regexp.MustCompile(`(\d+(?:\.\d+)?)[\s]*[~〜～-]+[\s]*(\d+(?:\.\d+)?)`)
 )
 
 // PositionInfo 持仓信息
@@ -112,10 +114,10 @@ type Decision struct {
 	ClosePercentage float64 `json:"close_percentage,omitempty"` // 用于 partial_close (0-100)
 
 	// 通用参数
-	Confidence      int     `json:"confidence,omitempty"` // 信心度 (0-100)
-	RiskUSD         float64 `json:"risk_usd,omitempty"`   // 最大美元风险
-	Reasoning       string  `json:"reasoning"`
-	BTCTrendStrength int    `json:"btc_trend_strength,omitempty"` // BTC趋势强度 (0-100)
+	Confidence       int     `json:"confidence,omitempty"` // 信心度 (0-100)
+	RiskUSD          float64 `json:"risk_usd,omitempty"`   // 最大美元风险
+	Reasoning        string  `json:"reasoning"`
+	BTCTrendStrength int     `json:"btc_trend_strength,omitempty"` // BTC趋势强度 (0-100)
 }
 
 // FullDecision AI的完整决策（包含思维链）
@@ -563,6 +565,7 @@ func extractDecisions(response string) ([]Decision, error) {
 		jsonContent = compactArrayOpen(jsonContent) // 把 "[ {" 规整为 "[{"
 		jsonContent = fixMissingQuotes(jsonContent) // 二次修复（防止 regex 提取后还有残留全角）
 		jsonContent = stripThousandSeparators(jsonContent)
+		jsonContent = normalizeRangeNumbers(jsonContent)
 		if err := validateJSONFormat(jsonContent); err != nil {
 			return nil, fmt.Errorf("JSON格式验证失败: %w\nJSON内容: %s\n完整响应:\n%s", err, jsonContent, response)
 		}
@@ -600,6 +603,7 @@ func extractDecisions(response string) ([]Decision, error) {
 	jsonContent = compactArrayOpen(jsonContent)
 	jsonContent = fixMissingQuotes(jsonContent) // 二次修复（防止 regex 提取后还有残留全角）
 	jsonContent = stripThousandSeparators(jsonContent)
+	jsonContent = normalizeRangeNumbers(jsonContent)
 
 	// 🔧 验证 JSON 格式（检测常见错误）
 	if err := validateJSONFormat(jsonContent); err != nil {
@@ -675,6 +679,12 @@ func validateJSONFormat(jsonStr string) error {
 	}
 
 	return nil
+}
+
+// normalizeRangeNumbers 将包含范围符号的数字区间压缩为单一数值（取区间起点）
+// 示例: "1.2~1.5" -> "1.2"
+func normalizeRangeNumbers(jsonStr string) string {
+	return reRangeNumber.ReplaceAllString(jsonStr, "$1")
 }
 
 // min 返回两个整数中的较小值
