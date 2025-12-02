@@ -508,12 +508,14 @@ func (t *HyperliquidTrader) SetMarginMode(symbol string, isCrossMargin bool) err
 
 // SetLeverage 设置杠杆
 func (t *HyperliquidTrader) SetLeverage(symbol string, leverage int) error {
-	// Hyperliquid symbol格式（去掉USDT后缀）
-	coin := convertSymbolToHyperliquid(symbol)
+	coin, err := t.resolveCoin(symbol)
+	if err != nil {
+		return err
+	}
 
 	// 调用UpdateLeverage (leverage int, name string, isCross bool)
 	// 第三个参数: true=全仓模式, false=逐仓模式
-	_, err := t.exchange.UpdateLeverage(t.ctx, leverage, coin, t.isCrossMargin)
+	_, err = t.exchange.UpdateLeverage(t.ctx, leverage, coin, t.isCrossMargin)
 	if err != nil {
 		return fmt.Errorf("设置杠杆失败: %w", err)
 	}
@@ -535,7 +537,10 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 	}
 
 	// Hyperliquid symbol格式
-	coin := convertSymbolToHyperliquid(symbol)
+	coin, err := t.resolveCoin(symbol)
+	if err != nil {
+		return nil, err
+	}
 
 	// 获取当前价格（用于市价单）
 	price, err := t.GetMarketPrice(symbol)
@@ -593,7 +598,10 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 	}
 
 	// Hyperliquid symbol格式
-	coin := convertSymbolToHyperliquid(symbol)
+	coin, err := t.resolveCoin(symbol)
+	if err != nil {
+		return nil, err
+	}
 
 	// 获取当前价格
 	price, err := t.GetMarketPrice(symbol)
@@ -660,7 +668,10 @@ func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (map[stri
 	}
 
 	// Hyperliquid symbol格式
-	coin := convertSymbolToHyperliquid(symbol)
+	coin, err := t.resolveCoin(symbol)
+	if err != nil {
+		return nil, err
+	}
 
 	// 获取当前价格
 	price, err := t.GetMarketPrice(symbol)
@@ -732,7 +743,10 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (map[str
 	}
 
 	// Hyperliquid symbol格式
-	coin := convertSymbolToHyperliquid(symbol)
+	coin, err := t.resolveCoin(symbol)
+	if err != nil {
+		return nil, err
+	}
 
 	// 获取当前价格
 	price, err := t.GetMarketPrice(symbol)
@@ -803,7 +817,10 @@ func (t *HyperliquidTrader) CancelStopLossOrders(symbol string) error {
 
 	log.Printf("  🔍 %s 发现 %d 个触发挂单，开始分类...", symbol, len(triggerOrders))
 
-	coin := convertSymbolToHyperliquid(symbol)
+	coin, err := t.resolveCoin(symbol)
+	if err != nil {
+		return err
+	}
 	canceled := 0
 	for _, ord := range triggerOrders {
 		// 详细分类日志
@@ -847,7 +864,10 @@ func (t *HyperliquidTrader) CancelTakeProfitOrders(symbol string) error {
 		return fmt.Errorf("获取触发挂单失败: %w", err)
 	}
 
-	coin := convertSymbolToHyperliquid(symbol)
+	coin, err := t.resolveCoin(symbol)
+	if err != nil {
+		return err
+	}
 	canceled := 0
 	for _, ord := range triggerOrders {
 		if classifyTpSl(ord, positionSide) != "tp" {
@@ -872,7 +892,10 @@ func (t *HyperliquidTrader) CancelTakeProfitOrders(symbol string) error {
 
 // CancelAllOrders 取消该币种的所有挂单
 func (t *HyperliquidTrader) CancelAllOrders(symbol string) error {
-	coin := convertSymbolToHyperliquid(symbol)
+	coin, err := t.resolveCoin(symbol)
+	if err != nil {
+		return err
+	}
 
 	// 获取所有挂单
 	openOrders, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
@@ -898,7 +921,10 @@ func (t *HyperliquidTrader) CancelAllOrders(symbol string) error {
 
 // CancelStopOrders 取消该币种的止盈/止损单（用于调整止盈止损位置）
 func (t *HyperliquidTrader) CancelStopOrders(symbol string) error {
-	coin := convertSymbolToHyperliquid(symbol)
+	coin, err := t.resolveCoin(symbol)
+	if err != nil {
+		return err
+	}
 
 	// 获取所有挂单
 	openOrders, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
@@ -1179,7 +1205,10 @@ func (t *HyperliquidTrader) getPositionSide(symbol string) (string, error) {
 
 // GetMarketPrice 获取市场价格
 func (t *HyperliquidTrader) GetMarketPrice(symbol string) (float64, error) {
-	coin := convertSymbolToHyperliquid(symbol)
+	coin, err := t.resolveCoin(symbol)
+	if err != nil {
+		return 0, err
+	}
 
 	// 获取所有市场价格
 	allMids, err := t.exchange.Info().AllMids(t.ctx)
@@ -1392,6 +1421,42 @@ func convertSymbolToHyperliquid(symbol string) string {
 		return symbol[:len(symbol)-4]
 	}
 	return symbol
+}
+
+// resolveCoin 支持HIP-3股票符号（带冒号），优先直接匹配，否则尝试通过AllMids匹配后缀
+func (t *HyperliquidTrader) resolveCoin(symbol string) (string, error) {
+	// 先处理显式符号
+	coin := convertSymbolToHyperliquid(symbol)
+	if strings.Contains(coin, ":") {
+		return coin, nil
+	}
+
+	// 查询所有mid价格以获取有效交易对列表
+	allMids, err := t.exchange.Info().AllMids(t.ctx)
+	if err != nil {
+		return "", fmt.Errorf("获取交易对列表失败: %w", err)
+	}
+
+	// 直接匹配（如纯币种）
+	if _, ok := allMids[coin]; ok {
+		return coin, nil
+	}
+
+	// 尝试匹配带前缀的HIP-3资产（形如 xyz:TSLA）
+	for k := range allMids {
+		if !strings.Contains(k, ":") {
+			continue
+		}
+		parts := strings.SplitN(k, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if strings.EqualFold(parts[1], coin) {
+			return k, nil
+		}
+	}
+
+	return "", fmt.Errorf("未找到交易对: %s", symbol)
 }
 
 // parsePositionSzi 解析持仓数量字符串，增强错误处理

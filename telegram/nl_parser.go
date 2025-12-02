@@ -60,7 +60,12 @@ func (p *NLParser) ParseCommand(message string) (*ParsedCommand, error) {
 	}
 
 	// 仅使用 MCP AI 解析，失败直接返回错误
-	return p.parseWithAI(message)
+	cmd, err := p.parseWithAI(message)
+	if err != nil {
+		return nil, err
+	}
+
+	return cmd, nil
 }
 
 // isTradingCommand 快速检测是否是交易相关的消息
@@ -95,7 +100,7 @@ func (p *NLParser) parseWithAI(message string) (*ParsedCommand, error) {
 请返回以下 JSON 格式（仅返回 JSON，不要其他文字）:
 {
   "action": "long|short|close|stop_loss|take_profit|close_all",
-  "symbol": "BTC|ETH|SOL|BNB|DOGE|ADA|DOT|LINK|MATIC|...",
+  "symbol": "交易代码(大写，无空格，例如BTC、ETH、TSLA；若输入中文/全称，请转换为对应英文代码)",
   "leverage": 数字或0,
   "amount": 数字或0,
   "currency": "USD|USDT|USDC",
@@ -106,10 +111,11 @@ func (p *NLParser) parseWithAI(message string) (*ParsedCommand, error) {
 
 注意事项:
 1. action: 开多用"long", 开空用"short", 平仓用"close", 全部平仓用"close_all"
-2. leverage: 杠杆倍数，如果没有提到则为0
-3. amount: 交易金额，如果没有提到则为0
-4. confidence: 解析的置信度，0.0到1.0之间，如果不确定就降低置信度
-5. 百分比平仓使用percentage字段（0.5表示50%%）`, message)
+2. symbol: 一定要输出英文交易代码（如特斯拉→TSLA，苹果→AAPL，谷歌→GOOGL，微软→MSFT，英伟达→NVDA，Meta→META，亚马逊→AMZN，奈飞→NFLX，英特尔→INTC 等），无需添加USDT后缀
+3. leverage: 杠杆倍数，如果没有提到则为0
+4. amount: 开仓/平仓的名义金额或数量，未知则为0；price: 止盈/止损价格，未知则为0
+5. confidence: 解析的置信度，0.0到1.0之间，如果不确定就降低置信度
+6. 百分比平仓使用percentage字段（0.5表示50%%）`, message)
 
 	// 调用 AI 模型
 	systemPrompt := "你是一个专业的交易命令解析器，只返回JSON格式的结果。"
