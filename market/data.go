@@ -252,9 +252,6 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 		// 注释掉技术指标字段，default.txt 策略只使用结构分析
 		// MACDValues:  make([]float64, 0, 10),
 		// RSI14Values: make([]float64, 0, 10),
-		Closes: make([]float64, 0, len(klines)),
-		Highs:  make([]float64, 0, len(klines)),
-		Lows:   make([]float64, 0, len(klines)),
 	}
 
 	// 注释掉EMA计算，default.txt 策略只使用结构分析
@@ -272,9 +269,6 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 		sum := 0.0
 		for _, k := range klines {
 			sum += k.Volume
-			data.Closes = append(data.Closes, k.Close)
-			data.Highs = append(data.Highs, k.High)
-			data.Lows = append(data.Lows, k.Low)
 		}
 		data.AverageVolume = sum / float64(len(klines))
 	}
@@ -451,23 +445,6 @@ func Format(data *Data) string {
 		sb.WriteString(fmt.Sprintf("Current Volume: %.3f vs. Average Volume: %.3f\n\n",
 			data.LongerTermContext.CurrentVolume, data.LongerTermContext.AverageVolume))
 
-		// 4h 原始K线序列（用于结构分析），仅展示近期部分以控制长度
-		if len(data.LongerTermContext.Closes) > 0 {
-			sb.WriteString(fmt.Sprintf("4h closes (oldest → latest, last %d): %s\n",
-				minInt(len(data.LongerTermContext.Closes), 20),
-				formatFloatSliceLimited(data.LongerTermContext.Closes, 20)))
-		}
-		if len(data.LongerTermContext.Highs) > 0 && len(data.LongerTermContext.Lows) > 0 {
-			sb.WriteString(fmt.Sprintf("4h highs  (oldest → latest, last %d): %s\n",
-				minInt(len(data.LongerTermContext.Highs), 20),
-				formatFloatSliceLimited(data.LongerTermContext.Highs, 20)))
-			sb.WriteString(fmt.Sprintf("4h lows   (oldest → latest, last %d): %s\n\n",
-				minInt(len(data.LongerTermContext.Lows), 20),
-				formatFloatSliceLimited(data.LongerTermContext.Lows, 20)))
-		} else {
-			sb.WriteString("\n")
-		}
-
 		// 注释掉技术指标显示，default.txt 策略只使用结构分析
 		// if len(data.LongerTermContext.MACDValues) > 0 {
 		// 	sb.WriteString(fmt.Sprintf("MACD indicators: %s\n\n", formatFloatSlice(data.LongerTermContext.MACDValues)))
@@ -519,22 +496,6 @@ func formatFloatSlice(values []float64) string {
 		strValues[i] = formatPriceWithDynamicPrecision(v)
 	}
 	return "[" + strings.Join(strValues, ", ") + "]"
-}
-
-// formatFloatSliceLimited 限制输出长度，取尾部 max 个元素
-func formatFloatSliceLimited(values []float64, max int) string {
-	n := len(values)
-	if n > max {
-		values = values[n-max:]
-	}
-	return formatFloatSlice(values)
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // Normalize 标准化symbol,确保是USDT交易对

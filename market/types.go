@@ -43,9 +43,6 @@ type LongerTermData struct {
 	ATR14         float64
 	CurrentVolume float64
 	AverageVolume float64
-	Closes        []float64
-	Highs         []float64
-	Lows          []float64
 	// MACDValues    []float64
 	// RSI14Values   []float64
 }
