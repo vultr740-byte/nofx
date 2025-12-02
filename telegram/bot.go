@@ -2282,36 +2282,33 @@ func (tbm *TelegramBotManager) executeNaturalLanguageCommand(chatID int64, teleg
 	}
 
 	// 4. 根据命令类型执行交易
-	var result map[string]interface{}
 	var tradeErr error
 
 	switch cmd.Action {
 	case "long":
 		tbm.sendMessage(chatID, "🔄 正在执行开多订单...")
-		result, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("long", cmd.Symbol, cmd.Amount, cmd.Leverage)
+		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("long", cmd.Symbol, cmd.Amount, cmd.Leverage)
 
 	case "short":
 		tbm.sendMessage(chatID, "🔄 正在执行开空订单...")
-		result, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("short", cmd.Symbol, cmd.Amount, cmd.Leverage)
+		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("short", cmd.Symbol, cmd.Amount, cmd.Leverage)
 
 	case "close":
 		tbm.sendMessage(chatID, "🔄 正在执行平仓...")
-		result, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("close", cmd.Symbol, cmd.Amount, 0)
+		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("close", cmd.Symbol, cmd.Amount, 0)
 
 	case "close_all":
 		tbm.sendMessage(chatID, "🔄 正在执行全部平仓...")
-		result, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("close_all", "", 0, 0)
+		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("close_all", "", 0, 0)
 
 	case "stop_loss":
 		tbm.sendMessage(chatID, "🔄 正在设置止损...")
 		// TODO: 实现止损设置
-		result = nil
 		tradeErr = fmt.Errorf("止损功能正在开发中")
 
 	case "take_profit":
 		tbm.sendMessage(chatID, "🔄 正在设置止盈...")
 		// TODO: 实现止盈设置
-		result = nil
 		tradeErr = fmt.Errorf("止盈功能正在开发中")
 
 	default:
