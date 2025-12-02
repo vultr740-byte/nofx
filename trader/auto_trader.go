@@ -2564,6 +2564,75 @@ func (at *AutoTrader) ClearPeakPnLCache(symbol, side string) {
 	delete(at.peakPnLCache, posKey)
 }
 
+// ExecuteNaturalLanguageTrade 执行自然语言交易命令
+func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount float64, leverage int) (map[string]interface{}, error) {
+	if at.trader == nil {
+		return nil, fmt.Errorf("交易实例未初始化")
+	}
+
+	switch action {
+	case "long":
+		return at.trader.OpenLong(symbol, amount, leverage)
+	case "short":
+		return at.trader.OpenShort(symbol, amount, leverage)
+	case "close":
+		// 对于平仓，我们需要先确定持仓方向，然后调用相应的方法
+		positions, err := at.trader.GetPositions()
+		if err != nil {
+			return nil, fmt.Errorf("获取持仓失败: %w", err)
+		}
+
+		// 查找对应交易对的持仓
+		for _, pos := range positions {
+			if pos["symbol"] == symbol {
+				if pos["side"] == "long" {
+					return at.trader.CloseLong(symbol, amount)
+				} else if pos["side"] == "short" {
+					return at.trader.CloseShort(symbol, amount)
+				}
+			}
+		}
+
+		return nil, fmt.Errorf("未找到 %s 的持仓", symbol)
+	case "close_all":
+		// 关闭所有持仓
+		positions, err := at.trader.GetPositions()
+		if err != nil {
+			return nil, fmt.Errorf("获取持仓失败: %w", err)
+		}
+
+		results := make(map[string]interface{})
+		closeCount := 0
+		for _, pos := range positions {
+			sym := pos["symbol"].(string)
+			side := pos["side"].(string)
+			if side == "long" {
+				_, err := at.trader.CloseLong(sym, 0)
+				if err == nil {
+					closeCount++
+				}
+			} else if side == "short" {
+				_, err := at.trader.CloseShort(sym, 0)
+				if err == nil {
+					closeCount++
+				}
+			}
+		}
+		results["closed_positions"] = closeCount
+		return results, nil
+	default:
+		return nil, fmt.Errorf("不支持的操作类型: %s", action)
+	}
+}
+
+// GetTraderPositions 获取当前持仓
+func (at *AutoTrader) GetTraderPositions() ([]map[string]interface{}, error) {
+	if at.trader == nil {
+		return nil, fmt.Errorf("交易实例未初始化")
+	}
+	return at.trader.GetPositions()
+}
+
 // isTGTrader 检查是否为TG交易员（通过检查userID是否为纯数字）
 func isTGTrader(userID string) bool {
 	// TG交易员的userID是纯数字字符串（Telegram用户ID）

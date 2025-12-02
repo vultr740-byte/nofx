@@ -14,6 +14,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"nofx/config"
 	"nofx/manager"
+	"nofx/mcp"
 )
 
 // TelegramBotManager Telegram Bot 管理器
@@ -27,6 +28,8 @@ type TelegramBotManager struct {
 	traderMgr     *manager.TraderManager
 	tgTraderMgr   *TelegramTraderManager
 	configWizard  *ConfigWizard
+	nlParser      *NLParser
+	cmdValidator  *CommandValidator
 	debugMu       sync.Mutex
 	gasSponsorKey string
 	gasSponsorWei *big.Int
@@ -78,6 +81,10 @@ func NewTelegramBotManager(cfg *config.TelegramBotConfig, db config.DatabaseInte
 	tgTraderMgr := NewTelegramTraderManager(db, traderMgr, cfg.HyperliquidTestnet)
 	configWizard := NewConfigWizard(tgTraderMgr)
 
+	// 创建自然语言解析器（暂时使用 nil MCP 客户端，后续可以从交易员获取）
+	nlParser := NewNLParser(nil)
+	cmdValidator := NewCommandValidator(db)
+
 	tgBotMgr := &TelegramBotManager{
 		bot:           bot,
 		db:            db,
@@ -87,6 +94,8 @@ func NewTelegramBotManager(cfg *config.TelegramBotConfig, db config.DatabaseInte
 		traderMgr:     traderMgr,
 		tgTraderMgr:   tgTraderMgr,
 		configWizard:  configWizard,
+		nlParser:      nlParser,
+		cmdValidator:  cmdValidator,
 		gasSponsorKey: cfg.GasPayerPrivateKey,
 		gasProcessing: make(map[string]struct{}),
 	}
@@ -765,6 +774,11 @@ func (tbm *TelegramBotManager) handleRegularMessage(update tgbotapi.Update) {
 			tbm.tgTraderMgr.GetSessionManager().ClearSession(telegramID)
 		}
 		return
+	}
+
+	// 尝试解析自然语言交易命令
+	if tbm.handleNaturalLanguageCommand(update) {
+		return // 如果成功处理了交易命令，直接返回
 	}
 
 	// 简单的回复逻辑
@@ -2153,4 +2167,180 @@ func maskPrivateKey(privateKey string) string {
 	// 完全隐藏私钥，只用于调试时的临时显示，不记录到日志
 	// 返回固定长度的掩码，不泄露任何实际字符
 	return "[PRIVATE_KEY_HIDDEN]"
+}
+
+// handleNaturalLanguageCommand 处理自然语言交易命令
+// 返回 true 表示成功处理了交易命令，false 表示不是交易命令
+func (tbm *TelegramBotManager) handleNaturalLanguageCommand(update tgbotapi.Update) bool {
+	chatID := update.Message.Chat.ID
+	telegramID := update.Message.From.ID
+	message := update.Message.Text
+
+	// 确保解析器可用（允许无 MCP 时使用正则后备）
+	if tbm.nlParser == nil {
+		tbm.nlParser = NewNLParser(nil)
+	}
+	if !tbm.nlParser.IsEnabled() {
+		return false
+	}
+
+	// 记录原始消息
+	log.Printf("🤖 检测自然语言命令 [用户:%d]: %s", telegramID, message)
+
+	// 解析命令
+	cmd, err := tbm.nlParser.ParseCommand(message)
+	if err != nil {
+		log.Printf("❌ 解析失败: %v", err)
+		return false
+	}
+
+	if cmd == nil {
+		// 不是交易命令
+		return false
+	}
+
+	// 记录解析结果
+	tbm.nlParser.LogCommand(telegramID, message, cmd)
+
+	// 验证命令
+	if err := tbm.cmdValidator.ValidateCommand(telegramID, cmd); err != nil {
+		tbm.cmdValidator.LogValidation(telegramID, cmd, err)
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 命令验证失败: %s", esc(err)))
+		return true // 已处理，虽然是错误
+	}
+
+	// 获取风险警告
+	warnings := tbm.cmdValidator.GetRiskWarnings(cmd)
+	if len(warnings) > 0 {
+		warningMsg := strings.Join(warnings, "\n")
+		tbm.sendMessage(chatID, warningMsg)
+	}
+
+	// 检查是否需要确认
+	if tbm.cmdValidator.NeedsConfirmation(cmd) {
+		confirmationMsg := tbm.nlParser.GetConfirmationMessage(cmd)
+		confirmationMsg += "\n\n⚠️ 请回复 '确认' 或 'cancel' 来继续或取消操作。"
+
+		// 保存待确认的命令到会话
+		session := tbm.tgTraderMgr.GetSessionManager().GetOrCreateSession(telegramID)
+		session.State = "awaiting_trade_confirmation"
+		// TODO: 需要在会话中保存命令对象
+
+		tbm.sendMessage(chatID, confirmationMsg)
+		return true
+	}
+
+	// 直接执行交易
+	return tbm.executeNaturalLanguageCommand(chatID, telegramID, cmd)
+}
+
+// getMCPClientForUser 获取用户的 MCP 客户端
+func (tbm *TelegramBotManager) getMCPClientForUser(telegramID int64) (*mcp.Client, error) {
+	// 1. 获取用户的 TG 交易员记录
+	tgTraders, err := tbm.db.GetTgTraders(telegramID)
+	if err != nil || len(tgTraders) == 0 {
+		return nil, nil
+	}
+
+	// 2. 暂时简化逻辑：返回 nil，让解析器使用正则表达式模式
+	// 这样可以避免访问私有字段的问题
+	log.Printf("⚠️ 未配置 MCP 客户端，使用正则解析 [用户:%d]", telegramID)
+
+	return nil, nil
+}
+
+// executeNaturalLanguageCommand 执行自然语言交易命令
+func (tbm *TelegramBotManager) executeNaturalLanguageCommand(chatID int64, telegramID int64, cmd *ParsedCommand) bool {
+	log.Printf("🚀 执行自然语言交易命令 [用户:%d]: %s %s", telegramID, cmd.Action, cmd.Symbol)
+
+	// 1. 获取用户的 TG 交易员
+	tgTraders, err := tbm.db.GetTgTraders(telegramID)
+	if err != nil || len(tgTraders) == 0 {
+		tbm.sendMessage(chatID, "❌ 未找到交易员配置，请先创建交易员")
+		return true
+	}
+
+	// 2. 查找运行中的交易员
+	var runningTrader *config.TgTraderRecord
+	for _, trader := range tgTraders {
+		if trader.IsRunning {
+			runningTrader = &trader
+			break
+		}
+	}
+
+	if runningTrader == nil {
+		tbm.sendMessage(chatID, "❌ 交易员未运行，请先启动交易员")
+		return true
+	}
+
+	// 3. 获取 AutoTrader 实例（优先使用 TG 管理器持有的实例）
+	autoTrader, err := tbm.tgTraderMgr.GetTgTrader(runningTrader.ID)
+	if err != nil || autoTrader == nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 获取交易员失败: %v", err))
+		return true
+	}
+
+	// 4. 根据命令类型执行交易
+	var result map[string]interface{}
+	var tradeErr error
+
+	switch cmd.Action {
+	case "long":
+		tbm.sendMessage(chatID, "🔄 正在执行开多订单...")
+		result, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("long", cmd.Symbol, cmd.Amount, cmd.Leverage)
+
+	case "short":
+		tbm.sendMessage(chatID, "🔄 正在执行开空订单...")
+		result, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("short", cmd.Symbol, cmd.Amount, cmd.Leverage)
+
+	case "close":
+		tbm.sendMessage(chatID, "🔄 正在执行平仓...")
+		result, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("close", cmd.Symbol, cmd.Amount, 0)
+
+	case "close_all":
+		tbm.sendMessage(chatID, "🔄 正在执行全部平仓...")
+		result, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("close_all", "", 0, 0)
+
+	case "stop_loss":
+		tbm.sendMessage(chatID, "🔄 正在设置止损...")
+		// TODO: 实现止损设置
+		result = nil
+		tradeErr = fmt.Errorf("止损功能正在开发中")
+
+	case "take_profit":
+		tbm.sendMessage(chatID, "🔄 正在设置止盈...")
+		// TODO: 实现止盈设置
+		result = nil
+		tradeErr = fmt.Errorf("止盈功能正在开发中")
+
+	default:
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 不支持的操作类型: %s", cmd.Action))
+		return true
+	}
+
+	// 7. 处理交易结果
+	if tradeErr != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 交易执行失败: %v", tradeErr))
+		log.Printf("❌ 交易失败 [用户:%d]: %v", telegramID, tradeErr)
+	} else {
+		tbm.sendMessage(chatID, "✅ 交易执行成功！")
+
+		// 8. 发送详细信息
+		if result != nil {
+			if orderId, ok := result["orderId"]; ok {
+				tbm.sendMessage(chatID, fmt.Sprintf("📋 订单号: %v", orderId))
+			}
+			if status, ok := result["status"]; ok {
+				tbm.sendMessage(chatID, fmt.Sprintf("📊 状态: %v", status))
+			}
+			if closeCount, ok := result["closed_positions"]; ok {
+				tbm.sendMessage(chatID, fmt.Sprintf("📊 已平仓位数: %v", closeCount))
+			}
+		}
+
+		log.Printf("✅ 交易成功 [用户:%d]: %s %s", telegramID, cmd.Action, cmd.Symbol)
+	}
+
+	return true
 }
