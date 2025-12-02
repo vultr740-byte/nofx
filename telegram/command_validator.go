@@ -10,14 +10,14 @@ import (
 
 // CommandValidator 交易命令验证器
 type CommandValidator struct {
-	db               config.DatabaseInterface
+	db                    config.DatabaseInterface
 	confirmationThreshold float64 // 大额交易确认阈值
 }
 
 // NewCommandValidator 创建新的交易验证器
 func NewCommandValidator(db config.DatabaseInterface) *CommandValidator {
 	return &CommandValidator{
-		db:                     db,
+		db:                    db,
 		confirmationThreshold: 500.0, // 默认 $500 需要确认
 	}
 }
@@ -151,24 +151,6 @@ func (cv *CommandValidator) validateSymbol(cmd *ParsedCommand) error {
 		baseSymbol = strings.TrimSuffix(baseSymbol, "USDT")
 	} else if strings.HasSuffix(baseSymbol, "USD") {
 		baseSymbol = strings.TrimSuffix(baseSymbol, "USD")
-	}
-
-	// 支持的交易对列表
-	supportedSymbols := []string{
-		"BTC", "ETH", "SOL", "BNB", "DOGE", "ADA", "DOT", "LINK", "MATIC",
-		"AVAX", "UNI", "ATOM", "FIL", "ICP", "VET", "THETA", "XLM", "AAVE",
-	}
-
-	isSupported := false
-	for _, supported := range supportedSymbols {
-		if baseSymbol == supported {
-			isSupported = true
-			break
-		}
-	}
-
-	if !isSupported {
-		return fmt.Errorf("❌ 不支持的交易对: %s", cmd.Symbol)
 	}
 
 	// 更新为标准格式
@@ -328,11 +310,11 @@ func (cv *CommandValidator) GetTradingLimits(telegramID int64) map[string]interf
 	}
 
 	return map[string]interface{}{
-		"btc_eth_max_leverage": userConfig.BTCETHLeverage,
-		"altcoin_max_leverage": userConfig.AltcoinLeverage,
-		"min_trade_amount":    10.0,
-		"max_trade_amount":    100000.0,
+		"btc_eth_max_leverage":   userConfig.BTCETHLeverage,
+		"altcoin_max_leverage":   userConfig.AltcoinLeverage,
+		"min_trade_amount":       10.0,
+		"max_trade_amount":       100000.0,
 		"confirmation_threshold": cv.confirmationThreshold,
-		"rate_limit_seconds":  10,
+		"rate_limit_seconds":     10,
 	}
 }
