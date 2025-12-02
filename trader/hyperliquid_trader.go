@@ -1441,6 +1441,12 @@ func (t *HyperliquidTrader) resolveCoin(symbol string) (string, error) {
 	if _, ok := allMids[coin]; ok {
 		return coin, nil
 	}
+	// 大小写不敏感匹配完整键
+	for k := range allMids {
+		if strings.EqualFold(k, coin) {
+			return k, nil
+		}
+	}
 
 	// 尝试匹配带前缀的HIP-3资产（形如 xyz:TSLA）
 	for k := range allMids {
