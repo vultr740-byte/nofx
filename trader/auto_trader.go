@@ -2569,15 +2569,20 @@ func (at *AutoTrader) GetMCPClient() *mcp.Client {
 }
 
 // ExecuteNaturalLanguageTrade 执行自然语言交易命令
-func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount float64, leverage int) (map[string]interface{}, error) {
+// amount: 开仓时表示美元名义；平仓表示数量；止盈止损时忽略
+// price: 仅用于止盈/止损，开仓/平仓可为0
+func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount float64, price float64, leverage int) (map[string]interface{}, error) {
 	if at.trader == nil {
 		return nil, fmt.Errorf("交易实例未初始化")
 	}
 
-	// 将金额转换为下单数量（amount 视为 USD 名义价值）
+	// 将金额转换为下单数量（amount 视为 USD 名义价值，仅用于开仓）
 	var qty float64
 	var err error
-	if amount > 0 && action != "close_all" {
+	if action == "long" || action == "short" {
+		if amount <= 0 {
+			return nil, fmt.Errorf("开仓金额必须大于0")
+		}
 		var price float64
 		price, err = at.trader.GetMarketPrice(symbol)
 		if err != nil {
@@ -2639,6 +2644,63 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 		}
 		results["closed_positions"] = closeCount
 		return results, nil
+	case "stop_loss", "take_profit":
+		if leverage != 0 {
+			// leverage 在止盈止损设置中无效
+			_ = leverage
+		}
+		// 使用 price（模型应填），回退到 amount 作为价格以兼容旧逻辑
+		tpSlPrice := price
+		if tpSlPrice <= 0 {
+			tpSlPrice = amount
+		}
+		if tpSlPrice <= 0 {
+			// 如果模型未提供价格，无法设置
+			return nil, fmt.Errorf("止盈/止损价格必须大于0")
+		}
+
+		positions, err := at.trader.GetPositions()
+		if err != nil {
+			return nil, fmt.Errorf("获取持仓失败: %w", err)
+		}
+
+		for _, pos := range positions {
+			sym, _ := pos["symbol"].(string)
+			if strings.ToUpper(sym) != strings.ToUpper(symbol) {
+				continue
+			}
+			side, _ := pos["side"].(string)
+			q, _ := pos["positionAmt"].(float64)
+			if q < 0 {
+				q = -q
+			}
+			positionSide := "LONG"
+			if strings.ToLower(side) == "short" {
+				positionSide = "SHORT"
+			}
+
+			if action == "stop_loss" {
+				size := q
+				if amount > 0 {
+					size = amount // 用户可指定部分数量
+				}
+				if err := at.trader.SetStopLoss(symbol, positionSide, size, tpSlPrice); err != nil {
+					return nil, fmt.Errorf("设置止损失败: %w", err)
+				}
+				return map[string]interface{}{"status": "OK", "symbol": symbol, "action": "stop_loss", "price": tpSlPrice, "size": size}, nil
+			}
+			if action == "take_profit" {
+				size := q
+				if amount > 0 {
+					size = amount // 用户可指定部分数量
+				}
+				if err := at.trader.SetTakeProfit(symbol, positionSide, size, tpSlPrice); err != nil {
+					return nil, fmt.Errorf("设置止盈失败: %w", err)
+				}
+				return map[string]interface{}{"status": "OK", "symbol": symbol, "action": "take_profit", "price": tpSlPrice, "size": size}, nil
+			}
+		}
+		return nil, fmt.Errorf("未找到 %s 的持仓，无法设置止盈/止损", symbol)
 	default:
 		return nil, fmt.Errorf("不支持的操作类型: %s", action)
 	}

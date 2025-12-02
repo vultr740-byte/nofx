@@ -2289,29 +2289,27 @@ func (tbm *TelegramBotManager) executeNaturalLanguageCommand(chatID int64, teleg
 	switch cmd.Action {
 	case "long":
 		tbm.sendMessage(chatID, "🔄 正在执行开多订单...")
-		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("long", cmd.Symbol, cmd.Amount, cmd.Leverage)
+		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("long", cmd.Symbol, cmd.Amount, cmd.Price, cmd.Leverage)
 
 	case "short":
 		tbm.sendMessage(chatID, "🔄 正在执行开空订单...")
-		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("short", cmd.Symbol, cmd.Amount, cmd.Leverage)
+		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("short", cmd.Symbol, cmd.Amount, cmd.Price, cmd.Leverage)
 
 	case "close":
 		tbm.sendMessage(chatID, "🔄 正在执行平仓...")
-		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("close", cmd.Symbol, cmd.Amount, 0)
+		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("close", cmd.Symbol, cmd.Amount, cmd.Price, 0)
 
 	case "close_all":
 		tbm.sendMessage(chatID, "🔄 正在执行全部平仓...")
-		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("close_all", "", 0, 0)
+		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("close_all", "", 0, 0, 0)
 
 	case "stop_loss":
 		tbm.sendMessage(chatID, "🔄 正在设置止损...")
-		// TODO: 实现止损设置
-		tradeErr = fmt.Errorf("止损功能正在开发中")
+		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("stop_loss", cmd.Symbol, 0, cmd.Price, 0)
 
 	case "take_profit":
 		tbm.sendMessage(chatID, "🔄 正在设置止盈...")
-		// TODO: 实现止盈设置
-		tradeErr = fmt.Errorf("止盈功能正在开发中")
+		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("take_profit", cmd.Symbol, 0, cmd.Price, 0)
 
 	default:
 		tbm.sendMessage(chatID, fmt.Sprintf("❌ 不支持的操作类型: %s", cmd.Action))

@@ -98,6 +98,15 @@ func (cv *CommandValidator) validateBasicParams(cmd *ParsedCommand) error {
 	if cmd.Amount < 0 {
 		return fmt.Errorf("❌ 交易金额不能为负数")
 	}
+	// 止盈/止损需要价格>0；数量可选（默认全仓）
+	if cmd.Action == "stop_loss" || cmd.Action == "take_profit" {
+		if cmd.Price <= 0 && cmd.Amount <= 0 {
+			return fmt.Errorf("❌ 止盈/止损需要提供价格或金额")
+		}
+		if cmd.Price <= 0 {
+			return fmt.Errorf("❌ 止盈/止损价格必须大于0")
+		}
+	}
 
 	// 验证百分比
 	if cmd.Percentage < 0 || cmd.Percentage > 1 {
