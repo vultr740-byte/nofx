@@ -150,8 +150,8 @@ func (p *NLParser) parseWithRegex(message string) (*ParsedCommand, error) {
 		Confidence: 0.6, // 正则解析置信度较低
 	}
 
-	// 提取交易对
-	symbolPattern := regexp.MustCompile(`(?i)(BTC|ETH|SOL|BNB|DOGE|ADA|DOT|LINK|MATIC)`)
+	// 提取交易对：放宽为 2-10 位字母（默认拼接 USDT）
+	symbolPattern := regexp.MustCompile(`(?i)([A-Z]{2,10})`)
 	if match := symbolPattern.FindString(message); match != "" {
 		cmd.Symbol = strings.ToUpper(match)
 	}
