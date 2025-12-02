@@ -2242,17 +2242,9 @@ func (tbm *TelegramBotManager) handleNaturalLanguageCommand(update tgbotapi.Upda
 	}
 
 	// 检查是否需要确认
+	// 简化流程：目前直接执行，不走会话确认
 	if tbm.cmdValidator.NeedsConfirmation(cmd) {
-		confirmationMsg := tbm.nlParser.GetConfirmationMessage(cmd)
-		confirmationMsg += "\n\n⚠️ 请回复 '确认' 或 'cancel' 来继续或取消操作。"
-
-		// 保存待确认的命令到会话
-		session := tbm.tgTraderMgr.GetSessionManager().GetOrCreateSession(telegramID)
-		session.State = "awaiting_trade_confirmation"
-		// TODO: 需要在会话中保存命令对象
-
-		tbm.sendMessage(chatID, confirmationMsg)
-		return true
+		log.Printf("⚠️ 跳过确认，直接执行自然语言命令 [用户:%d]: %s %s", telegramID, cmd.Action, cmd.Symbol)
 	}
 
 	// 直接执行交易
