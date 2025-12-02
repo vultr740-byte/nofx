@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -58,17 +59,8 @@ func (p *NLParser) ParseCommand(message string) (*ParsedCommand, error) {
 		return nil, nil // 不是交易命令，返回 nil
 	}
 
-	// 如果有 MCP 客户端，优先使用 AI；否则直接使用正则
-	if p.mcpClient != nil {
-		cmd, err := p.parseWithAI(message)
-		if err == nil {
-			return cmd, nil
-		}
-		log.Printf("❌ AI 解析失败: %v，改用正则后备", err)
-	}
-
-	// 尝试使用正则表达式作为后备
-	return p.parseWithRegex(message)
+	// 仅使用 MCP AI 解析，失败直接返回错误
+	return p.parseWithAI(message)
 }
 
 // isTradingCommand 快速检测是否是交易相关的消息
@@ -173,24 +165,21 @@ func (p *NLParser) parseWithRegex(message string) (*ParsedCommand, error) {
 		}
 	}
 
-	// 提取金额
-	amountPatterns := []string{
-		`(\d+(?:\.\d+)?)\s*\$`,             // $100
-		`(\d+(?:\.\d+)?)\s*U`,              // 100U
-		`(\d+(?:\.\d+)?)\s*USD`,            // 100USD
-		`(\d+(?:\.\d+)?)\s*USDT`,           // 100USDT
-		`(\d+(?:\.\d+)?)\s*USDC`,           // 100USDC
-		`(\d+(?:\.\d+)?)\s*(美元|美金|美刀|刀|元)`, // 100美元/元
-	}
-
-	for _, pattern := range amountPatterns {
-		if matches := regexp.MustCompile(pattern).FindStringSubmatch(message); len(matches) > 1 {
-			if amount, err := strconv.ParseFloat(matches[1], 64); err == nil {
-				cmd.Amount = amount
-				cmd.Currency = "USD"
-				break
-			}
+	// 提取金额：放开正则限制，捕获第一个数字作为金额（避开与杠杆相同的数字）
+	numPattern := regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)`)
+	allNums := numPattern.FindAllString(message, -1)
+	for _, n := range allNums {
+		val, err := strconv.ParseFloat(n, 64)
+		if err != nil {
+			continue
 		}
+		// 跳过与已识别杠杆相同的数字（如“2倍做多”中的 2）
+		if cmd.Leverage > 0 && math.Abs(val-float64(cmd.Leverage)) < 1e-9 {
+			continue
+		}
+		cmd.Amount = val
+		cmd.Currency = "USD"
+		break
 	}
 
 	// 如果没有提取到必要信息，降低置信度
