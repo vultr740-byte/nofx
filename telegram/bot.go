@@ -39,7 +39,7 @@ func esc(v interface{}) string {
 }
 
 const (
-	telegramMessageChunkSize = 3500
+	telegramMessageChunkSize = 3000
 	decisionJSONMarker       = "📋 决策JSON"
 	hyperliquidBridgeAddress = "0x2df1c51e09aecf9cacb7bc98cb1742757f163df7"
 	gasSponsorshipCooldown   = 6 * time.Hour
@@ -839,6 +839,12 @@ func (tbm *TelegramBotManager) setupCommands() {
 // sendMessage 发送消息
 func (tbm *TelegramBotManager) sendMessage(chatID int64, text string) {
 	tbm.sendMessageWithMarkupAndReturnInternal(chatID, text, nil, true, false)
+}
+
+// sendMessageWithError 发送消息并返回错误
+func (tbm *TelegramBotManager) sendMessageWithError(chatID int64, text string) error {
+	_, err := tbm.sendMessageWithMarkupAndReturnInternal(chatID, text, nil, true, false)
+	return err
 }
 
 // sendMessageWithInlineKeyboard 发送带内联键盘的消息
@@ -1645,16 +1651,45 @@ func (tbm *TelegramBotManager) PushDecisionToUser(telegramID int64, decisionMsg 
 	}
 
 	chunks := splitDecisionMessage(decisionMsg, telegramMessageChunkSize)
-	if len(chunks) > 1 {
-		log.Printf("📝 决策消息较长，分段发送 (%d 段)", len(chunks))
+	totalChunks := len(chunks)
+
+	if totalChunks > 1 {
+		log.Printf("📝 决策消息较长，准备分段发送 (%d 段)", totalChunks)
 	}
+
+	successCount := 0
+	failedChunks := make([]int, 0)
 
 	for i, chunk := range chunks {
-		chunkText := formatDecisionChunk(chunk, i, len(chunks))
-		tbm.sendMessage(telegramID, chunkText)
+		chunkText := formatDecisionChunk(chunk, i, totalChunks)
+		chunkSize := len(chunkText)
+
+		log.Printf("📤 发送第 %d/%d 段 (大小: %d 字符, ChatID: %d)",
+			i+1, totalChunks, chunkSize, telegramID)
+
+		// Add delay between chunks to respect rate limits
+		if i > 0 {
+			time.Sleep(1 * time.Second)
+		}
+
+		// Track success/failure
+		if err := tbm.sendMessageWithError(telegramID, chunkText); err != nil {
+			log.Printf("❌ 第 %d 段发送失败: %v", i+1, err)
+			failedChunks = append(failedChunks, i+1)
+		} else {
+			successCount++
+			log.Printf("✅ 第 %d/%d 段发送成功", i+1, totalChunks)
+		}
 	}
 
-	log.Printf("✅ 成功推送AI决策到Telegram (ChatID: %d, 段数: %d)", telegramID, len(chunks))
+	// Summary logging
+	if len(failedChunks) > 0 {
+		log.Printf("⚠️ 部分段落发送失败 - 成功: %d/%d, 失败段号: %v",
+			successCount, totalChunks, failedChunks)
+		return fmt.Errorf("部分段落发送失败: %v", failedChunks)
+	}
+
+	log.Printf("✅ 成功推送AI决策到Telegram (ChatID: %d, 段数: %d)", telegramID, successCount)
 	return nil
 }
 
