@@ -2570,11 +2570,26 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 		return nil, fmt.Errorf("交易实例未初始化")
 	}
 
+	// 将金额转换为下单数量（amount 视为 USD 名义价值）
+	var qty float64
+	var err error
+	if amount > 0 && action != "close_all" {
+		var price float64
+		price, err = at.trader.GetMarketPrice(symbol)
+		if err != nil {
+			return nil, fmt.Errorf("获取价格失败: %w", err)
+		}
+		if price <= 0 {
+			return nil, fmt.Errorf("无效价格: %.4f", price)
+		}
+		qty = amount / price
+	}
+
 	switch action {
 	case "long":
-		return at.trader.OpenLong(symbol, amount, leverage)
+		return at.trader.OpenLong(symbol, qty, leverage)
 	case "short":
-		return at.trader.OpenShort(symbol, amount, leverage)
+		return at.trader.OpenShort(symbol, qty, leverage)
 	case "close":
 		// 对于平仓，我们需要先确定持仓方向，然后调用相应的方法
 		positions, err := at.trader.GetPositions()

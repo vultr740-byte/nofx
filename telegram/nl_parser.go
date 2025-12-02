@@ -175,11 +175,12 @@ func (p *NLParser) parseWithRegex(message string) (*ParsedCommand, error) {
 
 	// 提取金额
 	amountPatterns := []string{
-		`(\d+(?:\.\d+)?)\s*\$`,      // $100
-		`(\d+(?:\.\d+)?)\s*U`,       // 100U
-		`(\d+(?:\.\d+)?)\s*USD`,     // 100USD
-		`(\d+(?:\.\d+)?)\s*USDT`,    // 100USDT
-		`(\d+(?:\.\d+)?)\s*USDC`,    // 100USDC
+		`(\d+(?:\.\d+)?)\s*\$`,             // $100
+		`(\d+(?:\.\d+)?)\s*U`,              // 100U
+		`(\d+(?:\.\d+)?)\s*USD`,            // 100USD
+		`(\d+(?:\.\d+)?)\s*USDT`,           // 100USDT
+		`(\d+(?:\.\d+)?)\s*USDC`,           // 100USDC
+		`(\d+(?:\.\d+)?)\s*(美元|美金|美刀|刀|元)`, // 100美元/元
 	}
 
 	for _, pattern := range amountPatterns {

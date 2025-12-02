@@ -2326,19 +2326,6 @@ func (tbm *TelegramBotManager) executeNaturalLanguageCommand(chatID int64, teleg
 	} else {
 		tbm.sendMessage(chatID, "✅ 交易执行成功！")
 
-		// 8. 发送详细信息
-		if result != nil {
-			if orderId, ok := result["orderId"]; ok {
-				tbm.sendMessage(chatID, fmt.Sprintf("📋 订单号: %v", orderId))
-			}
-			if status, ok := result["status"]; ok {
-				tbm.sendMessage(chatID, fmt.Sprintf("📊 状态: %v", status))
-			}
-			if closeCount, ok := result["closed_positions"]; ok {
-				tbm.sendMessage(chatID, fmt.Sprintf("📊 已平仓位数: %v", closeCount))
-			}
-		}
-
 		log.Printf("✅ 交易成功 [用户:%d]: %s %s", telegramID, cmd.Action, cmd.Symbol)
 	}
 
