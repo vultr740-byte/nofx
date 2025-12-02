@@ -2176,9 +2176,35 @@ func (tbm *TelegramBotManager) handleNaturalLanguageCommand(update tgbotapi.Upda
 	telegramID := update.Message.From.ID
 	message := update.Message.Text
 
-	// 确保解析器可用（允许无 MCP 时使用正则后备）
+	// 确保解析器可用
 	if tbm.nlParser == nil {
 		tbm.nlParser = NewNLParser(nil)
+	}
+
+	// 获取运行中的交易员并注入 MCP 客户端
+	tgTraders, err := tbm.db.GetTgTraders(telegramID)
+	if err != nil || len(tgTraders) == 0 {
+		tbm.sendMessage(chatID, "❌ 未找到交易员配置，请先创建交易员")
+		return true
+	}
+	var runningTrader *config.TgTraderRecord
+	for _, trader := range tgTraders {
+		if trader.IsRunning {
+			runningTrader = &trader
+			break
+		}
+	}
+	if runningTrader == nil {
+		tbm.sendMessage(chatID, "❌ 交易员未运行，请先启动交易员")
+		return true
+	}
+	autoTrader, err := tbm.tgTraderMgr.GetTgTrader(runningTrader.ID)
+	if err != nil || autoTrader == nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 获取交易员失败: %v", err))
+		return true
+	}
+	if client := autoTrader.GetMCPClient(); client != nil {
+		tbm.nlParser = NewNLParser(client)
 	}
 	if !tbm.nlParser.IsEnabled() {
 		return false
@@ -2232,21 +2258,6 @@ func (tbm *TelegramBotManager) handleNaturalLanguageCommand(update tgbotapi.Upda
 
 	// 直接执行交易
 	return tbm.executeNaturalLanguageCommand(chatID, telegramID, cmd)
-}
-
-// getMCPClientForUser 获取用户的 MCP 客户端
-func (tbm *TelegramBotManager) getMCPClientForUser(telegramID int64) (*mcp.Client, error) {
-	// 1. 获取用户的 TG 交易员记录
-	tgTraders, err := tbm.db.GetTgTraders(telegramID)
-	if err != nil || len(tgTraders) == 0 {
-		return nil, nil
-	}
-
-	// 2. 暂时简化逻辑：返回 nil，让解析器使用正则表达式模式
-	// 这样可以避免访问私有字段的问题
-	log.Printf("⚠️ 未配置 MCP 客户端，使用正则解析 [用户:%d]", telegramID)
-
-	return nil, nil
 }
 
 // executeNaturalLanguageCommand 执行自然语言交易命令

@@ -2564,6 +2564,10 @@ func (at *AutoTrader) ClearPeakPnLCache(symbol, side string) {
 	delete(at.peakPnLCache, posKey)
 }
 
+func (at *AutoTrader) GetMCPClient() *mcp.Client {
+	return at.mcpClient
+}
+
 // ExecuteNaturalLanguageTrade 执行自然语言交易命令
 func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount float64, leverage int) (map[string]interface{}, error) {
 	if at.trader == nil {
