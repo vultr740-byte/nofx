@@ -211,6 +211,7 @@ func (t *HyperliquidTrader) fetchPerpMetaAsset(coin string, forceMainnet bool) (
 				continue
 			}
 			if strings.EqualFold(parts[1], coin) {
+				t.hip3Meta[name] = asset
 				return name, &asset, nil
 			}
 		}
@@ -225,12 +226,16 @@ func (t *HyperliquidTrader) ResolveNonCryptoSymbol(symbol string, preferMainnet 
 	base := convertSymbolToHyperliquid(strings.ToUpper(symbol))
 	// 直传冒号格式则直接返回
 	if strings.Contains(base, ":") {
-		return normalizeHip3Symbol(base), nil
+		norm := normalizeHip3Symbol(base)
+		return norm, nil
 	}
 
-	mapped, _, err := t.fetchPerpMetaAsset(base, preferMainnet)
+	mapped, asset, err := t.fetchPerpMetaAsset(base, preferMainnet)
 	if err != nil {
 		return "", err
+	}
+	if asset != nil {
+		t.hip3Meta[normalizeHip3Symbol(mapped)] = *asset
 	}
 	return normalizeHip3Symbol(mapped), nil
 }
@@ -254,7 +259,8 @@ type HyperliquidTrader struct {
 	walletAddr       string
 	meta             *hyperliquid.Meta // 缓存meta信息（包含精度等）
 	testnet          bool              // 当前是否为测试网
-	isCrossMargin    bool              // 是否为全仓模式
+	hip3Meta         map[string]PerpMetaAssetLite
+	isCrossMargin    bool // 是否为全仓模式
 	orderMu          sync.Mutex
 	stopLossOrders   map[string]orderRef // symbol -> 最近一次止损挂单
 	takeProfitOrders map[string]orderRef // symbol -> 最近一次止盈挂单
@@ -366,6 +372,7 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 		ctx:              ctx,
 		walletAddr:       walletAddr,
 		meta:             meta,
+		hip3Meta:         make(map[string]PerpMetaAssetLite),
 		testnet:          testnet,
 		isCrossMargin:    true, // 默认使用全仓模式
 		stopLossOrders:   make(map[string]orderRef),
@@ -783,9 +790,9 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 	roundedQuantity := t.roundToSzDecimals(coin, quantity)
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
-	// ⚠️ 关键：价格也需要处理为5位有效数字
-	aggressivePrice := t.roundPriceToSigfigs(price * 1.01)
-	log.Printf("  💰 价格精度处理: %.8f -> %.8f (5位有效数字)", price*1.01, aggressivePrice)
+	// ⚠️ 关键：价格精度处理（优先使用pxDecimals，否则5位有效数字）
+	aggressivePrice := t.roundPriceForCoin(coin, price*1.01)
+	log.Printf("  💰 价格精度处理: %.8f -> %.8f", price*1.01, aggressivePrice)
 
 	// 创建市价买入订单（使用IOC limit order with aggressive price）
 	order := hyperliquid.CreateOrderRequest{
@@ -844,9 +851,9 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 	roundedQuantity := t.roundToSzDecimals(coin, quantity)
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
-	// ⚠️ 关键：价格也需要处理为5位有效数字
-	aggressivePrice := t.roundPriceToSigfigs(price * 0.99)
-	log.Printf("  💰 价格精度处理: %.8f -> %.8f (5位有效数字)", price*0.99, aggressivePrice)
+	// ⚠️ 关键：价格精度处理
+	aggressivePrice := t.roundPriceForCoin(coin, price*0.99)
+	log.Printf("  💰 价格精度处理: %.8f -> %.8f", price*0.99, aggressivePrice)
 
 	// 创建市价卖出订单
 	order := hyperliquid.CreateOrderRequest{
@@ -915,8 +922,8 @@ func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (map[stri
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
 	// ⚠️ 关键：价格也需要处理为5位有效数字
-	aggressivePrice := t.roundPriceToSigfigs(price * 0.99)
-	log.Printf("  💰 价格精度处理: %.8f -> %.8f (5位有效数字)", price*0.99, aggressivePrice)
+	aggressivePrice := t.roundPriceForCoin(coin, price*0.99)
+	log.Printf("  💰 价格精度处理: %.8f -> %.8f", price*0.99, aggressivePrice)
 
 	// 创建平仓订单（卖出 + ReduceOnly）
 	order := hyperliquid.CreateOrderRequest{
@@ -990,8 +997,8 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (map[str
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
 	// ⚠️ 关键：价格也需要处理为5位有效数字
-	aggressivePrice := t.roundPriceToSigfigs(price * 1.01)
-	log.Printf("  💰 价格精度处理: %.8f -> %.8f (5位有效数字)", price*1.01, aggressivePrice)
+	aggressivePrice := t.roundPriceForCoin(coin, price*1.01)
+	log.Printf("  💰 价格精度处理: %.8f -> %.8f", price*1.01, aggressivePrice)
 
 	// 创建平仓订单（买入 + ReduceOnly）
 	order := hyperliquid.CreateOrderRequest{
@@ -1485,8 +1492,8 @@ func (t *HyperliquidTrader) SetStopLoss(symbol string, positionSide string, quan
 	// ⚠️ 关键：根据币种精度要求，四舍五入数量
 	roundedQuantity := t.roundToSzDecimals(coin, quantity)
 
-	// ⚠️ 关键：价格也需要处理为5位有效数字
-	roundedStopPrice := t.roundPriceToSigfigs(stopPrice)
+	// ⚠️ 关键：价格精度处理
+	roundedStopPrice := t.roundPriceForCoin(coin, stopPrice)
 
 	// 创建止损单（Trigger Order）
 	order := hyperliquid.CreateOrderRequest{
@@ -1524,8 +1531,8 @@ func (t *HyperliquidTrader) SetTakeProfit(symbol string, positionSide string, qu
 	// ⚠️ 关键：根据币种精度要求，四舍五入数量
 	roundedQuantity := t.roundToSzDecimals(coin, quantity)
 
-	// ⚠️ 关键：价格也需要处理为5位有效数字
-	roundedTakeProfitPrice := t.roundPriceToSigfigs(takeProfitPrice)
+	// ⚠️ 关键：价格精度处理
+	roundedTakeProfitPrice := t.roundPriceForCoin(coin, takeProfitPrice)
 
 	// 使用 Trigger 订单设置止盈
 	tpCloid := t.buildCloid(symbol, "tp")
@@ -1568,6 +1575,12 @@ func (t *HyperliquidTrader) FormatQuantity(symbol string, quantity float64) (str
 
 // getSzDecimals 获取币种的数量精度
 func (t *HyperliquidTrader) getSzDecimals(coin string) int {
+	if t.hip3Meta != nil {
+		if asset, ok := t.hip3Meta[normalizeHip3Symbol(coin)]; ok {
+			return asset.SzDecimals
+		}
+	}
+
 	if t.meta == nil {
 		log.Printf("⚠️  meta信息为空，使用默认精度4")
 		return 4 // 默认精度
@@ -1622,6 +1635,32 @@ func (t *HyperliquidTrader) roundToSzDecimals(coin string, quantity float64) flo
 	return float64(int(quantity*multiplier+0.5)) / multiplier
 }
 
+// getPxDecimals 获取价格小数精度（优先HIP-3缓存，再从meta中获取）
+func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
+	if t.hip3Meta != nil {
+		if asset, ok := t.hip3Meta[normalizeHip3Symbol(coin)]; ok && asset.PxDecimals != nil {
+			return *asset.PxDecimals, true
+		}
+	}
+	return 0, false
+}
+
+// roundPriceForCoin 根据精度（pxDecimals 或5位有效数字）处理价格
+func (t *HyperliquidTrader) roundPriceForCoin(coin string, price float64) float64 {
+	if price == 0 {
+		return 0
+	}
+
+	// 优先使用 pxDecimals
+	if pxDec, ok := t.getPxDecimals(coin); ok {
+		multiplier := math.Pow10(pxDec)
+		return math.Round(price*multiplier) / multiplier
+	}
+
+	// 否则使用5位有效数字
+	return t.roundPriceToSigfigs(price)
+}
+
 // roundPriceToSigfigs 将价格四舍五入到5位有效数字
 // Hyperliquid要求价格使用5位有效数字（significant figures）
 func (t *HyperliquidTrader) roundPriceToSigfigs(price float64) float64 {
@@ -1629,15 +1668,10 @@ func (t *HyperliquidTrader) roundPriceToSigfigs(price float64) float64 {
 		return 0
 	}
 
-	const sigfigs = 5 // Hyperliquid标准：5位有效数字
+	const sigfigs = 5 // 默认有效数字
 
 	// 计算价格的数量级
-	var magnitude float64
-	if price < 0 {
-		magnitude = -price
-	} else {
-		magnitude = price
-	}
+	magnitude := math.Abs(price)
 
 	// 计算需要的倍数
 	multiplier := 1.0
@@ -1656,8 +1690,7 @@ func (t *HyperliquidTrader) roundPriceToSigfigs(price float64) float64 {
 	}
 
 	// 四舍五入
-	rounded := float64(int(price*multiplier+0.5)) / multiplier
-	return rounded
+	return math.Round(price*multiplier) / multiplier
 }
 
 // convertSymbolToHyperliquid 将标准symbol转换为Hyperliquid格式
