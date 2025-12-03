@@ -35,6 +35,47 @@ func infoAPIURL(testnet bool) string {
 	return "https://api.hyperliquid.xyz/info"
 }
 
+// fetchPriceFromInfoAPI 调用 Info API allMids 获取价格（用于AllMids缺失时兜底）
+func (t *HyperliquidTrader) fetchPriceFromInfoAPI(coin string) (float64, error) {
+	payload := []byte(`{"type":"allMids"}`)
+	req, err := http.NewRequest("POST", infoAPIURL(t.testnet), bytes.NewBuffer(payload))
+	if err != nil {
+		return 0, fmt.Errorf("创建 allMids 请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "NOFX-Hyperliquid-Price")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("调用 allMids 失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("读取 allMids 响应失败: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("allMids 返回状态码 %d: %s", resp.StatusCode, string(body))
+	}
+
+	var mids map[string]string
+	if err := json.Unmarshal(body, &mids); err != nil {
+		return 0, fmt.Errorf("解析 allMids 响应失败: %w", err)
+	}
+
+	if priceStr, ok := mids[coin]; ok {
+		price, err := strconv.ParseFloat(priceStr, 64)
+		if err != nil {
+			return 0, fmt.Errorf("价格格式错误: %v", err)
+		}
+		return price, nil
+	}
+
+	return 0, fmt.Errorf("allMids 未找到价格: %s", coin)
+}
+
 // ResolveNonCryptoSymbol 使用 Info API (allPerpMetas) 为非加密资产获取带前缀的HIP-3符号
 // preferMainnet: 强制使用主网 Info API（与 /stocks 列表一致）
 func (t *HyperliquidTrader) ResolveNonCryptoSymbol(symbol string, preferMainnet bool) (string, error) {
@@ -1316,7 +1357,15 @@ func (t *HyperliquidTrader) GetMarketPrice(symbol string) (float64, error) {
 		return 0, fmt.Errorf("价格格式错误: %v", err)
 	}
 
-	return 0, fmt.Errorf("未找到 %s 的价格", symbol)
+	// 使用 Info API allMids 兜底获取价格
+	if priceFloat, err := t.fetchPriceFromInfoAPI(coin); err == nil {
+		log.Printf("🔄 使用 InfoAPI allMids 获取价格成功: %s = %.6f", coin, priceFloat)
+		return priceFloat, nil
+	} else {
+		log.Printf("⚠️ InfoAPI allMids 获取价格失败: %v", err)
+	}
+
+	return 0, fmt.Errorf("未找到 %s 的价格", coin)
 }
 
 // SetStopLoss 设置止损单
