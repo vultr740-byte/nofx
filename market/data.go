@@ -498,13 +498,9 @@ func formatFloatSlice(values []float64) string {
 	return "[" + strings.Join(strValues, ", ") + "]"
 }
 
-// Normalize 标准化symbol,确保是USDT交易对
+// Normalize 基础符号标准化（大小写）
 func Normalize(symbol string) string {
-	symbol = strings.ToUpper(symbol)
-	if strings.HasSuffix(symbol, "USDT") {
-		return symbol
-	}
-	return symbol + "USDT"
+	return strings.ToUpper(symbol)
 }
 
 func truncateForLog(s string) string {

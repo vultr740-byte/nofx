@@ -1516,13 +1516,14 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, act
 	}
 
 	// 设置仓位模式
-	if err := at.trader.SetMarginMode(decision.Symbol, at.config.IsCrossMargin); err != nil {
+	formattedSymbol := at.formatSymbolForExchange(decision.Symbol)
+	if err := at.trader.SetMarginMode(formattedSymbol, at.config.IsCrossMargin); err != nil {
 		log.Printf("  ⚠️ 设置仓位模式失败: %v", err)
 		// 继续执行，不影响交易
 	}
 
 	// 开仓
-	order, err := at.trader.OpenLong(decision.Symbol, quantity, decision.Leverage)
+	order, err := at.trader.OpenLong(formattedSymbol, quantity, decision.Leverage)
 	if err != nil {
 		return err
 	}
@@ -1539,10 +1540,10 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, act
 	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
 	// 设置止损止盈
-	if err := at.trader.SetStopLoss(decision.Symbol, "LONG", quantity, decision.StopLoss); err != nil {
+	if err := at.trader.SetStopLoss(formattedSymbol, "LONG", quantity, decision.StopLoss); err != nil {
 		log.Printf("  ⚠ 设置止损失败: %v", err)
 	}
-	if err := at.trader.SetTakeProfit(decision.Symbol, "LONG", quantity, decision.TakeProfit); err != nil {
+	if err := at.trader.SetTakeProfit(formattedSymbol, "LONG", quantity, decision.TakeProfit); err != nil {
 		log.Printf("  ⚠ 设置止盈失败: %v", err)
 	}
 
@@ -1604,13 +1605,14 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, ac
 	}
 
 	// 设置仓位模式
-	if err := at.trader.SetMarginMode(decision.Symbol, at.config.IsCrossMargin); err != nil {
+	formattedSymbol := at.formatSymbolForExchange(decision.Symbol)
+	if err := at.trader.SetMarginMode(formattedSymbol, at.config.IsCrossMargin); err != nil {
 		log.Printf("  ⚠️ 设置仓位模式失败: %v", err)
 		// 继续执行，不影响交易
 	}
 
 	// 开仓
-	order, err := at.trader.OpenShort(decision.Symbol, quantity, decision.Leverage)
+	order, err := at.trader.OpenShort(formattedSymbol, quantity, decision.Leverage)
 	if err != nil {
 		return err
 	}
@@ -1627,10 +1629,10 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, ac
 	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
 	// 设置止损止盈
-	if err := at.trader.SetStopLoss(decision.Symbol, "SHORT", quantity, decision.StopLoss); err != nil {
+	if err := at.trader.SetStopLoss(formattedSymbol, "SHORT", quantity, decision.StopLoss); err != nil {
 		log.Printf("  ⚠ 设置止损失败: %v", err)
 	}
-	if err := at.trader.SetTakeProfit(decision.Symbol, "SHORT", quantity, decision.TakeProfit); err != nil {
+	if err := at.trader.SetTakeProfit(formattedSymbol, "SHORT", quantity, decision.TakeProfit); err != nil {
 		log.Printf("  ⚠ 设置止盈失败: %v", err)
 	}
 
@@ -1674,7 +1676,8 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *decision.Decision, ac
 	}
 
 	// 平仓
-	order, err := at.trader.CloseLong(symbol, 0) // 0 = 全部平仓
+	formattedSymbol := at.formatSymbolForExchange(symbol)
+	order, err := at.trader.CloseLong(formattedSymbol, 0) // 0 = 全部平仓
 	if err != nil {
 		return err
 	}
@@ -1731,7 +1734,8 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *decision.Decision, a
 	}
 
 	// 平仓
-	order, err := at.trader.CloseShort(symbol, 0) // 0 = 全部平仓
+	formattedSymbol := at.formatSymbolForExchange(symbol)
+	order, err := at.trader.CloseShort(formattedSymbol, 0) // 0 = 全部平仓
 	if err != nil {
 		return err
 	}
@@ -1818,16 +1822,19 @@ func (at *AutoTrader) executeUpdateStopLossWithRecord(decision *decision.Decisio
 		log.Printf("  🚨 建议：手动平掉其中一个方向的持仓，或检查系统是否有BUG")
 	}
 
+	// 格式化符号
+	formattedSymbol := at.formatSymbolForExchange(decision.Symbol)
+
 	// 取消旧的止损单（只删除止损单，不影响止盈单）
 	// 注意：如果存在双向持仓，这会删除两个方向的止损单
-	if err := at.trader.CancelStopLossOrders(decision.Symbol); err != nil {
+	if err := at.trader.CancelStopLossOrders(formattedSymbol); err != nil {
 		log.Printf("  ⚠ 取消旧止损单失败: %v", err)
 		// 不中断执行，继续设置新止损
 	}
 
 	// 调用交易所 API 修改止损
 	quantity := math.Abs(positionAmt)
-	err = at.trader.SetStopLoss(decision.Symbol, positionSide, quantity, decision.NewStopLoss)
+	err = at.trader.SetStopLoss(formattedSymbol, positionSide, quantity, decision.NewStopLoss)
 	if err != nil {
 		return fmt.Errorf("修改止损失败: %w", err)
 	}
@@ -1903,16 +1910,19 @@ func (at *AutoTrader) executeUpdateTakeProfitWithRecord(decision *decision.Decis
 		log.Printf("  🚨 建议：手动平掉其中一个方向的持仓，或检查系统是否有BUG")
 	}
 
+	// 格式化符号
+	formattedSymbol := at.formatSymbolForExchange(decision.Symbol)
+
 	// 取消旧的止盈单（只删除止盈单，不影响止损单）
 	// 注意：如果存在双向持仓，这会删除两个方向的止盈单
-	if err := at.trader.CancelTakeProfitOrders(decision.Symbol); err != nil {
+	if err := at.trader.CancelTakeProfitOrders(formattedSymbol); err != nil {
 		log.Printf("  ⚠ 取消旧止盈单失败: %v", err)
 		// 不中断执行，继续设置新止盈
 	}
 
 	// 调用交易所 API 修改止盈
 	quantity := math.Abs(positionAmt)
-	err = at.trader.SetTakeProfit(decision.Symbol, positionSide, quantity, decision.NewTakeProfit)
+	err = at.trader.SetTakeProfit(formattedSymbol, positionSide, quantity, decision.NewTakeProfit)
 	if err != nil {
 		return fmt.Errorf("修改止盈失败: %w", err)
 	}
@@ -1970,10 +1980,11 @@ func (at *AutoTrader) executePartialCloseWithRecord(decision *decision.Decision,
 
 	// 执行平仓
 	var order map[string]interface{}
+	formattedSymbol := at.formatSymbolForExchange(decision.Symbol)
 	if positionSide == "LONG" {
-		order, err = at.trader.CloseLong(decision.Symbol, closeQuantity)
+		order, err = at.trader.CloseLong(formattedSymbol, closeQuantity)
 	} else {
-		order, err = at.trader.CloseShort(decision.Symbol, closeQuantity)
+		order, err = at.trader.CloseShort(formattedSymbol, closeQuantity)
 	}
 
 	if err != nil {
@@ -2391,16 +2402,21 @@ func (at *AutoTrader) getCandidateCoins() ([]decision.CandidateCoin, error) {
 	}
 }
 
-// normalizeSymbol 标准化币种符号（确保以USDT结尾）
+// normalizeSymbol 基础符号标准化（仅大小写转换）
 func normalizeSymbol(symbol string) string {
-	// 转为大写
-	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	return strings.ToUpper(strings.TrimSpace(symbol))
+}
 
-	// 确保以USDT结尾
-	if !strings.HasSuffix(symbol, "USDT") {
-		symbol = symbol + "USDT"
+// formatSymbolForExchange 根据交易所格式化符号
+func (at *AutoTrader) formatSymbolForExchange(symbol string) string {
+	symbol = normalizeSymbol(symbol)
+
+	// Binance需要USDT后缀
+	if at.exchange == "binance" && !strings.HasSuffix(symbol, "USDT") {
+		return symbol + "USDT"
 	}
 
+	// 其他交易所保持原样（Hyperliquid等）
 	return symbol
 }
 
@@ -2505,15 +2521,16 @@ func (at *AutoTrader) checkPositionDrawdown() {
 
 // 紧急平仓函数
 func (at *AutoTrader) emergencyClosePosition(symbol, side string) error {
+	formattedSymbol := at.formatSymbolForExchange(symbol)
 	switch side {
 	case "long":
-		order, err := at.trader.CloseLong(symbol, 0) // 0 = 全部平仓
+		order, err := at.trader.CloseLong(formattedSymbol, 0) // 0 = 全部平仓
 		if err != nil {
 			return err
 		}
 		log.Printf("✅ 紧急平多仓成功，订单ID: %v", order["orderId"])
 	case "short":
-		order, err := at.trader.CloseShort(symbol, 0) // 0 = 全部平仓
+		order, err := at.trader.CloseShort(formattedSymbol, 0) // 0 = 全部平仓
 		if err != nil {
 			return err
 		}
@@ -2596,9 +2613,11 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 
 	switch action {
 	case "long":
-		return at.trader.OpenLong(symbol, qty, leverage)
+		formattedSymbol := at.formatSymbolForExchange(symbol)
+		return at.trader.OpenLong(formattedSymbol, qty, leverage)
 	case "short":
-		return at.trader.OpenShort(symbol, qty, leverage)
+		formattedSymbol := at.formatSymbolForExchange(symbol)
+		return at.trader.OpenShort(formattedSymbol, qty, leverage)
 	case "close":
 		// 对于平仓，我们需要先确定持仓方向，然后调用相应的方法
 		positions, err := at.trader.GetPositions()
@@ -2609,10 +2628,11 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 		// 查找对应交易对的持仓
 		for _, pos := range positions {
 			if pos["symbol"] == symbol {
+				formattedSymbol := at.formatSymbolForExchange(symbol)
 				if pos["side"] == "long" {
-					return at.trader.CloseLong(symbol, amount)
+					return at.trader.CloseLong(formattedSymbol, amount)
 				} else if pos["side"] == "short" {
-					return at.trader.CloseShort(symbol, amount)
+					return at.trader.CloseShort(formattedSymbol, amount)
 				}
 			}
 		}
@@ -2629,14 +2649,15 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 		closeCount := 0
 		for _, pos := range positions {
 			sym := pos["symbol"].(string)
+			formattedSymbol := at.formatSymbolForExchange(sym)
 			side := pos["side"].(string)
 			if side == "long" {
-				_, err := at.trader.CloseLong(sym, 0)
+				_, err := at.trader.CloseLong(formattedSymbol, 0)
 				if err == nil {
 					closeCount++
 				}
 			} else if side == "short" {
-				_, err := at.trader.CloseShort(sym, 0)
+				_, err := at.trader.CloseShort(formattedSymbol, 0)
 				if err == nil {
 					closeCount++
 				}
@@ -2684,7 +2705,8 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 				if amount > 0 {
 					size = amount // 用户可指定部分数量
 				}
-				if err := at.trader.SetStopLoss(symbol, positionSide, size, tpSlPrice); err != nil {
+				formattedSymbol := at.formatSymbolForExchange(symbol)
+				if err := at.trader.SetStopLoss(formattedSymbol, positionSide, size, tpSlPrice); err != nil {
 					return nil, fmt.Errorf("设置止损失败: %w", err)
 				}
 				return map[string]interface{}{"status": "OK", "symbol": symbol, "action": "stop_loss", "price": tpSlPrice, "size": size}, nil
@@ -2694,7 +2716,8 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 				if amount > 0 {
 					size = amount // 用户可指定部分数量
 				}
-				if err := at.trader.SetTakeProfit(symbol, positionSide, size, tpSlPrice); err != nil {
+				formattedSymbol := at.formatSymbolForExchange(symbol)
+				if err := at.trader.SetTakeProfit(formattedSymbol, positionSide, size, tpSlPrice); err != nil {
 					return nil, fmt.Errorf("设置止盈失败: %w", err)
 				}
 				return map[string]interface{}{"status": "OK", "symbol": symbol, "action": "take_profit", "price": tpSlPrice, "size": size}, nil
