@@ -200,7 +200,9 @@ func (t *HyperliquidTrader) fetchPerpMetaAsset(coin string, forceMainnet bool) (
 		return "", nil, fmt.Errorf("解析 InfoAPI 响应失败: %w", err)
 	}
 
+	log.Printf("🔍 [HIP-3 API] 处理 allPerpMetas 响应，共 %d 个 meta 块", len(metas))
 	for _, meta := range metas {
+		log.Printf("🔍 [HIP-3 API] 处理 meta 块，包含 %d 个资产", len(meta.Universe))
 		for _, asset := range meta.Universe {
 			name := normalizeHip3Symbol(asset.Name)
 			if !strings.Contains(name, ":") {
@@ -211,6 +213,14 @@ func (t *HyperliquidTrader) fetchPerpMetaAsset(coin string, forceMainnet bool) (
 				continue
 			}
 			if strings.EqualFold(parts[1], coin) {
+				// 详细日志记录 API 返回的两个精度值
+				if asset.PxDecimals != nil {
+					log.Printf("🔍 [HIP-3 API] %s - SzDecimals: %d, PxDecimals: %d",
+							   name, asset.SzDecimals, *asset.PxDecimals)
+				} else {
+					log.Printf("🔍 [HIP-3 API] %s - SzDecimals: %d, PxDecimals: nil (将使用SzDecimals作为价格精度)",
+							   name, asset.SzDecimals)
+				}
 				t.hip3Meta[name] = asset
 				return name, &asset, nil
 			}
@@ -1625,35 +1635,30 @@ func (t *HyperliquidTrader) FormatQuantity(symbol string, quantity float64) (str
 
 // getSzDecimals 获取币种的数量精度
 func (t *HyperliquidTrader) getSzDecimals(coin string) int {
+	// 严格从 HIP-3 API 获取 SzDecimals，不使用任何默认值
+	normalizedCoin := normalizeHip3Symbol(coin)
+
+	// 首先检查 HIP-3 缓存
 	if t.hip3Meta != nil {
-		if asset, ok := t.hip3Meta[normalizeHip3Symbol(coin)]; ok {
+		if asset, ok := t.hip3Meta[normalizedCoin]; ok {
+			log.Printf("✅ [HIP-3 API] %s 使用缓存的 SzDecimals: %d", normalizedCoin, asset.SzDecimals)
 			return asset.SzDecimals
 		}
 	}
 
-	// 如果精度未缓存，尝试刷新获取
+	// 如果未缓存，尝试刷新获取
 	if norm, _, err := t.fetchPerpMetaAsset(coin, true); err == nil && norm != "" {
 		if asset, ok := t.hip3Meta[norm]; ok {
+			log.Printf("✅ [HIP-3 API] %s 使用刷新的 SzDecimals: %d", norm, asset.SzDecimals)
 			return asset.SzDecimals
 		}
 	} else if err != nil {
-		log.Printf("⚠️ 获取 %s 精度失败: %v，使用默认精度4", coin, err)
+		log.Printf("❌ [HIP-3 API] 获取 %s SzDecimals 失败: %v", coin, err)
 	}
 
-	if t.meta == nil {
-		log.Printf("⚠️  meta信息为空，使用默认精度4")
-		return 4 // 默认精度
-	}
-
-	// 在meta.Universe中查找对应的币种
-	for _, asset := range t.meta.Universe {
-		if asset.Name == coin {
-			return asset.SzDecimals
-		}
-	}
-
-	log.Printf("⚠️  未找到 %s 的精度信息，使用默认精度4", coin)
-	return 4 // 默认精度
+	// 不使用任何默认值 - 如果 API 无法提供数据，这是一个严重的配置错误
+	log.Printf("🚨 [HIP-3 API] 严重错误: 无法从 API 获取 %s (%s) 的 SzDecimals", coin, normalizedCoin)
+	panic(fmt.Sprintf("SzDecimals not found in HIP-3 API response for %s. API configuration may be incorrect.", coin))
 }
 
 // GetMeta 获取meta信息
@@ -1694,35 +1699,42 @@ func (t *HyperliquidTrader) roundToSzDecimals(coin string, quantity float64) flo
 	return math.Floor(quantity*multiplier) / multiplier
 }
 
-// getPxDecimals 获取价格小数精度（优先HIP-3缓存，再从meta中获取）
+// getPxDecimals 获取价格小数精度（优先使用API的PxDecimals，SzDecimals作为后备）
 func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
 	normalizedCoin := normalizeHip3Symbol(coin)
 
-	// Check HIP-3 cache first
+	// Check HIP-3 cache first - 优先使用 PxDecimals
 	if t.hip3Meta != nil {
-		if asset, ok := t.hip3Meta[normalizedCoin]; ok && asset.PxDecimals != nil {
-			log.Printf("✅ [HIP-3] 找到 %s 价格精度: %d 位小数", normalizedCoin, *asset.PxDecimals)
-			return *asset.PxDecimals, true
+		if asset, ok := t.hip3Meta[normalizedCoin]; ok {
+			if asset.PxDecimals != nil {
+				log.Printf("✅ [HIP-3] %s 使用 API PxDecimals: %d 位小数", normalizedCoin, *asset.PxDecimals)
+				return *asset.PxDecimals, true
+			} else {
+				// PxDecimals 为 nil，使用 SzDecimals 作为后备
+				log.Printf("🔄 [HIP-3] %s PxDecimals 为 nil，使用 SzDecimals: %d 位小数", normalizedCoin, asset.SzDecimals)
+				return asset.SzDecimals, true
+			}
 		}
-	}
-
-	// Enhanced fallback for stock assets
-	if t.isStockAsset(coin) {
-		log.Printf("🎯 [HIP-3] 股票资产 %s 使用默认2位小数精度", normalizedCoin)
-		return 2, true // 2 decimal places for stock prices like Tesla
 	}
 
 	// 如果未缓存，尝试刷新获取
 	if norm, _, err := t.fetchPerpMetaAsset(coin, true); err == nil && norm != "" {
-		if asset, ok := t.hip3Meta[norm]; ok && asset.PxDecimals != nil {
-			log.Printf("✅ [HIP-3] 刷新后找到 %s 价格精度: %d 位小数", norm, *asset.PxDecimals)
-			return *asset.PxDecimals, true
+		if asset, ok := t.hip3Meta[norm]; ok {
+			if asset.PxDecimals != nil {
+				log.Printf("✅ [HIP-3] %s 刷新后使用 PxDecimals: %d 位小数", norm, *asset.PxDecimals)
+				return *asset.PxDecimals, true
+			} else {
+				// PxDecimals 为 nil，使用 SzDecimals 作为后备
+				log.Printf("🔄 [HIP-3] %s 刷新后 PxDecimals 为 nil，使用 SzDecimals: %d 位小数", norm, asset.SzDecimals)
+				return asset.SzDecimals, true
+			}
 		}
 	} else if err != nil {
-		log.Printf("⚠️ 获取 %s 价格精度失败: %v", coin, err)
+		log.Printf("❌ [HIP-3] 获取 %s 价格精度失败: %v", coin, err)
+		return 0, false
 	}
 
-	log.Printf("📊 [HIP-3] %s 未找到价格精度信息", coin)
+	log.Printf("❌ [HIP-3] %s 未找到任何精度信息", coin)
 	return 0, false
 }
 
