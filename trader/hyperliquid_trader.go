@@ -817,7 +817,8 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 	log.Printf("  💰 价格精度处理: %.8f * %.3f -> %.8f -> %.8f", price, priceMultiplier, price*priceMultiplier, aggressivePrice)
 
 	// 价格预验证
-	if err := t.validateOrderPrice(coin, aggressivePrice, true); err != nil {
+	validatedPrice, err := t.validateOrderPrice(coin, aggressivePrice, true)
+	if err != nil {
 		return nil, fmt.Errorf("价格验证失败: %w", err)
 	}
 
@@ -826,7 +827,7 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 		Coin:  coin,
 		IsBuy: true,
 		Size:  roundedQuantity, // 使用四舍五入后的数量
-		Price: aggressivePrice, // 使用处理后的价格
+		Price: validatedPrice, // 使用验证后的价格（对股票会进行截断）
 		OrderType: hyperliquid.OrderType{
 			Limit: &hyperliquid.LimitOrderType{
 				Tif: hyperliquid.TifIoc, // Immediate or Cancel (类似市价单)
@@ -903,7 +904,8 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 	log.Printf("  💰 价格精度处理: %.8f * %.3f -> %.8f -> %.8f", price, priceMultiplier, price*priceMultiplier, aggressivePrice)
 
 	// 价格预验证
-	if err := t.validateOrderPrice(coin, aggressivePrice, false); err != nil {
+	validatedPrice, err := t.validateOrderPrice(coin, aggressivePrice, false)
+	if err != nil {
 		return nil, fmt.Errorf("价格验证失败: %w", err)
 	}
 
@@ -912,7 +914,7 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 		Coin:  coin,
 		IsBuy: false,
 		Size:  roundedQuantity, // 使用四舍五入后的数量
-		Price: aggressivePrice, // 使用处理后的价格
+		Price: validatedPrice, // 使用验证后的价格（对股票会进行截断）
 		OrderType: hyperliquid.OrderType{
 			Limit: &hyperliquid.LimitOrderType{
 				Tif: hyperliquid.TifIoc,
@@ -1859,13 +1861,13 @@ func (t *HyperliquidTrader) roundPriceForStock(price float64, truncate bool) flo
 }
 
 // validateOrderPrice 验证订单价格是否合理
-func (t *HyperliquidTrader) validateOrderPrice(coin string, price float64, isBuy bool) error {
+func (t *HyperliquidTrader) validateOrderPrice(coin string, price float64, isBuy bool) (float64, error) {
 	// Get current market price for validation
 	symbol := convertSymbolFromHyperliquid(coin)
 	marketPrice, err := t.GetMarketPrice(symbol)
 	if err != nil {
 		log.Printf("❌ [HIP-3] 无法获取市场价格进行验证: %v", err)
-		return fmt.Errorf("failed to get market price for validation: %w", err)
+		return price, fmt.Errorf("failed to get market price for validation: %w", err)
 	}
 
 	// Check price deviation limits
@@ -1878,7 +1880,7 @@ func (t *HyperliquidTrader) validateOrderPrice(coin string, price float64, isBuy
 	if deviation > maxDeviation {
 		log.Printf("❌ [HIP-3] 价格偏差过大: 市场价格=%.6f, 订单价格=%.6f, 偏差=%.2f%% > 限制%.1f%%",
 			marketPrice, price, deviation*100, maxDeviation*100)
-		return fmt.Errorf("price deviation %.2f%% exceeds maximum %.1f%% for %s",
+		return price, fmt.Errorf("price deviation %.2f%% exceeds maximum %.1f%% for %s",
 			deviation*100, maxDeviation*100, coin)
 	}
 
@@ -1887,27 +1889,32 @@ func (t *HyperliquidTrader) validateOrderPrice(coin string, price float64, isBuy
 
 	// Price step validation for stocks (critical fix)
 	if t.isStockAsset(coin) {
-		if err := t.validatePriceStep(coin, price); err != nil {
+		truncatedPrice, err := t.validatePriceStep(coin, price)
+		if err != nil {
 			log.Printf("❌ [HIP-3] %v", err)
-			return err
+			return price, err
 		}
+		// 返回截断后的价格用于订单创建
+		return truncatedPrice, nil
 	}
 
-	return nil
+	return price, nil
 }
 
 // validatePriceStep 验证价格是否为有效步长的整数倍（针对股票资产）
-func (t *HyperliquidTrader) validatePriceStep(coin string, price float64) error {
+func (t *HyperliquidTrader) validatePriceStep(coin string, price float64) (float64, error) {
 	if t.isStockAsset(coin) {
-		// 检查是否为0.01的整数倍（2位小数）
-		remainder := math.Mod(price*100, 1)
+		// 先截断到2位小数，确保符合步长要求
+		truncatedPrice := math.Floor(price*100) / 100  // 使用Floor截断，不是Round四舍五入
+		remainder := math.Mod(truncatedPrice*100, 1)
 		if remainder > 1e-10 {
 			log.Printf("❌ [HIP-3] 股票价格步长验证失败: %s 价格=%.8f, 余数=%.10f", coin, price, remainder)
-			return fmt.Errorf("股票价格步长验证失败: %s 价格 %.8f 必须是0.01的整数倍 (当前余数: %.10f)", coin, price, remainder)
+			return price, fmt.Errorf("股票价格步长验证失败: %s 价格 %.8f 必须是0.01的整数倍 (当前余数: %.10f)", coin, price, remainder)
 		}
-		log.Printf("✅ [HIP-3] 股票价格步长验证通过: %s %.8f 是有效的0.01步长", coin, price)
+		log.Printf("✅ [HIP-3] 股票价格步长验证通过: %s %.8f -> %.8f (截断)", coin, price, truncatedPrice)
+		return truncatedPrice, nil  // 返回截断后的价格用于订单
 	}
-	return nil
+	return price, nil
 }
 
 // executeOrderWithRetry 执行带重试机制的订单（针对股票价格验证失败）
