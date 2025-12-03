@@ -790,8 +790,8 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 	roundedQuantity := t.roundToSzDecimals(coin, quantity)
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
-	// ⚠️ 关键：价格精度处理（优先使用pxDecimals，否则5位有效数字）
-	aggressivePrice := t.roundPriceForCoin(coin, price*1.01)
+	// ⚠️ 关键：价格精度处理（优先使用pxDecimals，按要求截断到步长）
+	aggressivePrice := t.roundPriceForCoin(coin, price*1.01, true)
 	log.Printf("  💰 价格精度处理: %.8f -> %.8f", price*1.01, aggressivePrice)
 
 	// 创建市价买入订单（使用IOC limit order with aggressive price）
@@ -852,7 +852,7 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
 	// ⚠️ 关键：价格精度处理
-	aggressivePrice := t.roundPriceForCoin(coin, price*0.99)
+	aggressivePrice := t.roundPriceForCoin(coin, price*0.99, true)
 	log.Printf("  💰 价格精度处理: %.8f -> %.8f", price*0.99, aggressivePrice)
 
 	// 创建市价卖出订单
@@ -922,7 +922,7 @@ func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (map[stri
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
 	// ⚠️ 关键：价格也需要处理为5位有效数字
-	aggressivePrice := t.roundPriceForCoin(coin, price*0.99)
+	aggressivePrice := t.roundPriceForCoin(coin, price*0.99, true)
 	log.Printf("  💰 价格精度处理: %.8f -> %.8f", price*0.99, aggressivePrice)
 
 	// 创建平仓订单（卖出 + ReduceOnly）
@@ -997,7 +997,7 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (map[str
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
 	// ⚠️ 关键：价格也需要处理为5位有效数字
-	aggressivePrice := t.roundPriceForCoin(coin, price*1.01)
+	aggressivePrice := t.roundPriceForCoin(coin, price*1.01, true)
 	log.Printf("  💰 价格精度处理: %.8f -> %.8f", price*1.01, aggressivePrice)
 
 	// 创建平仓订单（买入 + ReduceOnly）
@@ -1493,7 +1493,7 @@ func (t *HyperliquidTrader) SetStopLoss(symbol string, positionSide string, quan
 	roundedQuantity := t.roundToSzDecimals(coin, quantity)
 
 	// ⚠️ 关键：价格精度处理
-	roundedStopPrice := t.roundPriceForCoin(coin, stopPrice)
+	roundedStopPrice := t.roundPriceForCoin(coin, stopPrice, false)
 
 	// 创建止损单（Trigger Order）
 	order := hyperliquid.CreateOrderRequest{
@@ -1532,7 +1532,7 @@ func (t *HyperliquidTrader) SetTakeProfit(symbol string, positionSide string, qu
 	roundedQuantity := t.roundToSzDecimals(coin, quantity)
 
 	// ⚠️ 关键：价格精度处理
-	roundedTakeProfitPrice := t.roundPriceForCoin(coin, takeProfitPrice)
+	roundedTakeProfitPrice := t.roundPriceForCoin(coin, takeProfitPrice, false)
 
 	// 使用 Trigger 订单设置止盈
 	tpCloid := t.buildCloid(symbol, "tp")
@@ -1577,6 +1577,13 @@ func (t *HyperliquidTrader) FormatQuantity(symbol string, quantity float64) (str
 func (t *HyperliquidTrader) getSzDecimals(coin string) int {
 	if t.hip3Meta != nil {
 		if asset, ok := t.hip3Meta[normalizeHip3Symbol(coin)]; ok {
+			return asset.SzDecimals
+		}
+	}
+
+	// 如果精度未缓存，尝试刷新获取
+	if norm, _, err := t.fetchPerpMetaAsset(coin, true); err == nil && norm != "" {
+		if asset, ok := t.hip3Meta[norm]; ok {
 			return asset.SzDecimals
 		}
 	}
@@ -1642,11 +1649,19 @@ func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
 			return *asset.PxDecimals, true
 		}
 	}
+
+	// 如果未缓存，尝试刷新获取
+	if norm, _, err := t.fetchPerpMetaAsset(coin, true); err == nil && norm != "" {
+		if asset, ok := t.hip3Meta[norm]; ok && asset.PxDecimals != nil {
+			return *asset.PxDecimals, true
+		}
+	}
+
 	return 0, false
 }
 
-// roundPriceForCoin 根据精度（pxDecimals 或5位有效数字）处理价格
-func (t *HyperliquidTrader) roundPriceForCoin(coin string, price float64) float64 {
+// roundPriceForCoin 根据精度（pxDecimals 或5位有效数字）处理价格；truncate=true 时截断到步长
+func (t *HyperliquidTrader) roundPriceForCoin(coin string, price float64, truncate bool) float64 {
 	if price == 0 {
 		return 0
 	}
@@ -1654,6 +1669,9 @@ func (t *HyperliquidTrader) roundPriceForCoin(coin string, price float64) float6
 	// 优先使用 pxDecimals
 	if pxDec, ok := t.getPxDecimals(coin); ok {
 		multiplier := math.Pow10(pxDec)
+		if truncate {
+			return math.Floor(price*multiplier) / multiplier
+		}
 		return math.Round(price*multiplier) / multiplier
 	}
 
