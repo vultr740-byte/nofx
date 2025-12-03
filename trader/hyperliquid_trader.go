@@ -806,8 +806,8 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 
 	// 根据资产类型调整激进定价策略
 	if t.isStockAsset(coin) {
-		priceMultiplier = 1.02 // 股票使用2%溢价（更保守以避免价格验证失败）
-		log.Printf("🎯 [HIP-3] 股票资产使用保守定价策略: 1.02倍 (2%溢价)")
+		priceMultiplier = 1.08 // 股票使用8%溢价（放宽价格缓冲以提高成功率）
+		log.Printf("🎯 [HIP-3] 股票资产使用宽松定价策略: 1.08倍 (8%溢价)")
 	} else {
 		priceMultiplier = 1.01 // 加密货币使用原策略
 		log.Printf("📈 [HIP-3] 加密货币使用标准定价策略: 1.01倍")
@@ -892,8 +892,8 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 
 	// 根据资产类型调整激进定价策略
 	if t.isStockAsset(coin) {
-		priceMultiplier = 0.98 // 股票使用2%折扣（更保守以避免价格验证失败）
-		log.Printf("🎯 [HIP-3] 股票资产使用保守定价策略: 0.98倍 (2%折扣)")
+		priceMultiplier = 0.92 // 股票使用8%折扣（放宽价格缓冲以提高成功率）
+		log.Printf("🎯 [HIP-3] 股票资产使用宽松定价策略: 0.92倍 (8%折扣)")
 	} else {
 		priceMultiplier = 0.99 // 加密货币使用原策略
 		log.Printf("📈 [HIP-3] 加密货币使用标准定价策略: 0.99倍")
@@ -1871,7 +1871,7 @@ func (t *HyperliquidTrader) validateOrderPrice(coin string, price float64, isBuy
 	// Check price deviation limits
 	maxDeviation := 0.10 // 10% max deviation for crypto
 	if t.isStockAsset(coin) {
-		maxDeviation = 0.05 // 5% for stocks
+		maxDeviation = 0.15 // 15% for stocks (放宽限制以提高成功率)
 	}
 
 	deviation := math.Abs(price-marketPrice) / marketPrice
