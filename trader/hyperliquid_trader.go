@@ -791,8 +791,25 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
 	// ⚠️ 关键：价格精度处理（优先使用pxDecimals，按要求截断到步长）
-	aggressivePrice := t.roundPriceForCoin(coin, price*1.01, true)
-	log.Printf("  💰 价格精度处理: %.8f -> %.8f", price*1.01, aggressivePrice)
+	var aggressivePrice float64
+	var priceMultiplier float64
+
+	// 根据资产类型调整激进定价策略
+	if t.isStockAsset(coin) {
+		priceMultiplier = 1.005 // 股票使用更保守的0.5%溢价
+		log.Printf("🎯 [HIP-3] 股票资产使用保守定价策略: 1.005倍")
+	} else {
+		priceMultiplier = 1.01 // 加密货币使用原策略
+		log.Printf("📈 [HIP-3] 加密货币使用标准定价策略: 1.01倍")
+	}
+
+	aggressivePrice = t.roundPriceForCoin(coin, price*priceMultiplier, true)
+	log.Printf("  💰 价格精度处理: %.8f * %.3f -> %.8f -> %.8f", price, priceMultiplier, price*priceMultiplier, aggressivePrice)
+
+	// 价格预验证
+	if err := t.validateOrderPrice(coin, aggressivePrice, true); err != nil {
+		return nil, fmt.Errorf("价格验证失败: %w", err)
+	}
 
 	// 创建市价买入订单（使用IOC limit order with aggressive price）
 	order := hyperliquid.CreateOrderRequest{
@@ -810,6 +827,13 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 
 	_, err = t.exchange.Order(t.ctx, order, nil)
 	if err != nil {
+		// Check for price-related errors
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "invalid price") ||
+		   strings.Contains(errStr, "price precision") ||
+		   strings.Contains(errStr, "price step") {
+			return nil, fmt.Errorf("HIP-3 价格验证失败 for %s: %w", coin, err)
+		}
 		return nil, fmt.Errorf("开多仓失败: %w", err)
 	}
 
@@ -852,8 +876,25 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
 	// ⚠️ 关键：价格精度处理
-	aggressivePrice := t.roundPriceForCoin(coin, price*0.99, true)
-	log.Printf("  💰 价格精度处理: %.8f -> %.8f", price*0.99, aggressivePrice)
+	var aggressivePrice float64
+	var priceMultiplier float64
+
+	// 根据资产类型调整激进定价策略
+	if t.isStockAsset(coin) {
+		priceMultiplier = 0.995 // 股票使用更保守的0.5%折扣
+		log.Printf("🎯 [HIP-3] 股票资产使用保守定价策略: 0.995倍")
+	} else {
+		priceMultiplier = 0.99 // 加密货币使用原策略
+		log.Printf("📈 [HIP-3] 加密货币使用标准定价策略: 0.99倍")
+	}
+
+	aggressivePrice = t.roundPriceForCoin(coin, price*priceMultiplier, true)
+	log.Printf("  💰 价格精度处理: %.8f * %.3f -> %.8f -> %.8f", price, priceMultiplier, price*priceMultiplier, aggressivePrice)
+
+	// 价格预验证
+	if err := t.validateOrderPrice(coin, aggressivePrice, false); err != nil {
+		return nil, fmt.Errorf("价格验证失败: %w", err)
+	}
 
 	// 创建市价卖出订单
 	order := hyperliquid.CreateOrderRequest{
@@ -871,6 +912,13 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 
 	_, err = t.exchange.Order(t.ctx, order, nil)
 	if err != nil {
+		// Check for price-related errors
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "invalid price") ||
+		   strings.Contains(errStr, "price precision") ||
+		   strings.Contains(errStr, "price step") {
+			return nil, fmt.Errorf("HIP-3 价格验证失败 for %s: %w", coin, err)
+		}
 		return nil, fmt.Errorf("开空仓失败: %w", err)
 	}
 
@@ -1646,22 +1694,68 @@ func (t *HyperliquidTrader) roundToSzDecimals(coin string, quantity float64) flo
 
 // getPxDecimals 获取价格小数精度（优先HIP-3缓存，再从meta中获取）
 func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
+	normalizedCoin := normalizeHip3Symbol(coin)
+
+	// Check HIP-3 cache first
 	if t.hip3Meta != nil {
-		if asset, ok := t.hip3Meta[normalizeHip3Symbol(coin)]; ok && asset.PxDecimals != nil {
+		if asset, ok := t.hip3Meta[normalizedCoin]; ok && asset.PxDecimals != nil {
+			log.Printf("✅ [HIP-3] 找到 %s 价格精度: %d 位小数", normalizedCoin, *asset.PxDecimals)
 			return *asset.PxDecimals, true
 		}
+	}
+
+	// Enhanced fallback for stock assets
+	if t.isStockAsset(coin) {
+		log.Printf("🎯 [HIP-3] 股票资产 %s 使用默认2位小数精度", normalizedCoin)
+		return 2, true // 2 decimal places for stock prices like Tesla
 	}
 
 	// 如果未缓存，尝试刷新获取
 	if norm, _, err := t.fetchPerpMetaAsset(coin, true); err == nil && norm != "" {
 		if asset, ok := t.hip3Meta[norm]; ok && asset.PxDecimals != nil {
+			log.Printf("✅ [HIP-3] 刷新后找到 %s 价格精度: %d 位小数", norm, *asset.PxDecimals)
 			return *asset.PxDecimals, true
 		}
 	} else if err != nil {
 		log.Printf("⚠️ 获取 %s 价格精度失败: %v", coin, err)
 	}
 
+	log.Printf("📊 [HIP-3] %s 未找到价格精度信息", coin)
 	return 0, false
+}
+
+// isStockAsset 检测是否为 HIP-3 股票资产
+func (t *HyperliquidTrader) isStockAsset(coin string) bool {
+	normalizedCoin := normalizeHip3Symbol(coin)
+	isStock := strings.Contains(normalizedCoin, ":")
+
+	if isStock {
+		log.Printf("🔍 [HIP-3] 检测到股票资产: %s", normalizedCoin)
+	}
+
+	return isStock
+}
+
+// logPriceDetails 详细记录价格处理信息用于调试
+func (t *HyperliquidTrader) logPriceDetails(symbol, coin string, price float64, context string) {
+	log.Printf("🔍 [%s] 价格详情 for %s/%s:", context, symbol, coin)
+	log.Printf("   • 原始价格: %.8f", price)
+
+	if pxDec, ok := t.getPxDecimals(coin); ok {
+		log.Printf("   • PxDecimals: %d 位小数", pxDec)
+	} else {
+		log.Printf("   • PxDecimals: 未找到")
+	}
+
+	if t.isStockAsset(coin) {
+		stockPrice := t.roundPriceForStock(price, false)
+		log.Printf("   • 股票舍入价格: %.8f", stockPrice)
+		log.Printf("   • 资产类型: HIP-3 股票")
+	} else {
+		sigfigPrice := t.roundPriceToSigfigs(price, false)
+		log.Printf("   • 有效数字舍入价格: %.8f", sigfigPrice)
+		log.Printf("   • 资产类型: 加密货币")
+	}
 }
 
 // roundPriceForCoin 根据精度（pxDecimals 或5位有效数字）处理价格；truncate=true 时截断到步长
@@ -1670,17 +1764,30 @@ func (t *HyperliquidTrader) roundPriceForCoin(coin string, price float64, trunca
 		return 0
 	}
 
-	// 优先使用 pxDecimals
+	// Use specific pxDecimals when available
 	if pxDec, ok := t.getPxDecimals(coin); ok {
 		multiplier := math.Pow10(pxDec)
+		var result float64
 		if truncate {
-			return math.Floor(price*multiplier) / multiplier
+			result = math.Floor(price*multiplier) / multiplier
+		} else {
+			result = math.Round(price*multiplier) / multiplier
 		}
-		return math.Round(price*multiplier) / multiplier
+		log.Printf("🎯 [HIP-3] 使用 pxDecimals %d: %.8f -> %.8f", pxDec, price, result)
+		return result
 	}
 
-	// 否则使用5位有效数字
-	return t.roundPriceToSigfigs(price, truncate)
+	// Stock-specific fallback
+	if t.isStockAsset(coin) {
+		result := t.roundPriceForStock(price, truncate)
+		log.Printf("📊 [HIP-3] 股票价格舍入: %.8f -> %.8f", price, result)
+		return result
+	}
+
+	// Crypto fallback
+	result := t.roundPriceToSigfigs(price, truncate)
+	log.Printf("📈 [HIP-3] 加密货币价格舍入: %.8f -> %.8f", price, result)
+	return result
 }
 
 // roundPriceToSigfigs 将价格四舍五入到5位有效数字
@@ -1718,6 +1825,141 @@ func (t *HyperliquidTrader) roundPriceToSigfigs(price float64, truncate bool) fl
 	return math.Round(price*multiplier) / multiplier
 }
 
+// roundPriceForStock 股票专用价格舍入方法
+func (t *HyperliquidTrader) roundPriceForStock(price float64, truncate bool) float64 {
+	if price == 0 {
+		return 0
+	}
+
+	// For stocks, use 2 decimal places (typical for stock prices)
+	// unless PxDecimals is explicitly provided
+	var multiplier float64
+	var decimals int
+
+	if price >= 100 {
+		// High-priced stocks: 2 decimals
+		multiplier = 100.0 // 10^2
+		decimals = 2
+	} else if price >= 1 {
+		// Medium-priced stocks: 3 decimals
+		multiplier = 1000.0 // 10^3
+		decimals = 3
+	} else {
+		// Low-priced stocks: 4 decimals
+		multiplier = 10000.0 // 10^4
+		decimals = 4
+	}
+
+	var result float64
+	if truncate {
+		result = math.Floor(price*multiplier) / multiplier
+	} else {
+		result = math.Round(price*multiplier) / multiplier
+	}
+
+	log.Printf("📐 [HIP-3] 股票价格舍入 (%d位小数): %.8f -> %.8f", decimals, price, result)
+	return result
+}
+
+// validateOrderPrice 验证订单价格是否合理
+func (t *HyperliquidTrader) validateOrderPrice(coin string, price float64, isBuy bool) error {
+	// Get current market price for validation
+	symbol := convertSymbolFromHyperliquid(coin)
+	marketPrice, err := t.GetMarketPrice(symbol)
+	if err != nil {
+		log.Printf("❌ [HIP-3] 无法获取市场价格进行验证: %v", err)
+		return fmt.Errorf("failed to get market price for validation: %w", err)
+	}
+
+	// Check price deviation limits
+	maxDeviation := 0.10 // 10% max deviation for crypto
+	if t.isStockAsset(coin) {
+		maxDeviation = 0.05 // 5% for stocks
+	}
+
+	deviation := math.Abs(price-marketPrice) / marketPrice
+	if deviation > maxDeviation {
+		log.Printf("❌ [HIP-3] 价格偏差过大: 市场价格=%.6f, 订单价格=%.6f, 偏差=%.2f%% > 限制%.1f%%",
+			marketPrice, price, deviation*100, maxDeviation*100)
+		return fmt.Errorf("price deviation %.2f%% exceeds maximum %.1f%% for %s",
+			deviation*100, maxDeviation*100, coin)
+	}
+
+	log.Printf("✅ [HIP-3] 价格验证通过: 市场价格=%.6f, 订单价格=%.6f, 偏差=%.2f%%",
+		marketPrice, price, deviation*100)
+	return nil
+}
+
+// diagnosePriceIssues 价格处理诊断工具
+func (t *HyperliquidTrader) diagnosePriceIssues(symbol string) error {
+	log.Printf("🧪 [HIP-3] 开始价格处理诊断: %s", symbol)
+
+	// Test symbol resolution
+	coin, err := t.resolveCoin(symbol)
+	if err != nil {
+		log.Printf("❌ 符号解析失败: %s -> %v", symbol, err)
+		return fmt.Errorf("symbol resolution failed: %w", err)
+	}
+	log.Printf("✅ 符号解析: %s -> %s", symbol, coin)
+
+	// Test asset type detection
+	isStock := t.isStockAsset(coin)
+	log.Printf("🔍 资产类型检测: %s -> 股票=%t", coin, isStock)
+
+	// Test price fetching from multiple sources
+	prices := make(map[string]float64)
+
+	// Test AllMids
+	if allMids, err := t.exchange.Info().AllMids(t.ctx); err == nil {
+		if priceStr, ok := allMids[coin]; ok {
+			if price, err := strconv.ParseFloat(priceStr, 64); err == nil {
+				prices["AllMids"] = price
+				log.Printf("📊 AllMids价格: %s = %.6f", coin, price)
+			}
+		}
+	} else {
+		log.Printf("⚠️ AllMids API失败: %v", err)
+	}
+
+	// Test recentTrades (for stocks)
+	if isStock {
+		if price, err := t.fetchPriceFromRecentTrades(coin); err == nil {
+			prices["recentTrades"] = price
+			log.Printf("📈 recentTrades价格: %s = %.6f", coin, price)
+		} else {
+			log.Printf("⚠️ recentTrades API失败: %v", err)
+		}
+	}
+
+	// Test Info API
+	if price, err := t.fetchPriceFromInfoAPI(coin); err == nil {
+		prices["InfoAPI"] = price
+		log.Printf("💾 InfoAPI价格: %s = %.6f", coin, price)
+	} else {
+		log.Printf("⚠️ InfoAPI失败: %v", err)
+	}
+
+	if len(prices) == 0 {
+		return fmt.Errorf("所有价格源都失败 for %s", coin)
+	}
+
+	// Test precision handling
+	for source, price := range prices {
+		roundedPrice := t.roundPriceForCoin(coin, price, false)
+		log.Printf("📐 [%s] 价格舍入: %.6f -> %.6f", source, price, roundedPrice)
+	}
+
+	// Test precision detection
+	if pxDec, ok := t.getPxDecimals(coin); ok {
+		log.Printf("🎯 价格精度: %d 位小数", pxDec)
+	} else {
+		log.Printf("📊 价格精度: 未找到，使用默认策略")
+	}
+
+	log.Printf("✅ [HIP-3] 价格处理诊断完成")
+	return nil
+}
+
 // convertSymbolToHyperliquid 将标准symbol转换为Hyperliquid格式
 // 例如: "BTCUSDT" -> "BTC"
 func convertSymbolToHyperliquid(symbol string) string {
@@ -1726,6 +1968,18 @@ func convertSymbolToHyperliquid(symbol string) string {
 		return symbol[:len(symbol)-4]
 	}
 	return symbol
+}
+
+// convertSymbolFromHyperliquid 将Hyperliquid格式转换回标准symbol
+// 例如: "BTC" -> "BTCUSDT", "xyz:TSLA" -> "xyz:TSLA"
+func convertSymbolFromHyperliquid(coin string) string {
+	// 对于HIP-3股票资产，直接返回
+	if strings.Contains(coin, ":") {
+		return coin
+	}
+
+	// 对于加密货币，添加USDT后缀
+	return coin + "USDT"
 }
 
 // resolveCoin 支持HIP-3股票符号（带冒号），优先直接匹配，否则尝试通过AllMids匹配后缀
