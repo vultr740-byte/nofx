@@ -796,8 +796,8 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 
 	// 根据资产类型调整激进定价策略
 	if t.isStockAsset(coin) {
-		priceMultiplier = 1.005 // 股票使用更保守的0.5%溢价
-		log.Printf("🎯 [HIP-3] 股票资产使用保守定价策略: 1.005倍")
+		priceMultiplier = 1.02 // 股票使用2%溢价（更保守以避免价格验证失败）
+		log.Printf("🎯 [HIP-3] 股票资产使用保守定价策略: 1.02倍 (2%溢价)")
 	} else {
 		priceMultiplier = 1.01 // 加密货币使用原策略
 		log.Printf("📈 [HIP-3] 加密货币使用标准定价策略: 1.01倍")
@@ -825,15 +825,16 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 		ReduceOnly: false,
 	}
 
-	_, err = t.exchange.Order(t.ctx, order, nil)
+	// ✅ 使用带重试机制的价格执行
+	if t.isStockAsset(coin) {
+		log.Printf("🔄 [HIP-3] 股票资产使用重试机制: %s", coin)
+		err = t.executeOrderWithRetry(&order, 3) // 最多重试3次
+	} else {
+		log.Printf("📈 [HIP-3] 加密货币使用标准执行: %s", coin)
+		_, err = t.exchange.Order(t.ctx, order, nil)
+	}
+
 	if err != nil {
-		// Check for price-related errors
-		errStr := strings.ToLower(err.Error())
-		if strings.Contains(errStr, "invalid price") ||
-		   strings.Contains(errStr, "price precision") ||
-		   strings.Contains(errStr, "price step") {
-			return nil, fmt.Errorf("HIP-3 价格验证失败 for %s: %w", coin, err)
-		}
 		return nil, fmt.Errorf("开多仓失败: %w", err)
 	}
 
@@ -881,8 +882,8 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 
 	// 根据资产类型调整激进定价策略
 	if t.isStockAsset(coin) {
-		priceMultiplier = 0.995 // 股票使用更保守的0.5%折扣
-		log.Printf("🎯 [HIP-3] 股票资产使用保守定价策略: 0.995倍")
+		priceMultiplier = 0.98 // 股票使用2%折扣（更保守以避免价格验证失败）
+		log.Printf("🎯 [HIP-3] 股票资产使用保守定价策略: 0.98倍 (2%折扣)")
 	} else {
 		priceMultiplier = 0.99 // 加密货币使用原策略
 		log.Printf("📈 [HIP-3] 加密货币使用标准定价策略: 0.99倍")
@@ -910,15 +911,16 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 		ReduceOnly: false,
 	}
 
-	_, err = t.exchange.Order(t.ctx, order, nil)
+	// ✅ 使用带重试机制的价格执行
+	if t.isStockAsset(coin) {
+		log.Printf("🔄 [HIP-3] 股票资产使用重试机制: %s", coin)
+		err = t.executeOrderWithRetry(&order, 3) // 最多重试3次
+	} else {
+		log.Printf("📈 [HIP-3] 加密货币使用标准执行: %s", coin)
+		_, err = t.exchange.Order(t.ctx, order, nil)
+	}
+
 	if err != nil {
-		// Check for price-related errors
-		errStr := strings.ToLower(err.Error())
-		if strings.Contains(errStr, "invalid price") ||
-		   strings.Contains(errStr, "price precision") ||
-		   strings.Contains(errStr, "price step") {
-			return nil, fmt.Errorf("HIP-3 价格验证失败 for %s: %w", coin, err)
-		}
 		return nil, fmt.Errorf("开空仓失败: %w", err)
 	}
 
@@ -1825,31 +1827,14 @@ func (t *HyperliquidTrader) roundPriceToSigfigs(price float64, truncate bool) fl
 	return math.Round(price*multiplier) / multiplier
 }
 
-// roundPriceForStock 股票专用价格舍入方法
+// roundPriceForStock 股票专用价格舍入方法 - 强制2位小数以符合Hyperliquid步长要求
 func (t *HyperliquidTrader) roundPriceForStock(price float64, truncate bool) float64 {
 	if price == 0 {
 		return 0
 	}
 
-	// For stocks, use 2 decimal places (typical for stock prices)
-	// unless PxDecimals is explicitly provided
-	var multiplier float64
-	var decimals int
-
-	if price >= 100 {
-		// High-priced stocks: 2 decimals
-		multiplier = 100.0 // 10^2
-		decimals = 2
-	} else if price >= 1 {
-		// Medium-priced stocks: 3 decimals
-		multiplier = 1000.0 // 10^3
-		decimals = 3
-	} else {
-		// Low-priced stocks: 4 decimals
-		multiplier = 10000.0 // 10^4
-		decimals = 4
-	}
-
+	// 强制使用2位小数，覆盖动态逻辑，确保符合Hyperliquid步长要求
+	multiplier := 100.0 // 强制2位小数
 	var result float64
 	if truncate {
 		result = math.Floor(price*multiplier) / multiplier
@@ -1857,7 +1842,7 @@ func (t *HyperliquidTrader) roundPriceForStock(price float64, truncate bool) flo
 		result = math.Round(price*multiplier) / multiplier
 	}
 
-	log.Printf("📐 [HIP-3] 股票价格舍入 (%d位小数): %.8f -> %.8f", decimals, price, result)
+	log.Printf("📐 [HIP-3] 股票价格强制2位小数舍入: %.8f -> %.8f", price, result)
 	return result
 }
 
@@ -1887,7 +1872,107 @@ func (t *HyperliquidTrader) validateOrderPrice(coin string, price float64, isBuy
 
 	log.Printf("✅ [HIP-3] 价格验证通过: 市场价格=%.6f, 订单价格=%.6f, 偏差=%.2f%%",
 		marketPrice, price, deviation*100)
+
+	// Price step validation for stocks (critical fix)
+	if t.isStockAsset(coin) {
+		if err := t.validatePriceStep(coin, price); err != nil {
+			log.Printf("❌ [HIP-3] %v", err)
+			return err
+		}
+	}
+
 	return nil
+}
+
+// validatePriceStep 验证价格是否为有效步长的整数倍（针对股票资产）
+func (t *HyperliquidTrader) validatePriceStep(coin string, price float64) error {
+	if t.isStockAsset(coin) {
+		// 检查是否为0.01的整数倍（2位小数）
+		remainder := math.Mod(price*100, 1)
+		if remainder > 1e-10 {
+			log.Printf("❌ [HIP-3] 股票价格步长验证失败: %s 价格=%.8f, 余数=%.10f", coin, price, remainder)
+			return fmt.Errorf("股票价格步长验证失败: %s 价格 %.8f 必须是0.01的整数倍 (当前余数: %.10f)", coin, price, remainder)
+		}
+		log.Printf("✅ [HIP-3] 股票价格步长验证通过: %s %.8f 是有效的0.01步长", coin, price)
+	}
+	return nil
+}
+
+// executeOrderWithRetry 执行带重试机制的订单（针对股票价格验证失败）
+func (t *HyperliquidTrader) executeOrderWithRetry(order *hyperliquid.CreateOrderRequest, maxRetries int) error {
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			log.Printf("🔄 [HIP-3] 订单重试第 %d 次: %s 价格=%.8f", attempt+1, order.Coin, order.Price)
+		}
+
+		// 执行订单
+		_, err := t.exchange.Order(t.ctx, *order, nil)
+		if err == nil {
+			log.Printf("✅ [HIP-3] 订单执行成功: %s @ %.8f (尝试次数: %d)", order.Coin, order.Price, attempt+1)
+			return nil // 成功
+		}
+
+		// 检查是否是价格相关错误且是股票资产
+		errStr := strings.ToLower(err.Error())
+		isPriceError := strings.Contains(errStr, "invalid price") ||
+			strings.Contains(errStr, "price precision") ||
+			strings.Contains(errStr, "price step")
+
+		if isPriceError && t.isStockAsset(order.Coin) && attempt < maxRetries-1 {
+			log.Printf("⚠️ [HIP-3] 股票价格错误，尝试调整价格重试: %v", err)
+
+			// 调整价格（增加更保守的偏差）
+			newPrice := t.adjustPriceForRetry(order.Price, attempt+1, order.IsBuy)
+			if newPrice != order.Price {
+				order.Price = newPrice
+				log.Printf("🔧 [HIP-3] 价格调整: %.8f -> %.8f", order.Price, newPrice)
+				continue // 重试
+			} else {
+				log.Printf("❌ [HIP-3] 无法进一步调整价格，返回错误")
+				break
+			}
+		}
+
+		// 非价格错误或已达到最大重试次数
+		log.Printf("❌ [HIP-3] 订单执行失败: %v", err)
+		return err
+	}
+
+	return fmt.Errorf("order failed after %d attempts", maxRetries)
+}
+
+// adjustPriceForRetry 为重试调整价格（逐步增加偏差）
+func (t *HyperliquidTrader) adjustPriceForRetry(currentPrice float64, attempt int, isBuy bool) float64 {
+	// 基础偏差，每次重试增加
+	var additionalDeviation float64
+	switch attempt {
+	case 1:
+		additionalDeviation = 0.01 // 1%
+	case 2:
+		additionalDeviation = 0.02 // 2%
+	case 3:
+		additionalDeviation = 0.03 // 3%
+	default:
+		additionalDeviation = 0.04 // 4%
+	}
+
+	var adjustedPrice float64
+	if isBuy {
+		// 买单：提高价格以增加成交概率
+		adjustedPrice = currentPrice * (1.0 + additionalDeviation)
+		log.Printf("🔧 [HIP-3] 买单价格调整: %.8f * %.3f -> %.8f", currentPrice, 1.0+additionalDeviation, adjustedPrice)
+	} else {
+		// 卖单：降低价格以增加成交概率
+		adjustedPrice = currentPrice * (1.0 - additionalDeviation)
+		log.Printf("🔧 [HIP-3] 卖单价格调整: %.8f * %.3f -> %.8f", currentPrice, 1.0-additionalDeviation, adjustedPrice)
+	}
+
+	// 强制2位小数舍入（适用于所有股票资产）
+	multiplier := 100.0
+	result := math.Round(adjustedPrice*multiplier) / multiplier
+
+	log.Printf("📐 [HIP-3] 重试价格舍入: %.8f -> %.8f", adjustedPrice, result)
+	return result
 }
 
 // diagnosePriceIssues 价格处理诊断工具
