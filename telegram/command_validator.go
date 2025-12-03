@@ -239,9 +239,22 @@ func (cv *CommandValidator) validateSymbol(cmd *ParsedCommand) error {
 		baseSymbol = strings.TrimSuffix(baseSymbol, "USD")
 	}
 
-	// 更新为标准格式
-	if !strings.HasSuffix(symbol, "USDT") {
-		cmd.Symbol = baseSymbol + "USDT"
+	// 更新为标准格式（仅加密货币添加USDT后缀）
+	switch cmd.AssetType {
+	case "crypto":
+		// 加密货币添加USDT后缀
+		if !strings.HasSuffix(symbol, "USDT") {
+			cmd.Symbol = baseSymbol + "USDT"
+		}
+	case "stock":
+		// 股票保持原样，不添加USDT后缀
+		cmd.Symbol = baseSymbol
+	case "forex":
+		// 外汇保持货币对格式
+		cmd.Symbol = baseSymbol
+	case "commodity":
+		// 商品保持标准代码
+		cmd.Symbol = baseSymbol
 	}
 
 	return nil

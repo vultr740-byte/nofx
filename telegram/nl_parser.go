@@ -149,7 +149,25 @@ func (p *NLParser) parseWithAI(message string) (*ParsedCommand, error) {
 7. confidence: 解析的置信度，0.0到1.0之间，反映整体解析的可靠性
 8. 百分比平仓使用percentage字段（0.5表示50%%）
 
-请基于用户输入的完整上下文进行智能解析，确保asset_type的判断准确合理。`, message)
+请基于用户输入的完整上下文进行智能解析，确保asset_type的判断准确合理。
+
+🚨 重要提醒 🚨
+1. asset_type字段必须返回，绝对不能为空！
+2. 资产类型判断是交易成功的关键，请务必准确识别
+3. 如果AI返回空的asset_type，整个交易将失败！
+4. 请基于上下文和符号特征进行最准确的判断
+
+典型映射：
+- "特斯拉"、"TSLA" → stock
+- "苹果"、"AAPL" → stock
+- "谷歌"、"GOOGL" → stock
+- "微软"、"MSFT" → stock
+- "英伟达"、"NVDA" → stock
+- "比特币"、"BTC" → crypto
+- "以太坊"、"ETH" → crypto
+- "欧元美元"、"EURUSD" → forex
+- "黄金"、"GOLD" → commodity
+- "原油"、"OIL" → commodity`, message)
 
 	// 调用 AI 模型
 	systemPrompt := "你是一个专业的交易命令解析器，只返回JSON格式的结果。"
@@ -262,57 +280,13 @@ func (p *NLParser) extractJSON(response string) string {
 	return ""
 }
 
-// inferAssetType 根据交易符号推断资产类型
-func (p *NLParser) inferAssetType(symbol string) string {
-	symbol = strings.ToUpper(symbol)
-
-	// 移除常见后缀进行分析
-	baseSymbol := symbol
-	if strings.HasSuffix(baseSymbol, "USDT") || strings.HasSuffix(baseSymbol, "USD") {
-		baseSymbol = strings.TrimSuffix(baseSymbol, "USDT")
-		baseSymbol = strings.TrimSuffix(baseSymbol, "USD")
-	}
-
-	// 著名股票代码识别
-	stockSymbols := map[string]bool{
-		"TSLA": true, "AAPL": true, "GOOGL": true, "MSFT": true,
-		"NVDA": true, "META": true, "AMZN": true, "NFLX": true,
-		"INTC": true, "AMD": true, "PYPL": true, "DIS": true,
-	}
-	if stockSymbols[baseSymbol] {
-		return "stock"
-	}
-
-	// 外汇货币对识别 (6个字符)
-	if len(symbol) == 6 {
-		currencies := []string{"USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"}
-		for _, curr := range currencies {
-			if strings.HasPrefix(symbol, curr) || strings.HasSuffix(symbol, curr) {
-				return "forex"
-			}
-		}
-	}
-
-	// 商品识别
-	commodities := map[string]bool{
-		"GOLD": true, "SILVER": true, "OIL": true, "GAS": true,
-		"WHEAT": true, "CORN": true, "COPPER": true, "NATGAS": true,
-	}
-	if commodities[baseSymbol] {
-		return "commodity"
-	}
-
-	// 默认为加密货币
-	return "crypto"
-}
-
 // normalizeCommand 标准化解析后的命令
 func (p *NLParser) normalizeCommand(cmd ParsedCommand) ParsedCommand {
-	// 🔍 详细记录AI解析结果
+	// 🔍 记录AI解析结果（保留日志用于验证）
 	log.Printf("🤖 AI解析结果详情:")
 	log.Printf("   Action: %s", cmd.Action)
 	log.Printf("   Symbol: %s", cmd.Symbol)
-	log.Printf("   AssetType: '%s' (空值将触发推断)", cmd.AssetType)
+	log.Printf("   AssetType: '%s'", cmd.AssetType)
 	log.Printf("   Leverage: %d", cmd.Leverage)
 	log.Printf("   Amount: %.2f", cmd.Amount)
 	log.Printf("   Currency: %s", cmd.Currency)
@@ -320,24 +294,30 @@ func (p *NLParser) normalizeCommand(cmd ParsedCommand) ParsedCommand {
 	log.Printf("   Percentage: %.2f", cmd.Percentage)
 	log.Printf("   Confidence: %.2f", cmd.Confidence)
 
-	// 如果AI没有解析出资产类型，根据符号特征推断
+	// 如果AssetType为空，记录错误但不进行后备推断
 	if cmd.AssetType == "" && cmd.Symbol != "" {
-		originalAssetType := cmd.AssetType
-		cmd.AssetType = p.inferAssetType(cmd.Symbol)
-
-		log.Printf("🔧 AssetType推断:")
-		log.Printf("   原始值: '%s'", originalAssetType)
+		log.Printf("❌ AssetType为空！AI解析失败，交易将被拒绝")
+		log.Printf("   要求：AI必须返回有效的asset_type字段")
 		log.Printf("   符号: %s", cmd.Symbol)
-		log.Printf("   推断结果: %s", cmd.AssetType)
-		log.Printf("   推断原因: AI未返回asset_type，系统根据符号特征进行后备推断")
 	} else if cmd.AssetType != "" {
 		log.Printf("✅ AssetType正常: %s (AI解析成功)", cmd.AssetType)
 	}
 
 	// 标准化交易对名称
 	if cmd.Symbol != "" {
-		if !strings.HasSuffix(cmd.Symbol, "USDT") && !strings.HasSuffix(cmd.Symbol, "USD") {
-			cmd.Symbol = cmd.Symbol + "USDT"
+		switch cmd.AssetType {
+		case "crypto":
+			// 加密货币添加USDT后缀
+			if !strings.HasSuffix(cmd.Symbol, "USDT") && !strings.HasSuffix(cmd.Symbol, "USD") {
+				cmd.Symbol = cmd.Symbol + "USDT"
+			}
+		case "stock":
+			// 股票保持原样，不添加USDT后缀
+			// Hyperliquid.resolveCoin会处理HIP-3格式转换
+		case "forex":
+			// 外汇保持货币对格式，如EURUSD
+		case "commodity":
+			// 商品保持标准代码，如GOLD
 		}
 	}
 
