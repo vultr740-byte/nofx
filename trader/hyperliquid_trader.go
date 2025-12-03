@@ -1586,6 +1586,8 @@ func (t *HyperliquidTrader) getSzDecimals(coin string) int {
 		if asset, ok := t.hip3Meta[norm]; ok {
 			return asset.SzDecimals
 		}
+	} else if err != nil {
+		log.Printf("⚠️ 获取 %s 精度失败: %v，使用默认精度4", coin, err)
 	}
 
 	if t.meta == nil {
@@ -1638,8 +1640,8 @@ func (t *HyperliquidTrader) roundToSzDecimals(coin string, quantity float64) flo
 		multiplier *= 10.0
 	}
 
-	// 四舍五入
-	return float64(int(quantity*multiplier+0.5)) / multiplier
+	// 截断到步长，避免向上取整导致无效数量
+	return math.Floor(quantity*multiplier) / multiplier
 }
 
 // getPxDecimals 获取价格小数精度（优先HIP-3缓存，再从meta中获取）
@@ -1655,6 +1657,8 @@ func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
 		if asset, ok := t.hip3Meta[norm]; ok && asset.PxDecimals != nil {
 			return *asset.PxDecimals, true
 		}
+	} else if err != nil {
+		log.Printf("⚠️ 获取 %s 价格精度失败: %v", coin, err)
 	}
 
 	return 0, false
@@ -1676,12 +1680,12 @@ func (t *HyperliquidTrader) roundPriceForCoin(coin string, price float64, trunca
 	}
 
 	// 否则使用5位有效数字
-	return t.roundPriceToSigfigs(price)
+	return t.roundPriceToSigfigs(price, truncate)
 }
 
 // roundPriceToSigfigs 将价格四舍五入到5位有效数字
 // Hyperliquid要求价格使用5位有效数字（significant figures）
-func (t *HyperliquidTrader) roundPriceToSigfigs(price float64) float64 {
+func (t *HyperliquidTrader) roundPriceToSigfigs(price float64, truncate bool) float64 {
 	if price == 0 {
 		return 0
 	}
@@ -1707,7 +1711,10 @@ func (t *HyperliquidTrader) roundPriceToSigfigs(price float64) float64 {
 		multiplier *= 10
 	}
 
-	// 四舍五入
+	// 四舍五入或截断
+	if truncate {
+		return math.Floor(price*multiplier) / multiplier
+	}
 	return math.Round(price*multiplier) / multiplier
 }
 
