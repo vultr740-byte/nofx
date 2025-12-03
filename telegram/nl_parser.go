@@ -94,14 +94,20 @@ func (p *NLParser) isTradingCommand(message string) bool {
 
 // parseWithAI 使用 AI 模型解析命令
 func (p *NLParser) parseWithAI(message string) (*ParsedCommand, error) {
-	prompt := fmt.Sprintf(`你是一个专业的交易命令解析器。请从用户消息中提取交易参数，只返回 JSON 格式。
+	prompt := fmt.Sprintf(`你是一个专业的交易命令解析器。请从用户消息中提取交易参数并只返回纯净的JSON对象。
+
+🚨 关键格式要求：
+1. 直接返回JSON对象，不要任何markdown标记
+2. 不要使用代码块标记，直接返回JSON
+3. 不要添加任何解释文字或前言
+4. 确保asset_type字段不为空
 
 用户消息: "%s"
 
-请返回以下 JSON 格式（仅返回 JSON，不要其他文字）:
+请直接返回JSON（无其他文字）:
 {
   "action": "long|short|close|stop_loss|take_profit|close_all",
-  "symbol": "交易代码(大写，无空格，例如BTC、ETH、TSLA、AAPL)",
+  "symbol": "交易代码(大写，无空格)",
   "asset_type": "crypto|stock|forex|commodity",
   "leverage": 数字或0,
   "amount": 数字或0,
@@ -110,46 +116,6 @@ func (p *NLParser) parseWithAI(message string) (*ParsedCommand, error) {
   "percentage": 数字或0,
   "confidence": 0.0-1.0
 }
-
-资产类型智能判断规则:
-1. "crypto": 加密货币
-   - 特征: 通常为3-5个大写字母，如BTC、ETH、SOL、BNB、DOGE、ADA、DOT、LINK、MATIC、AVAX、ATOM、UNI等
-   - 上下文关键词: "币"、"加密货币"、"区块链"、"Web3"、"DeFi"、"挖矿"等
-   - 示例: "买入BTC"、"做空ETH"、"开多SOL 3倍"
-
-2. "stock": 股票
-   - 特征: 1-5个大写字母，知名公司缩写，如TSLA(特斯拉)、AAPL(苹果)、GOOGL(谷歌)、MSFT(微软)、NVDA(英伟达)、META、AMZN、NFLX、INTC等
-   - 上下文关键词: "股票"、"公司"、"美股"、"财报"、"股价"、"上市"等
-   - 示例: "买入特斯拉股票"、"做空苹果"、"开多TSLA 5倍"
-
-3. "forex": 外汇
-   - 特征: 6个字符，通常为两个3字母货币代码组合，如EURUSD、GBPUSD、USDJPY、AUDUSD、USDCAD、NZDUSD、EURJPY、GBPJPY等
-   - 上下文关键词: "外汇"、"货币对"、"汇率"、"美元"、"欧元"等
-   - 示例: "买入欧元美元"、"做空英镑美元"
-
-4. "commodity": 商品
-   - 特征: 通常为商品名称缩写，如GOLD、SILVER、OIL、GAS、WHEAT、CORN、COPPER、NATGAS等
-   - 上下文关键词: "黄金"、"原油"、"白银"、"大宗商品"、"期货"等
-   - 示例: "买入黄金"、"做空原油"
-
-智能判断策略:
-- 优先根据交易代码的格式特征进行判断
-- 结合用户输入中的上下文关键词和语言习惯
-- 考虑交易代码的行业知名度和常见用法
-- 如果有歧义，根据最可能的场景进行判断
-- 置信度要反映对资产类型判断的把握程度
-
-其他注意事项:
-1. action: 开多用"long", 开空用"short", 平仓用"close", 全部平仓用"close_all"
-2. symbol: 输出标准交易代码，无需添加后缀（如TSLA、AAPL、BTC）
-3. asset_type: 根据上述规则智能判断，如无法确定优先设为"crypto"
-4. leverage: 杠杆倍数，如果没有提到则为0
-5. amount: 开仓/平仓的名义金额或数量，未知则为0
-6. price: 止盈/止损价格，未知则为0
-7. confidence: 解析的置信度，0.0到1.0之间，反映整体解析的可靠性
-8. 百分比平仓使用percentage字段（0.5表示50%%）
-
-请基于用户输入的完整上下文进行智能解析，确保asset_type的判断准确合理。
 
 🚨 重要提醒 🚨
 1. asset_type字段必须返回，绝对不能为空！
@@ -167,7 +133,35 @@ func (p *NLParser) parseWithAI(message string) (*ParsedCommand, error) {
 - "以太坊"、"ETH" → crypto
 - "欧元美元"、"EURUSD" → forex
 - "黄金"、"GOLD" → commodity
-- "原油"、"OIL" → commodity`, message)
+- "原油"、"OIL" → commodity
+
+资产类型智能判断规则:
+1. "crypto": 加密货币
+   - 特征: 通常为3-5个大写字母，如BTC、ETH、SOL、BNB、DOGE、ADA、DOT、LINK、MATIC、AVAX、ATOM、UNI等
+   - 上下文关键词: "币"、"加密货币"、"区块链"、"Web3"、"DeFi"等
+   - 示例: "买入BTC"、"做空ETH"、"开多SOL"
+
+2. "stock": 股票
+   - 特征: 1-5个大写字母，知名公司缩写，如TSLA(特斯拉)、AAPL(苹果)、GOOGL(谷歌)、MSFT(微软)、NVDA(英伟达)、META、AMZN、NFLX、INTC等
+   - 上下文关键词: "股票"、"公司"、"美股"、"财报"、"股价"等
+   - 示例: "买入特斯拉股票"、"做空苹果"、"开多TSLA"
+
+3. "forex": 外汇
+   - 特征: 6个字符，通常为两个3字母货币代码组合，如EURUSD、GBPUSD、USDJPY、AUDUSD、USDCAD、NZDUSD、EURJPY、GBPJPY等
+   - 上下文关键词: "外汇"、"货币对"、"汇率"等
+   - 示例: "买入欧元美元"、"做空英镑美元"
+
+4. "commodity": 商品
+   - 特征: 通常为商品名称缩写，如GOLD、SILVER、OIL、GAS、WHEAT、CORN、COPPER、NATGAS等
+   - 上下文关键词: "黄金"、"原油"、"白银"、"大宗商品"等
+   - 示例: "买入黄金"、"做空原油"
+
+智能判断策略:
+- 优先根据交易代码的格式特征进行判断
+- 结合用户输入中的上下文关键词和语言习惯
+- 考虑交易代码的行业知名度和常见用法
+- 如果有歧义，根据最可能的场景进行判断
+- 置信度要反映对资产类型判断的把握程度`, message)
 
 	// 调用 AI 模型
 	systemPrompt := "你是一个专业的交易命令解析器，只返回JSON格式的结果。"
@@ -182,9 +176,18 @@ func (p *NLParser) parseWithAI(message string) (*ParsedCommand, error) {
 		return nil, fmt.Errorf("无法从 AI 响应中提取 JSON")
 	}
 
+	// 验证提取的JSON质量
+	if jsonStr == "{}" {
+		log.Printf("❌ 警告：提取到空JSON对象")
+		log.Printf("❌ AI完整响应: %s", response)
+		return nil, fmt.Errorf("AI返回的JSON格式不正确")
+	}
+
 	// 解析 JSON
 	var cmd ParsedCommand
 	if err := json.Unmarshal([]byte(jsonStr), &cmd); err != nil {
+		log.Printf("❌ JSON解析失败: %v", err)
+		log.Printf("❌ 提取的JSON: %s", jsonStr)
 		return nil, fmt.Errorf("JSON 解析失败: %w", err)
 	}
 
@@ -193,6 +196,14 @@ func (p *NLParser) parseWithAI(message string) (*ParsedCommand, error) {
 	log.Printf("   用户输入: %s", message)
 	log.Printf("   AI完整响应: %s", response)
 	log.Printf("   提取的JSON: %s", jsonStr)
+
+	// 验证关键字段
+	if cmd.AssetType == "" {
+		log.Printf("❌ AssetType字段为空，AI解析不完整")
+		log.Printf("❌ 提取的JSON: %s", jsonStr)
+		log.Printf("❌ 建议优化AI提示词以强调asset_type字段的重要性")
+		return nil, fmt.Errorf("AI未返回有效的asset_type字段")
+	}
 
 	// 标准化处理
 	cmd = p.normalizeCommand(cmd)
@@ -257,22 +268,24 @@ func (p *NLParser) parseWithRegex(message string) (*ParsedCommand, error) {
 
 // extractJSON 从 AI 响应中提取 JSON 字符串
 func (p *NLParser) extractJSON(response string) string {
-	// 查找 JSON 对象的开始和结束
-	startIdx := strings.Index(response, "{")
-	if startIdx == -1 {
-		return ""
-	}
-
-	// 找到匹配的右括号
-	braceCount := 0
-	for i := startIdx; i < len(response); i++ {
-		switch response[i] {
-		case '{':
-			braceCount++
-		case '}':
-			braceCount--
-			if braceCount == 0 {
-				return response[startIdx : i+1]
+	// 首先尝试查找纯净JSON对象
+	if startIdx := strings.Index(response, "{"); startIdx != -1 {
+		braceCount := 0
+		for i := startIdx; i < len(response); i++ {
+			switch response[i] {
+			case '{':
+				braceCount++
+			case '}':
+				braceCount--
+				if braceCount == 0 {
+					jsonCandidate := response[startIdx : i+1]
+					// 简单验证是否包含必需字段
+					if strings.Contains(jsonCandidate, "\"action\"") &&
+					   strings.Contains(jsonCandidate, "\"symbol\"") &&
+					   strings.Contains(jsonCandidate, "\"asset_type\"") {
+						return jsonCandidate
+					}
+				}
 			}
 		}
 	}
