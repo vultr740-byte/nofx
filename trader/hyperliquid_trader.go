@@ -27,6 +27,17 @@ type perpMetaResponse struct {
 	} `json:"universe"`
 }
 
+// 轻量化的 PerpMeta/Asset 结构用于解析 allPerpMetas
+type PerpMetaLite struct {
+	Universe []PerpMetaAssetLite `json:"universe"`
+}
+
+type PerpMetaAssetLite struct {
+	Name       string `json:"name"`
+	SzDecimals int    `json:"szDecimals"`
+	PxDecimals *int   `json:"pxDecimals"`
+}
+
 // normalizeHip3Symbol 确保HIP-3符号前缀小写、后缀大写（如 xyz:TSLA）
 func normalizeHip3Symbol(symbol string) string {
 	if !strings.Contains(symbol, ":") {
@@ -151,6 +162,63 @@ func (t *HyperliquidTrader) fetchPriceFromRecentTrades(coin string) (float64, er
 	return 0, fmt.Errorf("recentTrades 未找到价格字段")
 }
 
+// fetchPerpMetaAsset 通过 allPerpMetas 获取资产名和精度（支持主网/测试网切换）
+// 使用轻量结构体避免依赖 SDK 内部类型
+func (t *HyperliquidTrader) fetchPerpMetaAsset(coin string, forceMainnet bool) (string, *PerpMetaAssetLite, error) {
+	coin = normalizeHip3Symbol(coin)
+	payload := []byte(`{"type":"allPerpMetas"}`)
+	endpoint := infoAPIURL(t.testnet)
+	if forceMainnet {
+		endpoint = infoAPIURL(false)
+	}
+
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(payload))
+	if err != nil {
+		return "", nil, fmt.Errorf("创建 InfoAPI 请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "NOFX-Hyperliquid-Resolve")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", nil, fmt.Errorf("调用 InfoAPI 失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, fmt.Errorf("读取 InfoAPI 响应失败: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", nil, fmt.Errorf("InfoAPI 返回错误状态码 %d: %s", resp.StatusCode, string(body))
+	}
+
+	var metas []PerpMetaLite
+	if err := json.Unmarshal(body, &metas); err != nil {
+		return "", nil, fmt.Errorf("解析 InfoAPI 响应失败: %w", err)
+	}
+
+	for _, meta := range metas {
+		for _, asset := range meta.Universe {
+			name := normalizeHip3Symbol(asset.Name)
+			if !strings.Contains(name, ":") {
+				continue
+			}
+			parts := strings.SplitN(name, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			if strings.EqualFold(parts[1], coin) {
+				return name, &asset, nil
+			}
+		}
+	}
+
+	return "", nil, fmt.Errorf("InfoAPI 未找到交易对: %s", coin)
+}
+
 // ResolveNonCryptoSymbol 使用 Info API (allPerpMetas) 为非加密资产获取带前缀的HIP-3符号
 // preferMainnet: 强制使用主网 Info API（与 /stocks 列表一致）
 func (t *HyperliquidTrader) ResolveNonCryptoSymbol(symbol string, preferMainnet bool) (string, error) {
@@ -160,7 +228,7 @@ func (t *HyperliquidTrader) ResolveNonCryptoSymbol(symbol string, preferMainnet 
 		return normalizeHip3Symbol(base), nil
 	}
 
-	mapped, err := t.resolveFromInfoAPI(base, preferMainnet)
+	mapped, _, err := t.fetchPerpMetaAsset(base, preferMainnet)
 	if err != nil {
 		return "", err
 	}
@@ -170,58 +238,8 @@ func (t *HyperliquidTrader) ResolveNonCryptoSymbol(symbol string, preferMainnet 
 // resolveFromInfoAPI 使用 Info API 的 allPerpMetas 兜底匹配 HIP-3 股票（与 /stocks 列表一致）
 // forceMainnet: 为非加密资产匹配时可强制使用主网 Info API（与 /stocks 保持一致）
 func (t *HyperliquidTrader) resolveFromInfoAPI(coin string, forceMainnet bool) (string, error) {
-	payload := []byte(`{"type":"allPerpMetas"}`)
-	endpoint := infoAPIURL(t.testnet)
-	if forceMainnet {
-		endpoint = infoAPIURL(false)
-	}
-
-	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(payload))
-	if err != nil {
-		return "", fmt.Errorf("创建 InfoAPI 请求失败: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "NOFX-Hyperliquid-Resolve")
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("调用 InfoAPI 失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("读取 InfoAPI 响应失败: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("InfoAPI 返回错误状态码 %d: %s", resp.StatusCode, string(body))
-	}
-
-	var metas []perpMetaResponse
-	if err := json.Unmarshal(body, &metas); err != nil {
-		return "", fmt.Errorf("解析 InfoAPI 响应失败: %w", err)
-	}
-
-	// 优先按主网数据匹配，确保和 /stocks 一致
-	for _, meta := range metas {
-		for _, asset := range meta.Universe {
-			name := asset.Name
-			if !strings.Contains(name, ":") {
-				continue
-			}
-			parts := strings.SplitN(name, ":", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			if strings.EqualFold(parts[1], coin) {
-				return normalizeHip3Symbol(name), nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("InfoAPI 未找到交易对: %s", coin)
+	mapped, _, err := t.fetchPerpMetaAsset(coin, forceMainnet)
+	return mapped, err
 }
 
 // GetRecentTradePrice 使用 recentTrades 接口获取最新成交价（适用于 HIP-3 股票等非加密资产）
