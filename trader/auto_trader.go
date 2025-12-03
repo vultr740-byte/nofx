@@ -2609,9 +2609,22 @@ func (at *AutoTrader) GetMCPClient() *mcp.Client {
 // ExecuteNaturalLanguageTrade 执行自然语言交易命令
 // amount: 开仓时表示美元名义；平仓表示数量；止盈止损时忽略
 // price: 仅用于止盈/止损，开仓/平仓可为0
-func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount float64, price float64, leverage int) (map[string]interface{}, error) {
+func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount float64, price float64, leverage int, assetType string) (map[string]interface{}, error) {
 	if at.trader == nil {
 		return nil, fmt.Errorf("交易实例未初始化")
+	}
+
+	// 对非加密资产，使用 Hyperliquid Info API 提供的 allPerpMetas 进行 HIP-3 符号映射
+	resolvedSymbol := symbol
+	if assetType != "" && assetType != "crypto" && at.config.Exchange == "hyperliquid" {
+		if ht, ok := at.trader.(*HyperliquidTrader); ok {
+			mapped, err := ht.ResolveNonCryptoSymbol(symbol, true) // 与 /stocks 一致，使用主网 Info API
+			if err != nil {
+				return nil, fmt.Errorf("非加密资产符号映射失败: %w", err)
+			}
+			resolvedSymbol = mapped
+			log.Printf("🔄 非加密资产符号映射: %s -> %s (asset_type=%s)", symbol, resolvedSymbol, assetType)
+		}
 	}
 
 	// 将金额转换为下单数量（amount 视为 USD 名义价值，仅用于开仓）
@@ -2622,7 +2635,7 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 			return nil, fmt.Errorf("开仓金额必须大于0")
 		}
 		var price float64
-		price, err = at.trader.GetMarketPrice(symbol)
+		price, err = at.trader.GetMarketPrice(resolvedSymbol)
 		if err != nil {
 			return nil, fmt.Errorf("获取价格失败: %w", err)
 		}
@@ -2634,10 +2647,10 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 
 	switch action {
 	case "long":
-		formattedSymbol := at.formatSymbolForExchange(symbol)
+		formattedSymbol := at.formatSymbolForExchange(resolvedSymbol)
 		return at.trader.OpenLong(formattedSymbol, qty, leverage)
 	case "short":
-		formattedSymbol := at.formatSymbolForExchange(symbol)
+		formattedSymbol := at.formatSymbolForExchange(resolvedSymbol)
 		return at.trader.OpenShort(formattedSymbol, qty, leverage)
 	case "close":
 		// 对于平仓，我们需要先确定持仓方向，然后调用相应的方法
@@ -2648,8 +2661,8 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 
 		// 查找对应交易对的持仓
 		for _, pos := range positions {
-			if pos["symbol"] == symbol {
-				formattedSymbol := at.formatSymbolForExchange(symbol)
+			if pos["symbol"] == resolvedSymbol {
+				formattedSymbol := at.formatSymbolForExchange(resolvedSymbol)
 				if pos["side"] == "long" {
 					return at.trader.CloseLong(formattedSymbol, amount)
 				} else if pos["side"] == "short" {

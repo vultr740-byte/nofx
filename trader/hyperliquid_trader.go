@@ -1,14 +1,17 @@
 package trader
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,12 +21,99 @@ import (
 	"github.com/sonirico/go-hyperliquid"
 )
 
+type perpMetaResponse struct {
+	Universe []struct {
+		Name string `json:"name"`
+	} `json:"universe"`
+}
+
+// infoAPIURL 根据网络返回 Info API 地址
+func infoAPIURL(testnet bool) string {
+	if testnet {
+		return "https://api.hyperliquid-testnet.xyz/info"
+	}
+	return "https://api.hyperliquid.xyz/info"
+}
+
+// ResolveNonCryptoSymbol 使用 Info API (allPerpMetas) 为非加密资产获取带前缀的HIP-3符号
+// preferMainnet: 强制使用主网 Info API（与 /stocks 列表一致）
+func (t *HyperliquidTrader) ResolveNonCryptoSymbol(symbol string, preferMainnet bool) (string, error) {
+	base := convertSymbolToHyperliquid(strings.ToUpper(symbol))
+	// 直传冒号格式则直接返回
+	if strings.Contains(base, ":") {
+		return base, nil
+	}
+
+	mapped, err := t.resolveFromInfoAPI(base, preferMainnet)
+	if err != nil {
+		return "", err
+	}
+	return mapped, nil
+}
+
+// resolveFromInfoAPI 使用 Info API 的 allPerpMetas 兜底匹配 HIP-3 股票（与 /stocks 列表一致）
+// forceMainnet: 为非加密资产匹配时可强制使用主网 Info API（与 /stocks 保持一致）
+func (t *HyperliquidTrader) resolveFromInfoAPI(coin string, forceMainnet bool) (string, error) {
+	payload := []byte(`{"type":"allPerpMetas"}`)
+	endpoint := infoAPIURL(t.testnet)
+	if forceMainnet {
+		endpoint = infoAPIURL(false)
+	}
+
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(payload))
+	if err != nil {
+		return "", fmt.Errorf("创建 InfoAPI 请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "NOFX-Hyperliquid-Resolve")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("调用 InfoAPI 失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("读取 InfoAPI 响应失败: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("InfoAPI 返回错误状态码 %d: %s", resp.StatusCode, string(body))
+	}
+
+	var metas []perpMetaResponse
+	if err := json.Unmarshal(body, &metas); err != nil {
+		return "", fmt.Errorf("解析 InfoAPI 响应失败: %w", err)
+	}
+
+	for _, meta := range metas {
+		for _, asset := range meta.Universe {
+			name := asset.Name
+			if !strings.Contains(name, ":") {
+				continue
+			}
+			parts := strings.SplitN(name, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			if strings.EqualFold(parts[1], coin) {
+				return name, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("InfoAPI 未找到交易对: %s", coin)
+}
+
 // HyperliquidTrader Hyperliquid交易器
 type HyperliquidTrader struct {
 	exchange         *hyperliquid.Exchange
 	ctx              context.Context
 	walletAddr       string
 	meta             *hyperliquid.Meta // 缓存meta信息（包含精度等）
+	testnet          bool              // 当前是否为测试网
 	isCrossMargin    bool              // 是否为全仓模式
 	orderMu          sync.Mutex
 	stopLossOrders   map[string]orderRef // symbol -> 最近一次止损挂单
@@ -136,6 +226,7 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 		ctx:              ctx,
 		walletAddr:       walletAddr,
 		meta:             meta,
+		testnet:          testnet,
 		isCrossMargin:    true, // 默认使用全仓模式
 		stopLossOrders:   make(map[string]orderRef),
 		takeProfitOrders: make(map[string]orderRef),
@@ -1431,6 +1522,14 @@ func (t *HyperliquidTrader) resolveCoin(symbol string) (string, error) {
 		return coin, nil
 	}
 
+	// 始终优先使用 Info API 的 allPerpMetas 做HIP-3匹配（股票等非加密资产来源）
+	if coinFromInfo, err := t.resolveFromInfoAPI(coin, false); err == nil && coinFromInfo != "" {
+		log.Printf("🔄 InfoAPI 优先匹配到资产: %s (请求符号: %s)", coinFromInfo, symbol)
+		return coinFromInfo, nil
+	} else if err != nil {
+		log.Printf("⚠️ InfoAPI 优先匹配失败: %v", err)
+	}
+
 	// 查询所有mid价格以获取有效交易对列表
 	allMids, err := t.exchange.Info().AllMids(t.ctx)
 	if err != nil {
@@ -1501,6 +1600,14 @@ func (t *HyperliquidTrader) resolveCoin(symbol string) (string, error) {
 		} else if err != nil {
 			log.Printf("⚠️ 刷新Meta失败: %v", err)
 		}
+	}
+
+	// 使用 Info API 直接拉取 allPerpMetas 兜底（与 /stocks 列表一致，支持 HIP-3 股票）
+	if coinFromInfo, err := t.resolveFromInfoAPI(coin, false); err == nil && coinFromInfo != "" {
+		log.Printf("🔄 InfoAPI 匹配到HIP-3股票: %s (请求符号: %s)", coinFromInfo, symbol)
+		return coinFromInfo, nil
+	} else if err != nil {
+		log.Printf("⚠️ InfoAPI 匹配失败: %v", err)
 	}
 
 	return "", fmt.Errorf("未找到交易对: %s", symbol)
