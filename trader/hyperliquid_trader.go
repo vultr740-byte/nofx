@@ -27,6 +27,17 @@ type perpMetaResponse struct {
 	} `json:"universe"`
 }
 
+// normalizeHip3Symbol 确保HIP-3符号前缀小写、后缀大写（如 xyz:TSLA）
+func normalizeHip3Symbol(symbol string) string {
+	if !strings.Contains(symbol, ":") {
+		return symbol
+	}
+	parts := strings.SplitN(symbol, ":", 2)
+	prefix := strings.ToLower(strings.TrimSpace(parts[0]))
+	suffix := strings.ToUpper(strings.TrimSpace(parts[1]))
+	return prefix + ":" + suffix
+}
+
 // infoAPIURL 根据网络返回 Info API 地址
 func infoAPIURL(testnet bool) string {
 	if testnet {
@@ -37,6 +48,7 @@ func infoAPIURL(testnet bool) string {
 
 // fetchPriceFromInfoAPI 调用 Info API allMids 获取价格（用于AllMids缺失时兜底）
 func (t *HyperliquidTrader) fetchPriceFromInfoAPI(coin string) (float64, error) {
+	coin = normalizeHip3Symbol(coin)
 	payload := []byte(`{"type":"allMids"}`)
 	req, err := http.NewRequest("POST", infoAPIURL(t.testnet), bytes.NewBuffer(payload))
 	if err != nil {
@@ -78,6 +90,7 @@ func (t *HyperliquidTrader) fetchPriceFromInfoAPI(coin string) (float64, error) 
 
 // fetchPriceFromRecentTrades 调用 Info API recentTrades 获取最新成交价（用于HIP-3等特殊资产）
 func (t *HyperliquidTrader) fetchPriceFromRecentTrades(coin string) (float64, error) {
+	coin = normalizeHip3Symbol(coin)
 	payload := []byte(fmt.Sprintf(`{"type":"recentTrades","coin":%q}`, coin))
 	req, err := http.NewRequest("POST", infoAPIURL(t.testnet), bytes.NewBuffer(payload))
 	if err != nil {
@@ -144,14 +157,14 @@ func (t *HyperliquidTrader) ResolveNonCryptoSymbol(symbol string, preferMainnet 
 	base := convertSymbolToHyperliquid(strings.ToUpper(symbol))
 	// 直传冒号格式则直接返回
 	if strings.Contains(base, ":") {
-		return base, nil
+		return normalizeHip3Symbol(base), nil
 	}
 
 	mapped, err := t.resolveFromInfoAPI(base, preferMainnet)
 	if err != nil {
 		return "", err
 	}
-	return mapped, nil
+	return normalizeHip3Symbol(mapped), nil
 }
 
 // resolveFromInfoAPI 使用 Info API 的 allPerpMetas 兜底匹配 HIP-3 股票（与 /stocks 列表一致）
@@ -203,7 +216,7 @@ func (t *HyperliquidTrader) resolveFromInfoAPI(coin string, forceMainnet bool) (
 				continue
 			}
 			if strings.EqualFold(parts[1], coin) {
-				return name, nil
+				return normalizeHip3Symbol(name), nil
 			}
 		}
 	}

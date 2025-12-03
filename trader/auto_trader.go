@@ -2432,7 +2432,7 @@ func normalizeSymbol(symbol string) string {
 func (at *AutoTrader) formatSymbolForExchange(symbol string) string {
 	// Hyperliquid: 保持 HIP-3 前缀原样（前缀小写 + 冒号）
 	if at.exchange == "hyperliquid" && strings.Contains(symbol, ":") {
-		return strings.TrimSpace(symbol)
+		return strings.TrimSpace(normalizeHip3Symbol(symbol))
 	}
 
 	symbol = normalizeSymbol(symbol)
