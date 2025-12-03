@@ -275,16 +275,27 @@ func (ttm *TelegramTraderManager) StartTrader(telegramID int64) error {
 		}
 	}
 
-	// 3. 获取或创建TG交易员实例
+	// 3. 强制从数据库重新加载交易员配置，确保获取最新的API密钥
+	log.Printf("🔄 重新加载TG交易员配置以确保最新API密钥: %s", trader.ID)
+	database, ok := ttm.db.(*config.Database)
+	if !ok {
+		return fmt.Errorf("数据库类型不支持")
+	}
+	if err := ttm.traderMgr.LoadTGTradersFromDatabase(database, ttm.testnet); err != nil {
+		log.Printf("⚠️ 加载TG交易员配置失败: %v", err)
+		// 继续执行，可能是首次加载
+	}
+
+	// 4. 获取或创建TG交易员实例
 	traderObj, err := ttm.GetTgTrader(trader.ID)
 	if err != nil {
 		return fmt.Errorf("获取TG交易员实例失败: %w", err)
 	}
 
-	// 4. 确保TelegramBotManager已设置
+	// 5. 确保TelegramBotManager已设置
 	ttm.setupTelegramBotManagerForTrader(traderObj)
 
-	// 5. 启动交易员（同步等待启动成功）
+	// 6. 启动交易员（同步等待启动成功）
 	startCh := make(chan error, 1)
 	go func() {
 		if err := traderObj.Run(); err != nil {
