@@ -774,31 +774,58 @@ func (t *HyperliquidTrader) SetLeverage(symbol string, leverage int) error {
 
 // OpenLong 开多仓
 func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+	// 📋 [订单执行流程] 开多仓流程开始
+	log.Printf("🚀 [订单执行流程] ===== 开多仓执行流程开始 =====")
+	log.Printf("🚀 [订单执行流程] 输入参数:")
+	log.Printf("🚀 [订单执行流程] symbol: %s", symbol)
+	log.Printf("🚀 [订单执行流程] quantity: %.8f", quantity)
+	log.Printf("🚀 [订单执行流程] leverage: %d", leverage)
+	log.Printf("🚀 [订单执行流程] 开始时间: %s", time.Now().Format("2006-01-02 15:04:05.000"))
+
 	// 先取消该币种的所有委托单
+	log.Printf("📋 [订单执行流程] 步骤1: 取消旧委托单")
 	if err := t.CancelAllOrders(symbol); err != nil {
 		log.Printf("  ⚠ 取消旧委托单失败: %v", err)
+	} else {
+		log.Printf("✅ [订单执行流程] 步骤1完成: 旧委托单已取消")
 	}
 
 	// 设置杠杆
+	log.Printf("📋 [订单执行流程] 步骤2: 设置杠杆")
 	if err := t.SetLeverage(symbol, leverage); err != nil {
+		log.Printf("❌ [订单执行流程] 步骤2失败: 杠杆设置失败: %v", err)
 		return nil, err
+	} else {
+		log.Printf("✅ [订单执行流程] 步骤2完成: 杠杆已设置为 %dx", leverage)
 	}
 
 	// Hyperliquid symbol格式
+	log.Printf("📋 [订单执行流程] 步骤3: 解析币种符号")
 	coin, err := t.resolveCoin(symbol)
 	if err != nil {
+		log.Printf("❌ [订单执行流程] 步骤3失败: 币种解析失败: %v", err)
 		return nil, err
+	} else {
+		log.Printf("✅ [订单执行流程] 步骤3完成: 币种符号已解析为 %s", coin)
 	}
 
 	// 获取当前价格（用于市价单）
+	log.Printf("📋 [订单执行流程] 步骤4: 获取市场价格")
 	price, err := t.GetMarketPrice(symbol)
 	if err != nil {
+		log.Printf("❌ [订单执行流程] 步骤4失败: 获取市场价格失败: %v", err)
 		return nil, err
+	} else {
+		log.Printf("✅ [订单执行流程] 步骤4完成: 市场价格获取成功 %.8f", price)
 	}
+
+	// 获取API精度信息
+	szDecimals := t.getSzDecimals(coin)
+	pxDecimals, hasPxDecimals := t.getPxDecimals(coin)
 
 	// ⚠️ 关键：根据币种精度要求，四舍五入数量
 	roundedQuantity := t.roundToSzDecimals(coin, quantity)
-	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
+	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, szDecimals)
 
 	// ⚠️ 关键：价格精度处理（优先使用pxDecimals，按要求截断到步长）
 	var aggressivePrice float64
@@ -822,6 +849,38 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 		return nil, fmt.Errorf("价格验证失败: %w", err)
 	}
 
+	// 📋 [订单参数完整打印] 开多仓订单构建参数详细记录
+	log.Printf("🔍 [完整订单参数] ===== 开多仓订单参数详情 =====")
+	log.Printf("🔍 [完整订单参数] 基础信息:")
+	log.Printf("  symbol: %s", symbol)
+	log.Printf("  coin: %s", coin)
+	log.Printf("  side: BUY")
+	log.Printf("  orderType: LIMIT")
+	log.Printf("  timeInForce: IOC")
+	log.Printf("")
+	log.Printf("🔍 [完整订单参数] 价格信息:")
+	log.Printf("  marketPrice: %.8f", price)
+	log.Printf("  priceMultiplier: %.3f", priceMultiplier)
+	log.Printf("  calculatedPrice: %.8f", price*priceMultiplier)
+	log.Printf("  aggressivePrice: %.8f", aggressivePrice)
+	log.Printf("  validatedPrice: %.8f", validatedPrice)
+	log.Printf("")
+	log.Printf("🔍 [完整订单参数] 数量信息:")
+	log.Printf("  originalQuantity: %.8f", quantity)
+	log.Printf("  roundedQuantity: %.8f", roundedQuantity)
+	log.Printf("")
+	log.Printf("🔍 [完整订单参数] 精度信息:")
+	log.Printf("  szDecimals: %d", szDecimals)
+	log.Printf("  pxDecimals: %d", pxDecimals)
+	log.Printf("  hasPxDecimals: %t", hasPxDecimals)
+	log.Printf("")
+	log.Printf("🔍 [完整订单参数] 资产信息:")
+	log.Printf("  isStockAsset: %t", t.isStockAsset(coin))
+	log.Printf("  leverage: %d", leverage)
+	log.Printf("")
+	log.Printf("🔍 [完整订单参数] 账户信息: (信息通过外部API获取)")
+	log.Printf("🔍 [完整订单参数] ================================")
+
 	// 创建市价买入订单（使用IOC limit order with aggressive price）
 	order := hyperliquid.CreateOrderRequest{
 		Coin:  coin,
@@ -836,6 +895,21 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 		ReduceOnly: false,
 	}
 
+	// 📋 [订单结构完整打印] 最终订单结构详情
+	log.Printf("🔍 [订单结构] ===== 最终订单结构详情 =====")
+	log.Printf("🔍 [订单结构] order.Coin: %s", order.Coin)
+	log.Printf("🔍 [订单结构] order.IsBuy: %t", order.IsBuy)
+	log.Printf("🔍 [订单结构] order.Size: %.8f", order.Size)
+	log.Printf("🔍 [订单结构] order.Price: %.8f", order.Price)
+	log.Printf("🔍 [订单结构] order.OrderType.Limit.Tif: %s", string(order.OrderType.Limit.Tif))
+	log.Printf("🔍 [订单结构] order.ReduceOnly: %t", order.ReduceOnly)
+	log.Printf("🔍 [订单结构] ================================")
+
+	// 📋 [API调用] 记录API调用开始时间
+	apiCallStart := time.Now()
+	log.Printf("🚀 [API调用] 开始执行订单API调用...")
+	log.Printf("🚀 [API调用] 调用时间: %s", apiCallStart.Format("2006-01-02 15:04:05.000"))
+
 	// ✅ 使用带重试机制的价格执行
 	if t.isStockAsset(coin) {
 		log.Printf("🔄 [HIP-3] 股票资产使用重试机制: %s", coin)
@@ -845,11 +919,31 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 		_, err = t.exchange.Order(t.ctx, order, nil)
 	}
 
+	// 📋 [API调用] 记录API调用结束时间和结果
+	apiCallEnd := time.Now()
+	apiCallDuration := apiCallEnd.Sub(apiCallStart)
+	log.Printf("🏁 [API调用] API调用完成")
+	log.Printf("🏁 [API调用] 结束时间: %s", apiCallEnd.Format("2006-01-02 15:04:05.000"))
+	log.Printf("🏁 [API调用] 耗时: %v", apiCallDuration)
+	log.Printf("🏁 [API调用] 结果: %s", map[bool]string{true: "成功", false: "失败"}[err == nil])
+
 	if err != nil {
+		log.Printf("❌ [API调用] 失败原因: %v", err)
+		log.Printf("❌ [订单执行流程] 最终步骤失败: API调用失败")
+		log.Printf("🚀 [订单执行流程] ===== 开多仓执行流程失败 =====")
 		return nil, fmt.Errorf("开多仓失败: %w", err)
 	}
 
 	log.Printf("✓ 开多仓成功: %s 数量: %.4f", symbol, roundedQuantity)
+
+	// 📋 [订单执行流程] 开多仓流程成功完成
+	log.Printf("🏁 [订单执行流程] 步骤6: 订单执行成功")
+	log.Printf("🏁 [订单执行流程] 成交信息:")
+	log.Printf("🏁 [订单执行流程] symbol: %s", symbol)
+	log.Printf("🏁 [订单执行流程] quantity: %.4f", roundedQuantity)
+	log.Printf("🏁 [订单执行流程] 成交价格: %.8f", order.Price)
+	log.Printf("🏁 [订单执行流程] 结束时间: %s", time.Now().Format("2006-01-02 15:04:05.000"))
+	log.Printf("🏁 [订单执行流程] ===== 开多仓执行流程成功完成 =====")
 
 	result := make(map[string]interface{})
 	result["orderId"] = 0 // Hyperliquid没有返回order ID
@@ -861,31 +955,58 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 
 // OpenShort 开空仓
 func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+	// 📋 [订单执行流程] 开空仓流程开始
+	log.Printf("🚀 [订单执行流程] ===== 开空仓执行流程开始 =====")
+	log.Printf("🚀 [订单执行流程] 输入参数:")
+	log.Printf("🚀 [订单执行流程] symbol: %s", symbol)
+	log.Printf("🚀 [订单执行流程] quantity: %.8f", quantity)
+	log.Printf("🚀 [订单执行流程] leverage: %d", leverage)
+	log.Printf("🚀 [订单执行流程] 开始时间: %s", time.Now().Format("2006-01-02 15:04:05.000"))
+
 	// 先取消该币种的所有委托单
+	log.Printf("📋 [订单执行流程] 步骤1: 取消旧委托单")
 	if err := t.CancelAllOrders(symbol); err != nil {
 		log.Printf("  ⚠ 取消旧委托单失败: %v", err)
+	} else {
+		log.Printf("✅ [订单执行流程] 步骤1完成: 旧委托单已取消")
 	}
 
 	// 设置杠杆
+	log.Printf("📋 [订单执行流程] 步骤2: 设置杠杆")
 	if err := t.SetLeverage(symbol, leverage); err != nil {
+		log.Printf("❌ [订单执行流程] 步骤2失败: 杠杆设置失败: %v", err)
 		return nil, err
+	} else {
+		log.Printf("✅ [订单执行流程] 步骤2完成: 杠杆已设置为 %dx", leverage)
 	}
 
 	// Hyperliquid symbol格式
+	log.Printf("📋 [订单执行流程] 步骤3: 解析币种符号")
 	coin, err := t.resolveCoin(symbol)
 	if err != nil {
+		log.Printf("❌ [订单执行流程] 步骤3失败: 币种解析失败: %v", err)
 		return nil, err
+	} else {
+		log.Printf("✅ [订单执行流程] 步骤3完成: 币种符号已解析为 %s", coin)
 	}
 
 	// 获取当前价格
+	log.Printf("📋 [订单执行流程] 步骤4: 获取市场价格")
 	price, err := t.GetMarketPrice(symbol)
 	if err != nil {
+		log.Printf("❌ [订单执行流程] 步骤4失败: 获取市场价格失败: %v", err)
 		return nil, err
+	} else {
+		log.Printf("✅ [订单执行流程] 步骤4完成: 市场价格获取成功 %.8f", price)
 	}
+
+	// 获取API精度信息
+	szDecimals := t.getSzDecimals(coin)
+	pxDecimals, hasPxDecimals := t.getPxDecimals(coin)
 
 	// ⚠️ 关键：根据币种精度要求，四舍五入数量
 	roundedQuantity := t.roundToSzDecimals(coin, quantity)
-	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
+	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, szDecimals)
 
 	// ⚠️ 关键：价格精度处理
 	var aggressivePrice float64
@@ -909,6 +1030,38 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 		return nil, fmt.Errorf("价格验证失败: %w", err)
 	}
 
+	// 📋 [订单参数完整打印] 开空仓订单构建参数详细记录
+	log.Printf("🔍 [完整订单参数] ===== 开空仓订单参数详情 =====")
+	log.Printf("🔍 [完整订单参数] 基础信息:")
+	log.Printf("  symbol: %s", symbol)
+	log.Printf("  coin: %s", coin)
+	log.Printf("  side: SELL")
+	log.Printf("  orderType: LIMIT")
+	log.Printf("  timeInForce: IOC")
+	log.Printf("")
+	log.Printf("🔍 [完整订单参数] 价格信息:")
+	log.Printf("  marketPrice: %.8f", price)
+	log.Printf("  priceMultiplier: %.3f", priceMultiplier)
+	log.Printf("  calculatedPrice: %.8f", price*priceMultiplier)
+	log.Printf("  aggressivePrice: %.8f", aggressivePrice)
+	log.Printf("  validatedPrice: %.8f", validatedPrice)
+	log.Printf("")
+	log.Printf("🔍 [完整订单参数] 数量信息:")
+	log.Printf("  originalQuantity: %.8f", quantity)
+	log.Printf("  roundedQuantity: %.8f", roundedQuantity)
+	log.Printf("")
+	log.Printf("🔍 [完整订单参数] 精度信息:")
+	log.Printf("  szDecimals: %d", szDecimals)
+	log.Printf("  pxDecimals: %d", pxDecimals)
+	log.Printf("  hasPxDecimals: %t", hasPxDecimals)
+	log.Printf("")
+	log.Printf("🔍 [完整订单参数] 资产信息:")
+	log.Printf("  isStockAsset: %t", t.isStockAsset(coin))
+	log.Printf("  leverage: %d", leverage)
+	log.Printf("")
+	log.Printf("🔍 [完整订单参数] 账户信息: (信息通过外部API获取)")
+	log.Printf("🔍 [完整订单参数] ================================")
+
 	// 创建市价卖出订单
 	order := hyperliquid.CreateOrderRequest{
 		Coin:  coin,
@@ -923,6 +1076,21 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 		ReduceOnly: false,
 	}
 
+	// 📋 [订单结构完整打印] 最终订单结构详情
+	log.Printf("🔍 [订单结构] ===== 最终订单结构详情 =====")
+	log.Printf("🔍 [订单结构] order.Coin: %s", order.Coin)
+	log.Printf("🔍 [订单结构] order.IsBuy: %t", order.IsBuy)
+	log.Printf("🔍 [订单结构] order.Size: %.8f", order.Size)
+	log.Printf("🔍 [订单结构] order.Price: %.8f", order.Price)
+	log.Printf("🔍 [订单结构] order.OrderType.Limit.Tif: %s", string(order.OrderType.Limit.Tif))
+	log.Printf("🔍 [订单结构] order.ReduceOnly: %t", order.ReduceOnly)
+	log.Printf("🔍 [订单结构] ================================")
+
+	// 📋 [API调用] 记录API调用开始时间
+	apiCallStart := time.Now()
+	log.Printf("🚀 [API调用] 开始执行订单API调用...")
+	log.Printf("🚀 [API调用] 调用时间: %s", apiCallStart.Format("2006-01-02 15:04:05.000"))
+
 	// ✅ 使用带重试机制的价格执行
 	if t.isStockAsset(coin) {
 		log.Printf("🔄 [HIP-3] 股票资产使用重试机制: %s", coin)
@@ -932,11 +1100,31 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 		_, err = t.exchange.Order(t.ctx, order, nil)
 	}
 
+	// 📋 [API调用] 记录API调用结束时间和结果
+	apiCallEnd := time.Now()
+	apiCallDuration := apiCallEnd.Sub(apiCallStart)
+	log.Printf("🏁 [API调用] API调用完成")
+	log.Printf("🏁 [API调用] 结束时间: %s", apiCallEnd.Format("2006-01-02 15:04:05.000"))
+	log.Printf("🏁 [API调用] 耗时: %v", apiCallDuration)
+	log.Printf("🏁 [API调用] 结果: %s", map[bool]string{true: "成功", false: "失败"}[err == nil])
+
 	if err != nil {
+		log.Printf("❌ [API调用] 失败原因: %v", err)
+		log.Printf("❌ [订单执行流程] 最终步骤失败: API调用失败")
+		log.Printf("🚀 [订单执行流程] ===== 开空仓执行流程失败 =====")
 		return nil, fmt.Errorf("开空仓失败: %w", err)
 	}
 
 	log.Printf("✓ 开空仓成功: %s 数量: %.4f", symbol, roundedQuantity)
+
+	// 📋 [订单执行流程] 开空仓流程成功完成
+	log.Printf("🏁 [订单执行流程] 步骤6: 订单执行成功")
+	log.Printf("🏁 [订单执行流程] 成交信息:")
+	log.Printf("🏁 [订单执行流程] symbol: %s", symbol)
+	log.Printf("🏁 [订单执行流程] quantity: %.4f", roundedQuantity)
+	log.Printf("🏁 [订单执行流程] 成交价格: %.8f", order.Price)
+	log.Printf("🏁 [订单执行流程] 结束时间: %s", time.Now().Format("2006-01-02 15:04:05.000"))
+	log.Printf("🏁 [订单执行流程] ===== 开空仓执行流程成功完成 =====")
 
 	result := make(map[string]interface{})
 	result["orderId"] = 0
@@ -1919,17 +2107,60 @@ func (t *HyperliquidTrader) validatePriceStep(coin string, price float64) (float
 
 // executeOrderWithRetry 执行带重试机制的订单（针对股票价格验证失败）
 func (t *HyperliquidTrader) executeOrderWithRetry(order *hyperliquid.CreateOrderRequest, maxRetries int) error {
+	// 📋 [重试参数完整打印] 重试机制启动时记录完整参数
+	log.Printf("🔄 [重试参数] ===== executeOrderWithRetry 启动参数 =====")
+	log.Printf("🔄 [重试参数] order.Coin: %s", order.Coin)
+	log.Printf("🔄 [重试参数] order.IsBuy: %t", order.IsBuy)
+	log.Printf("🔄 [重试参数] order.Size: %.8f", order.Size)
+	log.Printf("🔄 [重试参数] order.Price: %.8f", order.Price)
+	log.Printf("🔄 [重试参数] order.OrderType.Limit.Tif: %s", string(order.OrderType.Limit.Tif))
+	log.Printf("🔄 [重试参数] order.ReduceOnly: %t", order.ReduceOnly)
+	log.Printf("🔄 [重试参数] maxRetries: %d", maxRetries)
+	log.Printf("🔄 [重试参数] isStockAsset: %t", t.isStockAsset(order.Coin))
+	log.Printf("🔄 [重试参数] szDecimals: %d", t.getSzDecimals(order.Coin))
+	pxDecimals, hasPxDecimals := t.getPxDecimals(order.Coin)
+	log.Printf("🔄 [重试参数] pxDecimals: %d", pxDecimals)
+	log.Printf("🔄 [重试参数] hasPxDecimals: %t", hasPxDecimals)
+	log.Printf("🔄 [重试参数] 重试开始时间: %s", time.Now().Format("2006-01-02 15:04:05.000"))
+	log.Printf("🔄 [重试参数] =======================================")
+
 	for attempt := 0; attempt < maxRetries; attempt++ {
+		// 📋 [重试详情] 每次重试的详细信息
+		log.Printf("🔄 [重试详情] ===== 第 %d 次重试开始 =====", attempt+1)
+		log.Printf("🔄 [重试详情] attempt: %d/%d", attempt+1, maxRetries)
+		log.Printf("🔄 [重试详情] 当前价格: %.8f", order.Price)
+		log.Printf("🔄 [重试详情] 订单方向: %s", map[bool]string{true: "BUY", false: "SELL"}[order.IsBuy])
+		log.Printf("🔄 [重试详情] 重试时间: %s", time.Now().Format("2006-01-02 15:04:05.000"))
+
 		if attempt > 0 {
-			log.Printf("🔄 [HIP-3] 订单重试第 %d 次: %s 价格=%.8f", attempt+1, order.Coin, order.Price)
+			log.Printf("🔄 [重试详情] 订单重试第 %d 次: %s 价格=%.8f", attempt+1, order.Coin, order.Price)
 		}
+
+		// 📋 [API调用] 重试中的API调用
+		apiCallStart := time.Now()
+		log.Printf("🚀 [重试API] 第 %d 次API调用开始...", attempt+1)
+		log.Printf("🚀 [重试API] 调用时间: %s", apiCallStart.Format("2006-01-02 15:04:05.000"))
 
 		// 执行订单
 		_, err := t.exchange.Order(t.ctx, *order, nil)
+
+		apiCallEnd := time.Now()
+		apiCallDuration := apiCallEnd.Sub(apiCallStart)
+		log.Printf("🏁 [重试API] 第 %d 次API调用完成", attempt+1)
+		log.Printf("🏁 [重试API] 耗时: %v", apiCallDuration)
+
 		if err == nil {
-			log.Printf("✅ [HIP-3] 订单执行成功: %s @ %.8f (尝试次数: %d)", order.Coin, order.Price, attempt+1)
+			log.Printf("✅ [重试成功] 订单执行成功: %s @ %.8f (尝试次数: %d)", order.Coin, order.Price, attempt+1)
+			log.Printf("✅ [重试成功] 总重试次数: %d", attempt+1)
+			log.Printf("✅ [重试成功] 最终成交价格: %.8f", order.Price)
+			log.Printf("🔄 [重试详情] ===== 第 %d 次重试成功 =====", attempt+1)
 			return nil // 成功
 		}
+
+		// 📋 [错误分析] 详细的错误分析
+		log.Printf("❌ [重试失败] 第 %d 次重试失败", attempt+1)
+		log.Printf("❌ [重试失败] 失败原因: %v", err)
+		log.Printf("❌ [重试失败] 失败时间: %s", time.Now().Format("2006-01-02 15:04:05.000"))
 
 		// 检查是否是价格相关错误且是股票资产
 		errStr := strings.ToLower(err.Error())
@@ -1937,26 +2168,53 @@ func (t *HyperliquidTrader) executeOrderWithRetry(order *hyperliquid.CreateOrder
 			strings.Contains(errStr, "price precision") ||
 			strings.Contains(errStr, "price step")
 
+		log.Printf("🔍 [错误分析] 错误类型分析:")
+		log.Printf("🔍 [错误分析] isPriceError: %t", isPriceError)
+		log.Printf("🔍 [错误分析] isStockAsset: %t", t.isStockAsset(order.Coin))
+		log.Printf("🔍 [错误分析] canRetry: %t", isPriceError && t.isStockAsset(order.Coin) && attempt < maxRetries-1)
+		log.Printf("🔍 [错误分析] 当前重试次数: %d/%d", attempt+1, maxRetries)
+
 		if isPriceError && t.isStockAsset(order.Coin) && attempt < maxRetries-1 {
-			log.Printf("⚠️ [HIP-3] 股票价格错误，尝试调整价格重试: %v", err)
+			log.Printf("⚠️ [价格调整] 股票价格错误，尝试调整价格重试: %v", err)
+
+			// 记录价格调整前的状态
+			oldPrice := order.Price
+			log.Printf("🔧 [价格调整] 调整前价格: %.8f", oldPrice)
 
 			// 调整价格（增加更保守的偏差）
 			newPrice := t.adjustPriceForRetry(order.Price, attempt+1, order.IsBuy)
+
+			log.Printf("🔧 [价格调整] 价格调整详情:")
+			log.Printf("🔧 [价格调整] oldPrice: %.8f", oldPrice)
+			log.Printf("🔧 [价格调整] newPrice: %.8f", newPrice)
+			log.Printf("🔧 [价格调整] attempt: %d", attempt+1)
+			log.Printf("🔧 [价格调整] isBuy: %t", order.IsBuy)
+			log.Printf("🔧 [价格调整] priceChanged: %t", newPrice != oldPrice)
+
 			if newPrice != order.Price {
 				order.Price = newPrice
-				log.Printf("🔧 [HIP-3] 价格调整: %.8f -> %.8f", order.Price, newPrice)
+				log.Printf("🔧 [价格调整] 价格已更新: %.8f -> %.8f", oldPrice, newPrice)
+				log.Printf("🔄 [重试详情] ===== 第 %d 次重试结束，准备第 %d 次重试 =====", attempt+1, attempt+2)
 				continue // 重试
 			} else {
-				log.Printf("❌ [HIP-3] 无法进一步调整价格，返回错误")
+				log.Printf("❌ [价格调整] 无法进一步调整价格，返回错误")
+				log.Printf("❌ [价格调整] 调整失败原因: newPrice等于oldPrice")
+				log.Printf("🔄 [重试详情] ===== 第 %d 次重试失败，无法继续 =====", attempt+1)
 				break
 			}
 		}
 
 		// 非价格错误或已达到最大重试次数
-		log.Printf("❌ [HIP-3] 订单执行失败: %v", err)
+		log.Printf("❌ [重试终止] 订单执行失败: %v", err)
+		log.Printf("❌ [重试终止] 失败原因: 非价格错误或已达到最大重试次数")
+		log.Printf("❌ [重试终止] 总重试次数: %d/%d", attempt+1, maxRetries)
+		log.Printf("🔄 [重试详情] ===== 重试机制失败终止 =====")
 		return err
 	}
 
+	log.Printf("❌ [重试耗尽] 所有重试尝试均失败")
+	log.Printf("❌ [重试耗尽] 最大重试次数: %d", maxRetries)
+	log.Printf("❌ [重试耗尽] 最终错误: order failed after %d attempts", maxRetries)
 	return fmt.Errorf("order failed after %d attempts", maxRetries)
 }
 
