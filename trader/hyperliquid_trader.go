@@ -76,6 +76,68 @@ func (t *HyperliquidTrader) fetchPriceFromInfoAPI(coin string) (float64, error) 
 	return 0, fmt.Errorf("allMids 未找到价格: %s", coin)
 }
 
+// fetchPriceFromRecentTrades 调用 Info API recentTrades 获取最新成交价（用于HIP-3等特殊资产）
+func (t *HyperliquidTrader) fetchPriceFromRecentTrades(coin string) (float64, error) {
+	payload := []byte(fmt.Sprintf(`{"type":"recentTrades","coin":%q}`, coin))
+	req, err := http.NewRequest("POST", infoAPIURL(t.testnet), bytes.NewBuffer(payload))
+	if err != nil {
+		return 0, fmt.Errorf("创建 recentTrades 请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "NOFX-Hyperliquid-RecentTrades")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("调用 recentTrades 失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("读取 recentTrades 响应失败: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("recentTrades 返回状态码 %d: %s", resp.StatusCode, string(body))
+	}
+
+	// 响应为数组，元素字段可能是 px 或 price
+	var trades []map[string]interface{}
+	if err := json.Unmarshal(body, &trades); err != nil {
+		return 0, fmt.Errorf("解析 recentTrades 响应失败: %w", err)
+	}
+	if len(trades) == 0 {
+		return 0, fmt.Errorf("recentTrades 返回空结果")
+	}
+
+	// 尝试解析 px 或 price
+	parsePrice := func(v interface{}) (float64, bool) {
+		switch val := v.(type) {
+		case string:
+			if f, err := strconv.ParseFloat(val, 64); err == nil {
+				return f, true
+			}
+		case float64:
+			return val, true
+		}
+		return 0, false
+	}
+
+	if f, ok := parsePrice(trades[0]["px"]); ok {
+		return f, nil
+	}
+	if f, ok := parsePrice(trades[0]["price"]); ok {
+		return f, nil
+	}
+
+	// 部分节点返回 pricePx
+	if f, ok := parsePrice(trades[0]["pricePx"]); ok {
+		return f, nil
+	}
+
+	return 0, fmt.Errorf("recentTrades 未找到价格字段")
+}
+
 // ResolveNonCryptoSymbol 使用 Info API (allPerpMetas) 为非加密资产获取带前缀的HIP-3符号
 // preferMainnet: 强制使用主网 Info API（与 /stocks 列表一致）
 func (t *HyperliquidTrader) ResolveNonCryptoSymbol(symbol string, preferMainnet bool) (string, error) {
@@ -129,6 +191,7 @@ func (t *HyperliquidTrader) resolveFromInfoAPI(coin string, forceMainnet bool) (
 		return "", fmt.Errorf("解析 InfoAPI 响应失败: %w", err)
 	}
 
+	// 优先按主网数据匹配，确保和 /stocks 一致
 	for _, meta := range metas {
 		for _, asset := range meta.Universe {
 			name := asset.Name
@@ -146,6 +209,11 @@ func (t *HyperliquidTrader) resolveFromInfoAPI(coin string, forceMainnet bool) (
 	}
 
 	return "", fmt.Errorf("InfoAPI 未找到交易对: %s", coin)
+}
+
+// GetRecentTradePrice 使用 recentTrades 接口获取最新成交价（适用于 HIP-3 股票等非加密资产）
+func (t *HyperliquidTrader) GetRecentTradePrice(coin string) (float64, error) {
+	return t.fetchPriceFromRecentTrades(coin)
 }
 
 // HyperliquidTrader Hyperliquid交易器
@@ -1363,6 +1431,14 @@ func (t *HyperliquidTrader) GetMarketPrice(symbol string) (float64, error) {
 		return priceFloat, nil
 	} else {
 		log.Printf("⚠️ InfoAPI allMids 获取价格失败: %v", err)
+	}
+
+	// 使用 recentTrades 兜底获取最新成交价
+	if priceFloat, err := t.fetchPriceFromRecentTrades(coin); err == nil {
+		log.Printf("🔄 使用 recentTrades 获取价格成功: %s = %.6f", coin, priceFloat)
+		return priceFloat, nil
+	} else {
+		log.Printf("⚠️ recentTrades 获取价格失败: %v", err)
 	}
 
 	return 0, fmt.Errorf("未找到 %s 的价格", coin)

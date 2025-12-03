@@ -2635,7 +2635,17 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 			return nil, fmt.Errorf("开仓金额必须大于0")
 		}
 		var price float64
-		price, err = at.trader.GetMarketPrice(resolvedSymbol)
+		// 非加密资产在 Hyperliquid 上使用 recentTrades 获取价格
+		if assetType != "" && assetType != "crypto" && at.config.Exchange == "hyperliquid" {
+			if ht, ok := at.trader.(*HyperliquidTrader); ok {
+				price, err = ht.GetRecentTradePrice(resolvedSymbol)
+			} else {
+				price, err = at.trader.GetMarketPrice(resolvedSymbol)
+			}
+		} else {
+			price, err = at.trader.GetMarketPrice(resolvedSymbol)
+		}
+
 		if err != nil {
 			return nil, fmt.Errorf("获取价格失败: %w", err)
 		}
