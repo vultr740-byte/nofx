@@ -2430,6 +2430,11 @@ func normalizeSymbol(symbol string) string {
 
 // formatSymbolForExchange 根据交易所格式化符号
 func (at *AutoTrader) formatSymbolForExchange(symbol string) string {
+	// Hyperliquid: 保持 HIP-3 前缀原样（前缀小写 + 冒号）
+	if at.exchange == "hyperliquid" && strings.Contains(symbol, ":") {
+		return strings.TrimSpace(symbol)
+	}
+
 	symbol = normalizeSymbol(symbol)
 
 	// Binance需要USDT后缀
