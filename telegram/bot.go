@@ -2217,6 +2217,11 @@ func (tbm *TelegramBotManager) handleNaturalLanguageCommand(update tgbotapi.Upda
 	cmd, err := tbm.nlParser.ParseCommand(message)
 	if err != nil {
 		log.Printf("❌ 解析失败: %v", err)
+		// 对AI调用失败给出友好提示，避免用户看到HTML/报错原文
+		if strings.Contains(err.Error(), "AI 调用失败") || strings.Contains(err.Error(), "API返回错误") {
+			tbm.sendMessage(chatID, "⚠️ AI 解析服务暂时不可用或超时，请稍后重试或更换模型。")
+			return true
+		}
 		return false
 	}
 

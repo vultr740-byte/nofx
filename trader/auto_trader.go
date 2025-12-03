@@ -3,6 +3,7 @@ package trader
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
 	"math"
 	"nofx/config"
@@ -11,6 +12,7 @@ import (
 	"nofx/market"
 	"nofx/mcp"
 	"nofx/pool"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,6 +53,39 @@ func decodeUnicodeEscapes(text string) string {
 	}
 
 	return safe.String()
+}
+
+// sanitizeErrorMessage 清理错误信息，避免HTML/控制字符污染Telegram推送
+func sanitizeErrorMessage(errMsg string) string {
+	if errMsg == "" {
+		return ""
+	}
+
+	msg := html.UnescapeString(errMsg)
+
+	// 移除HTML标签/DOCTYPE等
+	tagStripper := regexp.MustCompile(`(?s)<[^>]+>`)
+	msg = tagStripper.ReplaceAllString(msg, " ")
+
+	// 去除控制字符，保留常见可见字符
+	controlStripper := regexp.MustCompile(`[\x00-\x08\x0B\x0C\x0E-\x1F]`)
+	msg = controlStripper.ReplaceAllString(msg, " ")
+
+	// 压缩空白
+	msg = strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(msg, " "))
+
+	// 提示友好的超时描述
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "status 504") || strings.Contains(lower, "gateway timeout") {
+		msg = "AI 服务超时 (HTTP 504)，请稍后重试或更换模型/网络。详情: " + msg
+	}
+
+	// 限长，避免推送过长HTML正文
+	if len(msg) > 400 {
+		msg = msg[:397] + "..."
+	}
+
+	return msg
 }
 
 // AutoTraderConfig 自动交易配置（简化版 - AI全权决策）
@@ -610,24 +645,10 @@ func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) s
 	// 添加错误信息
 	// ⚠️ 重要：确保错误消息是UTF-8安全的
 	if record.ErrorMessage != "" {
-		// 简单的UTF-8清理：移除控制字符
-		safeError := record.ErrorMessage
-		safeError = strings.ReplaceAll(safeError, "\x00", "")
-		safeError = strings.ReplaceAll(safeError, "\x01", "")
-		safeError = strings.ReplaceAll(safeError, "\x02", "")
-		safeError = strings.ReplaceAll(safeError, "\x03", "")
-		safeError = strings.ReplaceAll(safeError, "\x04", "")
-		safeError = strings.ReplaceAll(safeError, "\x05", "")
-		safeError = strings.ReplaceAll(safeError, "\x06", "")
-		safeError = strings.ReplaceAll(safeError, "\x07", "")
-		safeError = strings.ReplaceAll(safeError, "\x08", "")
-		safeError = strings.ReplaceAll(safeError, "\x0B", "")
-		safeError = strings.ReplaceAll(safeError, "\x0C", "")
-		safeError = strings.ReplaceAll(safeError, "\x0D", "")
-		safeError = strings.ReplaceAll(safeError, "\x0E", "")
-		safeError = strings.ReplaceAll(safeError, "\x0F", "")
-		// 更多控制字符可以根据需要添加...
-
+		safeError := sanitizeErrorMessage(record.ErrorMessage)
+		if safeError == "" {
+			safeError = "AI 服务暂时不可用，请稍后重试或检查网络/模型配置"
+		}
 		msg += fmt.Sprintf("\n\n⚠️ 错误信息: %s", safeError)
 	}
 
