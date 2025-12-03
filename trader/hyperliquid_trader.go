@@ -1462,6 +1462,47 @@ func (t *HyperliquidTrader) resolveCoin(symbol string) (string, error) {
 		}
 	}
 
+	// 兜底：使用缓存的Meta.Universe做HIP-3股票匹配（AllMids可能未包含新股票）
+	if t.meta != nil {
+		for _, asset := range t.meta.Universe {
+			name := asset.Name
+			if !strings.Contains(name, ":") {
+				continue
+			}
+			parts := strings.SplitN(name, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			if strings.EqualFold(parts[1], coin) {
+				log.Printf("🔄 使用Meta.Universe匹配到HIP-3股票: %s (请求符号: %s)", name, symbol)
+				return name, nil
+			}
+		}
+	}
+
+	// 再次尝试：刷新Meta后重试（防止启动后新增股票或Meta为空）
+	if t.exchange != nil {
+		if refreshedMeta, err := t.exchange.Info().Meta(t.ctx); err == nil && refreshedMeta != nil {
+			t.meta = refreshedMeta
+			for _, asset := range refreshedMeta.Universe {
+				name := asset.Name
+				if !strings.Contains(name, ":") {
+					continue
+				}
+				parts := strings.SplitN(name, ":", 2)
+				if len(parts) != 2 {
+					continue
+				}
+				if strings.EqualFold(parts[1], coin) {
+					log.Printf("🔄 Meta刷新后匹配到HIP-3股票: %s (请求符号: %s)", name, symbol)
+					return name, nil
+				}
+			}
+		} else if err != nil {
+			log.Printf("⚠️ 刷新Meta失败: %v", err)
+		}
+	}
+
 	return "", fmt.Errorf("未找到交易对: %s", symbol)
 }
 
