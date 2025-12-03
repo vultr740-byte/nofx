@@ -14,15 +14,15 @@ import (
 
 // ParsedCommand 表示解析后的交易命令
 type ParsedCommand struct {
-	Action     string  // "long", "short", "close", "stop_loss", "take_profit", "close_all"
-	Symbol     string  // "ETH", "BTC", etc.
-	AssetType  string  // "crypto", "stock", "forex", "commodity"
-	Leverage   int     // 2, 3, 5, etc. (0 for close operations)
-	Amount     float64 // 15.0, 20.0, etc. (0 for close all)
-	Currency   string  // "USD", "USDT", "USDC"
-	Price      float64 // 0 for market orders, specific price for stop/take
-	Percentage float64 // For partial closes (0.5 = 50%)
-	Confidence float64 // 0-1, parsing confidence (min 0.8)
+	Action     string  `json:"action"`     // "long", "short", "close", "stop_loss", "take_profit", "close_all"
+	Symbol     string  `json:"symbol"`     // "ETH", "BTC", etc.
+	AssetType  string  `json:"asset_type"` // "crypto", "stock", "forex", "commodity"
+	Leverage   int     `json:"leverage"`   // 2, 3, 5, etc. (0 for close operations)
+	Amount     float64 `json:"amount"`     // 15.0, 20.0, etc. (0 for close all)
+	Currency   string  `json:"currency"`   // "USD", "USDT", "USDC"
+	Price      float64 `json:"price"`      // 0 for market orders, specific price for stop/take
+	Percentage float64 `json:"percentage"` // For partial closes (0.5 = 50%)
+	Confidence float64 `json:"confidence"` // 0-1, parsing confidence (min 0.8)
 }
 
 // NLParser 自然语言交易命令解析器
