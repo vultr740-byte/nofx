@@ -83,6 +83,7 @@ func NewTelegramBotManager(cfg *config.TelegramBotConfig, db config.DatabaseInte
 	// 创建自然语言解析器（暂时使用 nil MCP 客户端，后续可以从交易员获取）
 	nlParser := NewNLParser(nil)
 	cmdValidator := NewCommandValidator(db)
+	cmdValidator.SetTraderManager(traderMgr) // 设置交易管理器引用
 
 	tgBotMgr := &TelegramBotManager{
 		bot:           bot,

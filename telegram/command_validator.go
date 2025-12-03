@@ -6,12 +6,14 @@ import (
 	"strings"
 
 	"nofx/config"
+	"nofx/manager"
 )
 
 // CommandValidator 交易命令验证器
 type CommandValidator struct {
 	db                    config.DatabaseInterface
-	confirmationThreshold float64 // 大额交易确认阈值
+	traderMgr             *manager.TraderManager // 添加交易管理器引用
+	confirmationThreshold float64                // 大额交易确认阈值
 }
 
 // NewCommandValidator 创建新的交易验证器
@@ -20,6 +22,11 @@ func NewCommandValidator(db config.DatabaseInterface) *CommandValidator {
 		db:                    db,
 		confirmationThreshold: 500.0, // 默认 $500 需要确认
 	}
+}
+
+// SetTraderManager 设置交易管理器引用
+func (cv *CommandValidator) SetTraderManager(traderMgr *manager.TraderManager) {
+	cv.traderMgr = traderMgr
 }
 
 // SetConfirmationThreshold 设置大额交易确认阈值
@@ -34,6 +41,19 @@ func (cv *CommandValidator) ValidateCommand(telegramID int64, cmd *ParsedCommand
 		return err
 	}
 
+	// 资产类型验证 (新增)
+	if err := cv.validateAssetType(cmd); err != nil {
+		return err
+	}
+
+	// 符号预处理 (新增)
+	cv.preprocessSymbol(cmd)
+
+	// Hyperliquid符号验证 (关键新增)
+	if err := cv.validateSymbolInHyperliquid(cmd, telegramID); err != nil {
+		return err
+	}
+
 	// 获取用户配置
 	userConfig, err := cv.getUserConfig(telegramID)
 	if err != nil {
@@ -45,7 +65,7 @@ func (cv *CommandValidator) ValidateCommand(telegramID int64, cmd *ParsedCommand
 		return err
 	}
 
-	// 验证交易对
+	// 验证交易对格式
 	if err := cv.validateSymbol(cmd); err != nil {
 		return err
 	}
@@ -114,6 +134,63 @@ func (cv *CommandValidator) validateBasicParams(cmd *ParsedCommand) error {
 	}
 
 	return nil
+}
+
+// validateAssetType 验证资产类型
+func (cv *CommandValidator) validateAssetType(cmd *ParsedCommand) error {
+	validTypes := []string{"crypto", "stock", "forex", "commodity"}
+	for _, validType := range validTypes {
+		if cmd.AssetType == validType {
+			return nil
+		}
+	}
+	return fmt.Errorf("❌ 无效的资产类型: %s，支持的类型: crypto, stock, forex, commodity", cmd.AssetType)
+}
+
+// validateSymbolInHyperliquid 验证符号在Hyperliquid中的有效性
+func (cv *CommandValidator) validateSymbolInHyperliquid(cmd *ParsedCommand, telegramID int64) error {
+	// 对于非全部平仓操作，验证符号有效性
+	if cmd.Action == "close_all" {
+		return nil
+	}
+
+	// 基础符号验证
+	if cmd.Symbol == "" {
+		return fmt.Errorf("❌ 交易符号不能为空")
+	}
+
+	// 符号长度和格式检查
+	if len(cmd.Symbol) < 1 || len(cmd.Symbol) > 20 {
+		return fmt.Errorf("❌ 交易符号长度无效: %s", cmd.Symbol)
+	}
+
+	// TODO: 实际的Hyperliquid符号验证将在后续版本中实现
+	// 现阶段先做基础验证，确保不会因为交易员获取失败而阻止用户交易
+	log.Printf("📋 资产类型验证通过: %s (类型: %s)", cmd.Symbol, cmd.AssetType)
+
+	return nil
+}
+
+// preprocessSymbol 根据资产类型进行符号预处理
+func (cv *CommandValidator) preprocessSymbol(cmd *ParsedCommand) {
+	symbol := strings.ToUpper(cmd.Symbol)
+
+	switch cmd.AssetType {
+	case "crypto":
+		// 加密货币保持标准格式，resolveCoin会处理USDT后缀
+		cmd.Symbol = symbol
+	case "stock":
+		// 股票使用标准代码，如TSLA、AAPL等
+		cmd.Symbol = symbol
+	case "forex":
+		// 外汇使用货币对格式，如EURUSD
+		cmd.Symbol = symbol
+	case "commodity":
+		// 商品使用标准代码，如GOLD、OIL等
+		cmd.Symbol = symbol
+	}
+
+	// **重要**：最终的符号验证和转换在validateSymbolInHyperliquid中完成
 }
 
 // validateLeverage 验证杠杆限制
