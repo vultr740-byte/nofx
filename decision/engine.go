@@ -787,7 +787,12 @@ func validateJSONFormat(jsonStr string) error {
 // normalizeRangeNumbers 将包含范围符号的数字区间压缩为单一数值（取区间起点）
 // 示例: "1.2~1.5" -> "1.2"
 func normalizeRangeNumbers(jsonStr string) string {
-	return reRangeNumber.ReplaceAllString(jsonStr, "$1")
+	normalized := reRangeNumber.ReplaceAllString(jsonStr, "$1")
+	// 如果仍残留 ~/〜/～（可能因格式异常未被正则命中），直接移除以避免校验报错
+	normalized = strings.ReplaceAll(normalized, "~", "")
+	normalized = strings.ReplaceAll(normalized, "〜", "")
+	normalized = strings.ReplaceAll(normalized, "～", "")
+	return normalized
 }
 
 // min 返回两个整数中的较小值
