@@ -1115,6 +1115,8 @@ type TraderRecord struct {
 	SystemPromptTemplate string    `json:"system_prompt_template"` // 系统提示词模板名称
 	IsCrossMargin        bool      `json:"is_cross_margin"`        // 是否为全仓模式（true=全仓，false=逐仓）
 	ReverseTrading       bool      `json:"reverse_trading"`        // 是否启用反向交易（true=开多时做空，开空时做多）
+	UseDefaultCoins      bool      `json:"use_default_coins"`      // 是否使用默认币种列表
+	CustomCoins          string    `json:"custom_coins"`           // 自定义币种（JSON数组或逗号分隔）
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
 }
@@ -1813,14 +1815,14 @@ func (d *Database) CreateTrader(trader *TraderRecord) error {
 	var err error
 	if d.usePostgreSQL {
 		_, err = d.db.Exec(`
-			INSERT INTO traders (id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running, btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top, custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-		`, trader.ID, trader.UserID, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance, trader.ScanIntervalMinutes, trader.IsRunning, trader.BTCETHLeverage, trader.AltcoinLeverage, trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop, trader.CustomPrompt, trader.OverrideBasePrompt, trader.SystemPromptTemplate, trader.IsCrossMargin)
+			INSERT INTO traders (id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running, btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top, custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin, use_default_coins, custom_coins)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		`, trader.ID, trader.UserID, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance, trader.ScanIntervalMinutes, trader.IsRunning, trader.BTCETHLeverage, trader.AltcoinLeverage, trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop, trader.CustomPrompt, trader.OverrideBasePrompt, trader.SystemPromptTemplate, trader.IsCrossMargin, trader.UseDefaultCoins, trader.CustomCoins)
 	} else {
 		_, err = d.db.Exec(`
-			INSERT INTO traders (id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running, btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top, custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, trader.ID, trader.UserID, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance, trader.ScanIntervalMinutes, trader.IsRunning, trader.BTCETHLeverage, trader.AltcoinLeverage, trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop, trader.CustomPrompt, trader.OverrideBasePrompt, trader.SystemPromptTemplate, trader.IsCrossMargin)
+			INSERT INTO traders (id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running, btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top, custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin, use_default_coins, custom_coins)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, trader.ID, trader.UserID, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance, trader.ScanIntervalMinutes, trader.IsRunning, trader.BTCETHLeverage, trader.AltcoinLeverage, trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop, trader.CustomPrompt, trader.OverrideBasePrompt, trader.SystemPromptTemplate, trader.IsCrossMargin, trader.UseDefaultCoins, trader.CustomCoins)
 	}
 	return err
 }
@@ -1838,7 +1840,10 @@ func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 			       COALESCE(use_coin_pool, 0::BOOLEAN) as use_coin_pool, COALESCE(use_oi_top, 0::BOOLEAN) as use_oi_top,
 			       COALESCE(custom_prompt, '') as custom_prompt, COALESCE(override_base_prompt, 0::BOOLEAN) as override_base_prompt,
 			       COALESCE(system_prompt_template, 'default') as system_prompt_template,
-			       COALESCE(is_cross_margin, 1::BOOLEAN) as is_cross_margin, created_at, updated_at
+			       COALESCE(is_cross_margin, 1::BOOLEAN) as is_cross_margin,
+			       COALESCE(use_default_coins, 1::BOOLEAN) as use_default_coins,
+			       COALESCE(custom_coins, '') as custom_coins,
+			       created_at, updated_at
 			FROM traders WHERE user_id = $1 ORDER BY created_at DESC
 		`, userID)
 	} else {
@@ -1849,7 +1854,10 @@ func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 			       COALESCE(use_coin_pool, 0) as use_coin_pool, COALESCE(use_oi_top, 0) as use_oi_top,
 			       COALESCE(custom_prompt, '') as custom_prompt, COALESCE(override_base_prompt, 0) as override_base_prompt,
 			       COALESCE(system_prompt_template, 'default') as system_prompt_template,
-			       COALESCE(is_cross_margin, 1) as is_cross_margin, created_at, updated_at
+			       COALESCE(is_cross_margin, 1) as is_cross_margin,
+			       COALESCE(use_default_coins, 1) as use_default_coins,
+			       COALESCE(custom_coins, '') as custom_coins,
+			       created_at, updated_at
 			FROM traders WHERE user_id = ? ORDER BY created_at DESC
 		`, userID)
 	}
@@ -1867,7 +1875,7 @@ func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 			&trader.BTCETHLeverage, &trader.AltcoinLeverage, &trader.TradingSymbols,
 			&trader.UseCoinPool, &trader.UseOITop,
 			&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.SystemPromptTemplate,
-			&trader.IsCrossMargin,
+			&trader.IsCrossMargin, &trader.UseDefaultCoins, &trader.CustomCoins,
 			&trader.CreatedAt, &trader.UpdatedAt,
 		)
 		if err != nil {
@@ -1899,7 +1907,8 @@ func (d *Database) GetRunningTraders() ([]TraderRecord, error) {
 		rows, err = d.db.Query(`
 			SELECT id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running,
 			       btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top,
-			       custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin
+			       custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin,
+			       use_default_coins, custom_coins
 			FROM traders
 			WHERE is_running = true
 		`)
@@ -1907,7 +1916,8 @@ func (d *Database) GetRunningTraders() ([]TraderRecord, error) {
 		rows, err = d.db.Query(`
 			SELECT id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running,
 			       btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top,
-			       custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin
+			       custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin,
+			       use_default_coins, custom_coins
 			FROM traders
 			WHERE is_running = 1
 		`)
@@ -1929,6 +1939,7 @@ func (d *Database) GetRunningTraders() ([]TraderRecord, error) {
 			&trader.BTCETHLeverage, &trader.AltcoinLeverage, &tradingSymbols,
 			&trader.UseCoinPool, &trader.UseOITop, &customPrompt,
 			&trader.OverrideBasePrompt, &systemPromptTemplate, &trader.IsCrossMargin,
+			&trader.UseDefaultCoins, &trader.CustomCoins,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("扫描交易员数据失败: %w", err)
@@ -1959,24 +1970,28 @@ func (d *Database) UpdateTrader(trader *TraderRecord) error {
 				name = $1, ai_model_id = $2, exchange_id = $3, initial_balance = $4,
 				scan_interval_minutes = $5, btc_eth_leverage = $6, altcoin_leverage = $7,
 				trading_symbols = $8, custom_prompt = $9, override_base_prompt = $10,
-				system_prompt_template = $11, is_cross_margin = $12, updated_at = NOW()
-			WHERE id = $13 AND user_id = $14
+				system_prompt_template = $11, is_cross_margin = $12,
+				use_default_coins = $13, custom_coins = $14,
+				updated_at = NOW()
+			WHERE id = $15 AND user_id = $16
 		`, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance,
 			trader.ScanIntervalMinutes, trader.BTCETHLeverage, trader.AltcoinLeverage,
 			trader.TradingSymbols, trader.CustomPrompt, trader.OverrideBasePrompt,
-			trader.SystemPromptTemplate, trader.IsCrossMargin, trader.ID, trader.UserID)
+			trader.SystemPromptTemplate, trader.IsCrossMargin, trader.UseDefaultCoins, trader.CustomCoins, trader.ID, trader.UserID)
 	} else {
 		_, err = d.db.Exec(`
 			UPDATE traders SET
 				name = ?, ai_model_id = ?, exchange_id = ?, initial_balance = ?,
 				scan_interval_minutes = ?, btc_eth_leverage = ?, altcoin_leverage = ?,
 				trading_symbols = ?, custom_prompt = ?, override_base_prompt = ?,
-				system_prompt_template = ?, is_cross_margin = ?, updated_at = CURRENT_TIMESTAMP
+				system_prompt_template = ?, is_cross_margin = ?,
+				use_default_coins = ?, custom_coins = ?,
+				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ? AND user_id = ?
 		`, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance,
 			trader.ScanIntervalMinutes, trader.BTCETHLeverage, trader.AltcoinLeverage,
 			trader.TradingSymbols, trader.CustomPrompt, trader.OverrideBasePrompt,
-			trader.SystemPromptTemplate, trader.IsCrossMargin, trader.ID, trader.UserID)
+			trader.SystemPromptTemplate, trader.IsCrossMargin, trader.UseDefaultCoins, trader.CustomCoins, trader.ID, trader.UserID)
 	}
 	return err
 }
@@ -2086,6 +2101,8 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 				COALESCE(t.override_base_prompt, FALSE) as override_base_prompt,
 				COALESCE(t.system_prompt_template, 'default') as system_prompt_template,
 				COALESCE(t.is_cross_margin, TRUE) as is_cross_margin,
+				COALESCE(t.use_default_coins, TRUE) as use_default_coins,
+				COALESCE(t.custom_coins, '') as custom_coins,
 				t.created_at, t.updated_at,
 				a.id, a.user_id, a.name, a.provider, a.enabled, a.api_key,
 				COALESCE(a.custom_api_url, '') as custom_api_url,
@@ -2107,7 +2124,7 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 			&trader.BTCETHLeverage, &trader.AltcoinLeverage, &trader.TradingSymbols,
 			&trader.UseCoinPool, &trader.UseOITop,
 			&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.SystemPromptTemplate,
-			&trader.IsCrossMargin,
+			&trader.IsCrossMargin, &trader.UseDefaultCoins, &trader.CustomCoins,
 			&trader.CreatedAt, &trader.UpdatedAt,
 			&aiModel.ID, &aiModel.UserID, &aiModel.Name, &aiModel.Provider, &aiModel.Enabled, &aiModel.APIKey,
 			&aiModel.CustomAPIURL, &aiModel.CustomModelName,
@@ -2130,6 +2147,8 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 				COALESCE(t.override_base_prompt, 0) as override_base_prompt,
 				COALESCE(t.system_prompt_template, 'default') as system_prompt_template,
 				COALESCE(t.is_cross_margin, 1) as is_cross_margin,
+				COALESCE(t.use_default_coins, 1) as use_default_coins,
+				COALESCE(t.custom_coins, '') as custom_coins,
 				t.created_at, t.updated_at,
 				a.id, a.user_id, a.name, a.provider, a.enabled, a.api_key,
 				COALESCE(a.custom_api_url, '') as custom_api_url,
@@ -2151,7 +2170,7 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 			&trader.BTCETHLeverage, &trader.AltcoinLeverage, &trader.TradingSymbols,
 			&trader.UseCoinPool, &trader.UseOITop,
 			&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.SystemPromptTemplate,
-			&trader.IsCrossMargin,
+			&trader.IsCrossMargin, &trader.UseDefaultCoins, &trader.CustomCoins,
 			&trader.CreatedAt, &trader.UpdatedAt,
 			&aiModel.ID, &aiModel.UserID, &aiModel.Name, &aiModel.Provider, &aiModel.Enabled, &aiModel.APIKey,
 			&aiModel.CustomAPIURL, &aiModel.CustomModelName,

@@ -193,20 +193,14 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 	}
 
 	// 处理交易币种列表
-	var tradingCoins []string
-	if traderCfg.TradingSymbols != "" {
-		// 解析逗号分隔的交易币种列表
-		symbols := strings.Split(traderCfg.TradingSymbols, ",")
-		for _, symbol := range symbols {
-			symbol = strings.TrimSpace(symbol)
-			if symbol != "" {
-				tradingCoins = append(tradingCoins, symbol)
-			}
-		}
+	tradingCoins := parseCoinList(traderCfg.TradingSymbols)
+	if len(tradingCoins) == 0 && !traderCfg.UseDefaultCoins {
+		tradingCoins = parseCoinList(traderCfg.CustomCoins)
 	}
-
-	// 如果没有指定交易币种，使用默认币种
-	if len(tradingCoins) == 0 {
+	if len(tradingCoins) == 0 && traderCfg.UseDefaultCoins {
+		tradingCoins = defaultCoins
+	}
+	if len(tradingCoins) == 0 && len(defaultCoins) > 0 {
 		tradingCoins = defaultCoins
 	}
 
@@ -241,7 +235,7 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		MaxDrawdown:           maxDrawdown,
 		StopTradingTime:       time.Duration(stopTradingMinutes) * time.Minute,
 		IsCrossMargin:         traderCfg.IsCrossMargin,
-		ReverseTrading:        traderCfg.ReverseTrading,      // 反向交易配置
+		ReverseTrading:        traderCfg.ReverseTrading, // 反向交易配置
 		DefaultCoins:          defaultCoins,
 		TradingCoins:          tradingCoins,
 		SystemPromptTemplate:  traderCfg.SystemPromptTemplate, // 系统提示词模板
@@ -301,20 +295,14 @@ func (tm *TraderManager) AddTraderFromDB(traderCfg *config.TraderRecord, aiModel
 	}
 
 	// 处理交易币种列表
-	var tradingCoins []string
-	if traderCfg.TradingSymbols != "" {
-		// 解析逗号分隔的交易币种列表
-		symbols := strings.Split(traderCfg.TradingSymbols, ",")
-		for _, symbol := range symbols {
-			symbol = strings.TrimSpace(symbol)
-			if symbol != "" {
-				tradingCoins = append(tradingCoins, symbol)
-			}
-		}
+	tradingCoins := parseCoinList(traderCfg.TradingSymbols)
+	if len(tradingCoins) == 0 && !traderCfg.UseDefaultCoins {
+		tradingCoins = parseCoinList(traderCfg.CustomCoins)
 	}
-
-	// 如果没有指定交易币种，使用默认币种
-	if len(tradingCoins) == 0 {
+	if len(tradingCoins) == 0 && traderCfg.UseDefaultCoins {
+		tradingCoins = defaultCoins
+	}
+	if len(tradingCoins) == 0 && len(defaultCoins) > 0 {
 		tradingCoins = defaultCoins
 	}
 
@@ -990,6 +978,19 @@ func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord,
 	// 记录Prompt模板配置用于调试
 	log.Printf("🔧 TG交易员 %s 配置的Prompt模板: %s", tgTrader.Name, tgTrader.SystemPromptTemplate)
 
+	// 币种配置：优先显式列表，其次 custom_coins，再次默认币种
+	tgDefaultCoins := loadDefaultCoins(database)
+	tgTradingCoins := parseCoinList(tgTrader.TradingSymbols)
+	if len(tgTradingCoins) == 0 && !tgTrader.UseDefaultCoins {
+		tgTradingCoins = parseCoinList(tgTrader.CustomCoins)
+	}
+	if len(tgTradingCoins) == 0 && tgTrader.UseDefaultCoins {
+		tgTradingCoins = tgDefaultCoins
+	}
+	if len(tgTradingCoins) == 0 && len(tgDefaultCoins) > 0 {
+		tgTradingCoins = tgDefaultCoins
+	}
+
 	// 创建AutoTrader实例
 	trader, err := trader.NewAutoTrader(
 		trader.AutoTraderConfig{
@@ -1011,9 +1012,11 @@ func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord,
 			BTCETHLeverage:  tgTrader.BTCETHLeverage,
 			AltcoinLeverage: tgTrader.AltcoinLeverage,
 			// 添加缺失的配置字段
-			SystemPromptTemplate:  tgTrader.SystemPromptTemplate, // 关键修复：Prompt模板配置
-			IsCrossMargin:         tgTrader.IsCrossMargin,
-			ReverseTrading:        tgTrader.ReverseTrading,      // 反向交易配置
+			SystemPromptTemplate: tgTrader.SystemPromptTemplate, // 关键修复：Prompt模板配置
+			IsCrossMargin:        tgTrader.IsCrossMargin,
+			ReverseTrading:       tgTrader.ReverseTrading, // 反向交易配置
+			DefaultCoins:         tgDefaultCoins,
+			TradingCoins:         tgTradingCoins,
 		},
 		database,
 		fmt.Sprintf("%d", tgTrader.TgUserID), // TG用户ID作为UserID
@@ -1105,6 +1108,56 @@ func capitalizeProviderName(provider string) string {
 		return first
 	}
 	return first + string(runes[1:])
+}
+
+// parseCoinList 解析逗号/空格/换行或JSON数组格式的币种列表，去重并统一大写
+func parseCoinList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+
+	var coins []string
+
+	// 优先尝试 JSON 数组
+	var arr []string
+	if err := json.Unmarshal([]byte(raw), &arr); err == nil {
+		coins = append(coins, arr...)
+	} else {
+		// 回退到分隔符拆分
+		fields := strings.FieldsFunc(raw, func(r rune) bool {
+			return r == ',' || r == ';' || r == '\n' || r == '\t' || r == ' '
+		})
+		coins = append(coins, fields...)
+	}
+
+	seen := make(map[string]struct{}, len(coins))
+	var result []string
+	for _, c := range coins {
+		clean := strings.ToUpper(strings.TrimSpace(c))
+		if clean == "" {
+			continue
+		}
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		result = append(result, clean)
+	}
+
+	return result
+}
+
+// loadDefaultCoins 从系统配置加载默认币种，解析失败返回空列表
+func loadDefaultCoins(database *config.Database) []string {
+	defaultCoinsStr, _ := database.GetSystemConfig("default_coins")
+	var defaultCoins []string
+	if defaultCoinsStr != "" {
+		if err := json.Unmarshal([]byte(defaultCoinsStr), &defaultCoins); err != nil {
+			log.Printf("⚠️ 解析默认币种配置失败: %v", err)
+		}
+	}
+	return defaultCoins
 }
 
 // LoadUserTraders 为特定用户加载交易员到内存
