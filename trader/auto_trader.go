@@ -685,13 +685,9 @@ func (at *AutoTrader) formatRawAIResponse(record *logger.DecisionRecord) string 
 	fmt.Fprintf(&b, "• 决策时间: %s\n", record.Timestamp.Format("2006-01-02 15:04:05"))
 	fmt.Fprintf(&b, "• 周期编号: #%d\n\n", record.CycleNumber)
 
-	raw := stripDecisionSection(strings.TrimSpace(record.RawAIResponse))
+	raw := strings.TrimSpace(record.RawAIResponse)
 	if raw != "" {
 		fmt.Fprintf(&b, "🤖 AI思维链\n```\n%s\n```\n\n", raw)
-	}
-
-	if record.DecisionJSON != "" {
-		fmt.Fprintf(&b, "📋 决策JSON\n```json\n%s\n```\n\n", record.DecisionJSON)
 	}
 
 	if len(record.Decisions) > 0 {
@@ -2736,17 +2732,6 @@ func (at *AutoTrader) getCandidateCoins() ([]decision.CandidateCoin, error) {
 // normalizeSymbol 基础符号标准化（仅大小写转换）
 func normalizeSymbol(symbol string) string {
 	return strings.ToUpper(strings.TrimSpace(symbol))
-}
-
-// stripDecisionSection 去掉原始响应中的 <decision>... 部分，避免与决策JSON重复展示
-func stripDecisionSection(text string) string {
-	if text == "" {
-		return text
-	}
-	if idx := strings.Index(strings.ToLower(text), "<decision>"); idx >= 0 {
-		return strings.TrimSpace(text[:idx])
-	}
-	return text
 }
 
 // formatSymbolForExchange 根据交易所格式化符号
