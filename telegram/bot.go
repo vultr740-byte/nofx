@@ -1740,8 +1740,13 @@ func (tbm *TelegramBotManager) PushRawMessageToUser(telegramID int64, rawMsg str
 		return fmt.Errorf("原始消息为空")
 	}
 
+	formatted := normalizeAIResponseText(rawMsg)
+	if formatted == "" {
+		formatted = rawMsg
+	}
+
 	const telegramLimit = 4096
-	chunks := splitRawMessage(rawMsg, telegramLimit)
+	chunks := splitRawMessage(formatted, telegramLimit)
 
 	for i, chunk := range chunks {
 		msg := tgbotapi.NewMessage(telegramID, chunk)
@@ -1759,6 +1764,46 @@ func (tbm *TelegramBotManager) PushRawMessageToUser(telegramID int64, rawMsg str
 
 	log.Printf("✅ 成功推送原始AI响应 (%d段, ChatID: %d)", len(chunks), telegramID)
 	return nil
+}
+
+// normalizeAIResponseText 轻量格式化AI响应：统一换行、去除多余空行、裁剪首尾空白
+func normalizeAIResponseText(text string) string {
+	if text == "" {
+		return ""
+	}
+
+	// 统一换行
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+
+	blankCount := 0
+	for _, line := range lines {
+		line = strings.TrimRight(line, " \t")
+		if strings.TrimSpace(line) == "" {
+			blankCount++
+			if blankCount > 2 {
+				continue // 最多保留两个连续空行
+			}
+			out = append(out, "")
+			continue
+		}
+		blankCount = 0
+		out = append(out, line)
+	}
+
+	// 去除首尾空行
+	start, end := 0, len(out)
+	for start < end && strings.TrimSpace(out[start]) == "" {
+		start++
+	}
+	for end > start && strings.TrimSpace(out[end-1]) == "" {
+		end--
+	}
+
+	return strings.Join(out[start:end], "\n")
 }
 
 // preprocessMessage 预处理消息确保有效性
