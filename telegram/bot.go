@@ -1740,34 +1740,41 @@ func (tbm *TelegramBotManager) PushRawMessageToUser(telegramID int64, rawMsg str
 		return fmt.Errorf("原始消息为空")
 	}
 
-	formatted := normalizeAIResponseText(rawMsg)
-	if formatted == "" {
-		formatted = rawMsg
-	}
+	sections := splitRawByDecision(rawMsg)
+	totalSent := 0
 
-	const telegramLimit = 4096
-	// 预先转义为HTML，方便整体放入<pre>，确保可复制
-	escaped := html.EscapeString(formatted)
-	// 预留 <pre></pre> 包裹长度
-	preOverhead := len("<pre></pre>")
-	chunks := splitRawMessage(escaped, telegramLimit-preOverhead)
-
-	for i, chunk := range chunks {
-		text := fmt.Sprintf("<pre>%s</pre>", chunk)
-		msg := tgbotapi.NewMessage(telegramID, text)
-		msg.ParseMode = "HTML" // 使用HTML预格式化，便于整体复制
-
-		if _, err := tbm.bot.Send(msg); err != nil {
-			log.Printf("❌ 发送原始消息失败 (段 %d/%d): %v", i+1, len(chunks), err)
-			return err
+	for _, section := range sections {
+		formatted := normalizeAIResponseText(section)
+		if formatted == "" {
+			formatted = section
 		}
 
-		if len(chunks) > 1 && i < len(chunks)-1 {
-			time.Sleep(200 * time.Millisecond)
+		const telegramLimit = 4096
+		// 预先转义为HTML，方便整体放入<pre>，确保可复制
+		escaped := html.EscapeString(formatted)
+		// 预留 <pre></pre> 包裹长度
+		preOverhead := len("<pre></pre>")
+		chunks := splitRawMessage(escaped, telegramLimit-preOverhead)
+
+		for i, chunk := range chunks {
+			text := fmt.Sprintf("<pre>%s</pre>", chunk)
+			msg := tgbotapi.NewMessage(telegramID, text)
+			msg.ParseMode = "HTML" // 使用HTML预格式化，便于整体复制
+
+			if _, err := tbm.bot.Send(msg); err != nil {
+				log.Printf("❌ 发送原始消息失败 (段 %d/%d): %v", i+1, len(chunks), err)
+				return err
+			}
+
+			totalSent++
+
+			if len(chunks) > 1 && i < len(chunks)-1 {
+				time.Sleep(200 * time.Millisecond)
+			}
 		}
 	}
 
-	log.Printf("✅ 成功推送原始AI响应 (%d段, ChatID: %d)", len(chunks), telegramID)
+	log.Printf("✅ 成功推送原始AI响应 (%d段, ChatID: %d)", totalSent, telegramID)
 	return nil
 }
 
@@ -2476,6 +2483,30 @@ func splitRawMessage(text string, limit int) []string {
 	}
 	chunks = append(chunks, string(runes))
 	return chunks
+}
+
+// splitRawByDecision 将原始文本按 <decision> 分段，避免单条过长导致决策部分被切断
+func splitRawByDecision(text string) []string {
+	lower := strings.ToLower(text)
+	idx := strings.Index(lower, "<decision>")
+	if idx == -1 {
+		return []string{text}
+	}
+
+	before := strings.TrimSpace(text[:idx])
+	after := strings.TrimSpace(text[idx:])
+
+	var sections []string
+	if before != "" {
+		sections = append(sections, before)
+	}
+	if after != "" {
+		sections = append(sections, after)
+	}
+	if len(sections) == 0 {
+		return []string{text}
+	}
+	return sections
 }
 
 func wrapPlainChunks(chunks []string, isJSON bool) []decisionChunk {
