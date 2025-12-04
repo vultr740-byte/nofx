@@ -459,6 +459,7 @@ func (at *AutoTrader) pushDecisionToTelegram(record *logger.DecisionRecord) {
 	// 使用类型断言来获取TelegramBotManager
 	tgBotMgr, ok := at.telegramBotManager.(interface {
 		PushDecisionToUser(telegramID int64, decisionMsg string) error
+		PushRawMessageToUser(telegramID int64, rawMsg string) error
 	})
 	if !ok {
 		log.Printf("⚠️ TelegramBotManager类型不匹配，无法推送决策")
@@ -474,15 +475,11 @@ func (at *AutoTrader) pushDecisionToTelegram(record *logger.DecisionRecord) {
 
 	// 若存在AI原始响应，优先原样推送，不做任何格式变动
 	if record.RawAIResponse != "" {
-		if rawPusher, ok := at.telegramBotManager.(interface {
-			PushRawMessageToUser(telegramID int64, rawMsg string) error
-		}); ok {
-			if err := rawPusher.PushRawMessageToUser(telegramID, record.RawAIResponse); err != nil {
-				log.Printf("⚠️ 推送原始AI响应到Telegram失败: %v", err)
-			} else {
-				log.Printf("✅ 成功推送原始AI响应到Telegram (用户ID: %s)", at.userID)
-				return
-			}
+		if err := tgBotMgr.PushRawMessageToUser(telegramID, at.formatRawAIResponse(record)); err != nil {
+			log.Printf("⚠️ 推送原始AI响应到Telegram失败: %v", err)
+		} else {
+			log.Printf("✅ 成功推送原始AI响应到Telegram (用户ID: %s)", at.userID)
+			return
 		}
 	}
 
@@ -671,6 +668,63 @@ func (at *AutoTrader) formatDecisionSummary(decisions []logger.DecisionAction) s
 		}
 		return coinsStr + actionText
 	}
+}
+
+// formatRawAIResponse 参考通用样式对AI原始输出做轻量格式化（不增加复杂规则）
+func (at *AutoTrader) formatRawAIResponse(record *logger.DecisionRecord) string {
+	var statusEmoji string
+	if record.Success {
+		statusEmoji = "✅"
+	} else {
+		statusEmoji = "❌"
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s AI决策报告\n\n", statusEmoji)
+	fmt.Fprintf(&b, "📊 周期信息\n")
+	fmt.Fprintf(&b, "• 决策时间: %s\n", record.Timestamp.Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(&b, "• 周期编号: #%d\n\n", record.CycleNumber)
+
+	raw := strings.TrimSpace(record.RawAIResponse)
+	if raw != "" {
+		fmt.Fprintf(&b, "🤖 AI思维链\n```\n%s\n```\n\n", raw)
+	}
+
+	if record.DecisionJSON != "" {
+		fmt.Fprintf(&b, "📋 决策JSON\n```json\n%s\n```\n\n", record.DecisionJSON)
+	}
+
+	if len(record.Decisions) > 0 {
+		b.WriteString("⚡ 执行结果\n")
+		for _, d := range record.Decisions {
+			status := "⏳"
+			if d.Success {
+				if d.Action != "wait" && d.Action != "hold" {
+					status = "✅"
+				}
+			} else {
+				status = "❌"
+			}
+			line := fmt.Sprintf("%s %s %s", status, d.Symbol, d.Action)
+			if d.Error != "" {
+				line += fmt.Sprintf(" (%s)", d.Error)
+			}
+			fmt.Fprintf(&b, "%s\n", line)
+		}
+		b.WriteString("\n")
+	}
+
+	fmt.Fprintf(&b, "💰 账户状态\n")
+	fmt.Fprintf(&b, "• 总余额: %.2f USDT\n", record.AccountState.TotalBalance)
+	fmt.Fprintf(&b, "• 可用余额: %.2f USDT\n", record.AccountState.AvailableBalance)
+	if record.AccountState.PositionCount > 0 {
+		fmt.Fprintf(&b, "• 持仓数量: %d\n", record.AccountState.PositionCount)
+		fmt.Fprintf(&b, "• 未实现盈亏: %.2f USDT\n", record.AccountState.TotalUnrealizedProfit)
+	}
+
+	fmt.Fprintf(&b, "\n🤖 由 %s 自动推送", at.name)
+
+	return b.String()
 }
 
 // preprocessDecisionRecord 统一处理决策记录中的所有编码问题
