@@ -657,6 +657,27 @@ func extractDecisions(response string) ([]Decision, error) {
 	// 修复 jsonPart 中的全角字符
 	jsonPart = fixMissingQuotes(jsonPart)
 
+	// 特殊容错：如果含有 ```json 但围栏未闭合，尝试手动截取到最后一个 ']'
+	if strings.Contains(jsonPart, "```json") {
+		block := jsonPart[strings.Index(jsonPart, "```json")+len("```json"):]
+		if idx := strings.Index(block, "```"); idx != -1 {
+			block = block[:idx]
+		}
+		if salvaged := salvageJSONArray(block); salvaged != "" {
+			jsonContent := strings.TrimSpace(salvaged)
+			jsonContent = compactArrayOpen(jsonContent)
+			jsonContent = fixMissingQuotes(jsonContent)
+			jsonContent = stripThousandSeparators(jsonContent)
+			jsonContent = normalizeRangeNumbers(jsonContent)
+			if err := validateJSONFormat(jsonContent); err == nil {
+				var decisions []Decision
+				if err := json.Unmarshal([]byte(jsonContent), &decisions); err == nil {
+					return decisions, nil
+				}
+			}
+		}
+	}
+
 	// 1) 优先从 ```json 代码块中提取
 	if m := reJSONFence.FindStringSubmatch(jsonPart); m != nil && len(m) > 1 {
 		jsonContent := strings.TrimSpace(m[1])
@@ -677,6 +698,9 @@ func extractDecisions(response string) ([]Decision, error) {
 	// 2) 退而求其次 (Fallback)：全文寻找首个对象数组
 	// 注意：此时 jsonPart 已经过 fixMissingQuotes()，全角字符已转换为半角
 	jsonContent := strings.TrimSpace(reJSONArray.FindString(jsonPart))
+	if jsonContent == "" {
+		jsonContent = salvageJSONArray(jsonPart)
+	}
 	if jsonContent == "" {
 		// 🔧 安全回退 (Safe Fallback)：当AI只输出思维链没有JSON时，生成保底决策（避免系统崩溃）
 		log.Printf("⚠️  [SafeFallback] AI未输出JSON决策，进入安全等待模式 (AI response without JSON, entering safe wait mode)")
@@ -793,6 +817,19 @@ func normalizeRangeNumbers(jsonStr string) string {
 	normalized = strings.ReplaceAll(normalized, "〜", "")
 	normalized = strings.ReplaceAll(normalized, "～", "")
 	return normalized
+}
+
+// salvageJSONArray 尝试从不完整的文本中截取首个 [ 到最后一个 ] 的数组片段
+func salvageJSONArray(text string) string {
+	start := strings.Index(text, "[")
+	if start == -1 {
+		return ""
+	}
+	end := strings.LastIndex(text, "]")
+	if end == -1 || end <= start {
+		return ""
+	}
+	return text[start : end+1]
 }
 
 // min 返回两个整数中的较小值

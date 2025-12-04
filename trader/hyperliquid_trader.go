@@ -1905,8 +1905,14 @@ func (t *HyperliquidTrader) roundToSzDecimals(coin string, quantity float64) flo
 func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
 	normalizedCoin := normalizeHip3Symbol(coin)
 
+	// 对常规加密资产（无冒号）直接使用 Meta.Universe 提供的 PxDecimals（如果有），否则走 sigfig 逻辑
+	if !strings.Contains(normalizedCoin, ":") {
+		// Hyperliquid 主流加密资产使用 5 位有效数字校验，这里直接退回 sigfig 流程
+		return 0, false
+	}
+
 	// Check HIP-3 cache first - 优先使用 PxDecimals
-	if t.hip3Meta != nil && strings.Contains(normalizedCoin, ":") {
+	if t.hip3Meta != nil {
 		if asset, ok := t.hip3Meta[normalizedCoin]; ok {
 			if asset.PxDecimals != nil {
 				log.Printf("✅ [HIP-3] %s 使用 API PxDecimals: %d 位小数", normalizedCoin, *asset.PxDecimals)
