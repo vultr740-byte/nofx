@@ -1740,7 +1740,7 @@ func (tbm *TelegramBotManager) PushRawMessageToUser(telegramID int64, rawMsg str
 		return fmt.Errorf("原始消息为空")
 	}
 
-	sections := splitRawByDecision(rawMsg)
+	sections := splitRawSections(rawMsg)
 	totalSent := 0
 
 	for _, section := range sections {
@@ -1749,7 +1749,8 @@ func (tbm *TelegramBotManager) PushRawMessageToUser(telegramID int64, rawMsg str
 			formatted = section
 		}
 
-		const telegramLimit = 4096
+		// 保守一些，留足转义开销
+		const telegramLimit = 3500
 		// 预先转义为HTML，方便整体放入<pre>，确保可复制
 		escaped := html.EscapeString(formatted)
 		// 预留 <pre></pre> 包裹长度
@@ -2485,24 +2486,37 @@ func splitRawMessage(text string, limit int) []string {
 	return chunks
 }
 
-// splitRawByDecision 将原始文本按 <decision> 分段，避免单条过长导致决策部分被切断
-func splitRawByDecision(text string) []string {
+// splitRawSections 将原始消息分段：决策前、决策块、决策后，避免决策被截断
+func splitRawSections(text string) []string {
 	lower := strings.ToLower(text)
-	idx := strings.Index(lower, "<decision>")
-	if idx == -1 {
+	start := strings.Index(lower, "<decision>")
+	if start == -1 {
 		return []string{text}
 	}
 
-	before := strings.TrimSpace(text[:idx])
-	after := strings.TrimSpace(text[idx:])
+	endRel := strings.Index(lower[start:], "</decision>")
 
 	var sections []string
-	if before != "" {
+
+	if before := strings.TrimSpace(text[:start]); before != "" {
 		sections = append(sections, before)
 	}
-	if after != "" {
-		sections = append(sections, after)
+
+	if endRel != -1 {
+		end := start + endRel + len("</decision>")
+		if decision := strings.TrimSpace(text[start:end]); decision != "" {
+			sections = append(sections, decision)
+		}
+		if after := strings.TrimSpace(text[end:]); after != "" {
+			sections = append(sections, after)
+		}
+	} else {
+		// 无闭合标签，剩余全部作为决策块
+		if decision := strings.TrimSpace(text[start:]); decision != "" {
+			sections = append(sections, decision)
+		}
 	}
+
 	if len(sections) == 0 {
 		return []string{text}
 	}
