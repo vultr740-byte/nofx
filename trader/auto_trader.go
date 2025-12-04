@@ -12,6 +12,7 @@ import (
 	"nofx/market"
 	"nofx/mcp"
 	"nofx/pool"
+	"nofx/utils"
 	"regexp"
 	"strconv"
 	"strings"
@@ -28,19 +29,46 @@ func decodeUnicodeEscapes(text string) string {
 		return text
 	}
 
-	// 处理常见的Unicode转义序列
-	text = strings.ReplaceAll(text, "\\u003e", ">")
-	text = strings.ReplaceAll(text, "\\u003c", "<")
-	text = strings.ReplaceAll(text, "\\u0026", "&")
-	text = strings.ReplaceAll(text, "\\u003d", "=")
-	text = strings.ReplaceAll(text, "\\u0022", "\"")
-	text = strings.ReplaceAll(text, "\\u0027", "'")
-	text = strings.ReplaceAll(text, "\\u000a", "\n")
-	text = strings.ReplaceAll(text, "\\u000d", "\r")
-	text = strings.ReplaceAll(text, "\\u0009", "\t")
-	text = strings.ReplaceAll(text, "\\u005c", "\\")
+	// 扩展的Unicode转义序列映射，包含JSON和HTML常用字符
+	unicodeMap := map[string]string{
+		// HTML/XML特殊字符
+		"\\u003e": ">", "\\u003c": "<", "\\u0026": "&", "\\u003d": "=",
+		"\\u0022": "\"", "\\u0027": "'", "\\u005c": "\\",
 
-	// 移除控制字符（除了换行、回车、制表符）
+		// 标点符号
+		"\\u003b": ";", "\\u003a": ":", "\\u002c": ",", "\\u002e": ".",
+		"\\u003f": "?", "\\u0021": "!", "\\u0060": "`", "\\u007e": "~",
+
+		// 括号和符号
+		"\\u007b": "{", "\\u007d": "}", "\\u005b": "[", "\\u005d": "]",
+		"\\u0028": "(", "\\u0029": ")", "\\u007c": "|", "\\u002f": "/",
+
+		// 数学和特殊符号
+		"\\u002b": "+", "\\u002d": "-", "\\u002a": "*", "\\u0025": "%",
+		"\\u005e": "^", "\\u0023": "#", "\\u0024": "$", "\\u0040": "@",
+
+		// 控制字符
+		"\\u000a": "\n", "\\u000d": "\r", "\\u0009": "\t",
+
+		// 大写版本的Unicode转义（某些情况下出现）
+		"\\u003E": ">", "\\u003C": "<", "\\u003D": "=", "\\u005C": "\\",
+	}
+
+	// 应用所有Unicode映射
+	for unicode, char := range unicodeMap {
+		text = strings.ReplaceAll(text, unicode, char)
+	}
+
+	// 移除不可见的Unicode字符（零宽度字符等）
+	invisibleChars := []string{"\u200b", "\u200c", "\u200d", "\ufeff", "\u2060", "\u180e"}
+	for _, char := range invisibleChars {
+		text = strings.ReplaceAll(text, char, "")
+	}
+
+	// HTML解码
+	text = html.UnescapeString(text)
+
+	// UTF-8验证和清理
 	var safe strings.Builder
 	for _, r := range text {
 		if r == utf8.RuneError {
@@ -53,6 +81,57 @@ func decodeUnicodeEscapes(text string) string {
 	}
 
 	return safe.String()
+}
+
+// formatDecisionJSON 格式化决策JSON，确保Unicode解码和 proper indentation
+func formatDecisionJSON(jsonStr string) string {
+	if jsonStr == "" {
+		return jsonStr
+	}
+
+	// 首先解码任何Unicode转义序列
+	decoded := decodeUnicodeEscapes(jsonStr)
+
+	// 然后使用utils包进行适当的缩进格式化
+	formatted := utils.FormatJSONError(decoded)
+
+	return formatted
+}
+
+// smartTruncate 智能截断文本，保持逻辑结构和完整性
+func smartTruncate(text string, maxLen int) string {
+	if len(text) <= maxLen {
+		return text
+	}
+
+	// 为省略号保留空间
+	ellipsis := "...\n[思维链已截断，完整内容请查看日志]"
+	targetLen := maxLen - len(ellipsis)
+
+	// 尝试找到逻辑断点
+	breakPoints := []string{
+		"\n\n",   // 段落断点
+		". ",     // 句子结束
+		";\n",    // 语句结束
+		"\n• ",   // 列表项
+		"\n- ",   // 列表项
+		"\n1. ",  // 编号列表
+		"\n**",   // Markdown标题
+	}
+
+	for _, breakPoint := range breakPoints {
+		if idx := strings.LastIndex(text[:targetLen], breakPoint); idx > 0 {
+			return text[:idx] + ellipsis
+		}
+	}
+
+	// 回退到单词边界
+	if idx := strings.LastIndex(text[:targetLen], " "); idx > 0 {
+		return text[:idx] + ellipsis
+	}
+
+	// 最后的选择：字符边界
+	return text[:targetLen] + ellipsis
 }
 
 // sanitizeErrorMessage 清理错误信息，避免HTML/控制字符污染Telegram推送
@@ -597,21 +676,22 @@ func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) s
 		record.CycleNumber,
 	)
 
-	// 添加AI思维链（提高长度限制确保完整显示）
+	// 添加AI思维链（使用智能截断）
 	// ⚠️ 重要：CoTTrace在存储时已经通过decodeUnicodeEscapes确保UTF-8安全
 	if record.CoTTrace != "" {
 		cotTrace := record.CoTTrace
-		// 提高长度限制到3000字符，避免截断AI的完整思维过程
-		if len(cotTrace) > 3000 {
-			cotTrace = cotTrace[:2997] + "..."
+		// 使用智能截断，提高长度限制到4000字符，保持逻辑结构
+		if len(cotTrace) > 4000 {
+			cotTrace = smartTruncate(cotTrace, 4000)
 		}
 		msg += fmt.Sprintf("\n```\n%s\n```", cotTrace)
 	}
 
-	// 添加决策信息
-	// ⚠️ 重要：DecisionJSON在存储时已经通过decodeUnicodeEscapes处理过，无需重复解码
+	// 添加决策信息（使用格式化JSON）
+	// ⚠️ 重要：使用formatDecisionJSON确保Unicode解码和proper indentation
 	if record.DecisionJSON != "" {
-		msg += fmt.Sprintf("\n\n📋 决策JSON\n```json\n%s\n```", record.DecisionJSON)
+		formattedJSON := formatDecisionJSON(record.DecisionJSON)
+		msg += fmt.Sprintf("\n\n📋 决策JSON\n```json\n%s\n```", formattedJSON)
 	}
 
 	// 添加执行结果
@@ -1084,7 +1164,8 @@ func (at *AutoTrader) runCycle() error {
 		record.CoTTrace = decodeUnicodeEscapes(decision.CoTTrace)
 		if len(decision.Decisions) > 0 {
 			decisionJSON, _ := json.MarshalIndent(decision.Decisions, "", "  ")
-			record.DecisionJSON = string(decisionJSON)
+			// 确保JSON在存储时也通过Unicode解码
+			record.DecisionJSON = decodeUnicodeEscapes(string(decisionJSON))
 		}
 	}
 
