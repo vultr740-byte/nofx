@@ -83,6 +83,21 @@ func decodeUnicodeEscapes(text string) string {
 	return safe.String()
 }
 
+// decodeAllEncodings 统一处理HTML实体编码和Unicode转义序列
+func decodeAllEncodings(text string) string {
+	if text == "" {
+		return text
+	}
+
+	// 先处理HTML实体编码（如 &lt;, &gt;, &#34; 等）
+	text = html.UnescapeString(text)
+
+	// 再处理Unicode转义序列（如 \u003c, \u003e 等）
+	text = decodeUnicodeEscapes(text)
+
+	return text
+}
+
 // formatDecisionJSON 格式化决策JSON，确保Unicode解码和 proper indentation
 func formatDecisionJSON(jsonStr string) string {
 	if jsonStr == "" {
@@ -1158,14 +1173,14 @@ func (at *AutoTrader) runCycle() error {
 
 	// 即使有错误，也保存思维链、决策和输入prompt（用于debug）
 	if decision != nil {
-		// ⚠️ 关键修复：在存储时就解码Unicode转义序列，避免后续编码问题
-		record.SystemPrompt = decodeUnicodeEscapes(decision.SystemPrompt)
-		record.InputPrompt = decodeUnicodeEscapes(decision.UserPrompt)
-		record.CoTTrace = decodeUnicodeEscapes(decision.CoTTrace)
+		// ⚠️ 关键修复：在存储时就解码Unicode转义序列和HTML实体，避免后续编码问题
+		record.SystemPrompt = decodeAllEncodings(decision.SystemPrompt)
+		record.InputPrompt = decodeAllEncodings(decision.UserPrompt)
+		record.CoTTrace = decodeAllEncodings(decision.CoTTrace)
 		if len(decision.Decisions) > 0 {
 			decisionJSON, _ := json.MarshalIndent(decision.Decisions, "", "  ")
-			// 确保JSON在存储时也通过Unicode解码
-			record.DecisionJSON = decodeUnicodeEscapes(string(decisionJSON))
+			// 确保JSON在存储时也通过统一解码（Unicode + HTML实体）
+			record.DecisionJSON = decodeAllEncodings(string(decisionJSON))
 		}
 	}
 

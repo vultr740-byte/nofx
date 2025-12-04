@@ -3,6 +3,7 @@ package decision
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
 	"nofx/market"
 	"nofx/mcp"
@@ -28,6 +29,30 @@ var (
 	// 兼容 AI 输出的区间数值（如 1.2~1.5），后续会压缩为单值
 	reRangeNumber = regexp.MustCompile(`(\d+(?:\.\d+)?)[\s]*[~〜～-]+[\s]*(\d+(?:\.\d+)?)`)
 )
+
+// decodeAllEncodings 统一处理HTML实体编码和Unicode转义序列
+func decodeAllEncodings(text string) string {
+	if text == "" {
+		return text
+	}
+
+	// 先处理HTML实体编码（如 &lt;, &gt;, &#34; 等）
+	text = html.UnescapeString(text)
+
+	// 再处理常见的Unicode转义序列
+	text = strings.ReplaceAll(text, "\\u003e", ">")
+	text = strings.ReplaceAll(text, "\\u003c", "<")
+	text = strings.ReplaceAll(text, "\\u0026", "&")
+	text = strings.ReplaceAll(text, "\\u003d", "=")
+	text = strings.ReplaceAll(text, "\\u0022", "\"")
+	text = strings.ReplaceAll(text, "\\u0027", "'")
+	text = strings.ReplaceAll(text, "\\u000a", "\n")
+	text = strings.ReplaceAll(text, "\\u000d", "\r")
+	text = strings.ReplaceAll(text, "\\u0009", "\t")
+	text = strings.ReplaceAll(text, "\\u005c", "\\")
+
+	return text
+}
 
 // PositionInfo 持仓信息
 type PositionInfo struct {
@@ -515,24 +540,28 @@ func extractCoTTrace(response string) string {
 	// 方法1: 优先尝试提取 <reasoning> 标签内容
 	if match := reReasoningTag.FindStringSubmatch(response); match != nil && len(match) > 1 {
 		log.Printf("✓ 使用 <reasoning> 标签提取思维链")
-		return strings.TrimSpace(match[1])
+		rawContent := strings.TrimSpace(match[1])
+		return decodeAllEncodings(rawContent) // 立即解码HTML实体和Unicode转义
 	}
 
 	// 方法2: 如果没有 <reasoning> 标签，但有 <decision> 标签，提取 <decision> 之前的内容
 	if decisionIdx := strings.Index(response, "<decision>"); decisionIdx > 0 {
 		log.Printf("✓ 提取 <decision> 标签之前的内容作为思维链")
-		return strings.TrimSpace(response[:decisionIdx])
+		rawContent := strings.TrimSpace(response[:decisionIdx])
+		return decodeAllEncodings(rawContent) // 立即解码HTML实体和Unicode转义
 	}
 
 	// 方法3: 后备方案 - 查找JSON数组的开始位置
 	jsonStart := strings.Index(response, "[")
 	if jsonStart > 0 {
 		log.Printf("⚠️  使用旧版格式（[ 字符分离）提取思维链")
-		return strings.TrimSpace(response[:jsonStart])
+		rawContent := strings.TrimSpace(response[:jsonStart])
+		return decodeAllEncodings(rawContent) // 立即解码HTML实体和Unicode转义
 	}
 
 	// 如果找不到任何标记，整个响应都是思维链
-	return strings.TrimSpace(response)
+	rawContent := strings.TrimSpace(response)
+	return decodeAllEncodings(rawContent) // 立即解码HTML实体和Unicode转义
 }
 
 // extractDecisions 提取JSON决策列表
@@ -593,7 +622,7 @@ func extractDecisions(response string) ([]Decision, error) {
 		fallbackDecision := Decision{
 			Symbol:    "ALL",
 			Action:    "wait",
-			Reasoning: fmt.Sprintf("模型未输出结构化JSON决策，进入安全等待；摘要：%s", cotSummary),
+			Reasoning: decodeAllEncodings(fmt.Sprintf("模型未输出结构化JSON决策，进入安全等待；摘要：%s", cotSummary)),
 		}
 
 		return []Decision{fallbackDecision}, nil
@@ -614,6 +643,11 @@ func extractDecisions(response string) ([]Decision, error) {
 	var decisions []Decision
 	if err := json.Unmarshal([]byte(jsonContent), &decisions); err != nil {
 		return nil, fmt.Errorf("JSON解析失败: %w\nJSON内容: %s", err, jsonContent)
+	}
+
+	// 对提取的决策内容进行HTML实体解码
+	for i := range decisions {
+		decisions[i].Reasoning = decodeAllEncodings(decisions[i].Reasoning)
 	}
 
 	return decisions, nil
