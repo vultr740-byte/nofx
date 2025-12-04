@@ -125,13 +125,13 @@ func smartTruncate(text string, maxLen int) string {
 
 	// 尝试找到逻辑断点
 	breakPoints := []string{
-		"\n\n",   // 段落断点
-		". ",     // 句子结束
-		";\n",    // 语句结束
-		"\n• ",   // 列表项
-		"\n- ",   // 列表项
-		"\n1. ",  // 编号列表
-		"\n**",   // Markdown标题
+		"\n\n",  // 段落断点
+		". ",    // 句子结束
+		";\n",   // 语句结束
+		"\n• ",  // 列表项
+		"\n- ",  // 列表项
+		"\n1. ", // 编号列表
+		"\n**",  // Markdown标题
 	}
 
 	for _, breakPoint := range breakPoints {
@@ -720,32 +720,31 @@ func (at *AutoTrader) buildCompleteDecisionMessage(record *logger.DecisionRecord
 	var msg strings.Builder
 	msg.Grow(10000) // 预分配足够空间
 
-	// 基础信息
-	msg.WriteString(fmt.Sprintf("%s %s\n\n📊 周期信息\n• 决策时间: %s\n• 周期编号: #%d\n\n🤖 AI思维链",
-		statusEmoji,
-		title,
-		record.Timestamp.Format("2006-01-02 15:04:05"),
-		record.CycleNumber))
+	fmt.Fprintf(&msg, "%s %s\n\n", statusEmoji, html.EscapeString(title))
+	fmt.Fprintf(&msg, "📊 周期信息\n")
+	fmt.Fprintf(&msg, "• 决策时间: %s\n", record.Timestamp.Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(&msg, "• 周期编号: #%d\n", record.CycleNumber)
 
-	// 完整思维链（不截断）
+	// 思维链
 	if record.CoTTrace != "" {
-		msg.WriteString(fmt.Sprintf("\n```\n%s\n```", record.CoTTrace))
+		cot := record.CoTTrace
+		fmt.Fprintf(&msg, "\n🤖 AI思维链\n<pre>%s</pre>\n", html.EscapeString(cot))
 	}
 
-	// 处理JSON部分（验证有效性）
+	// 决策JSON
 	if record.DecisionJSON != "" {
+		var jsonBlock string
 		if at.isValidJSON(record.DecisionJSON) {
-			formattedJSON := formatDecisionJSON(record.DecisionJSON)
-			msg.WriteString(fmt.Sprintf("\n\n📋 决策JSON\n```json\n%s\n```", formattedJSON))
+			jsonBlock = formatDecisionJSON(record.DecisionJSON)
 		} else {
-			// JSON格式化失败，提供原始内容
-			msg.WriteString(fmt.Sprintf("\n\n📋 决策数据\n```\n%s\n```", record.DecisionJSON))
+			jsonBlock = record.DecisionJSON
 		}
+		fmt.Fprintf(&msg, "\n📋 决策JSON\n<pre>%s</pre>\n", html.EscapeString(jsonBlock))
 	}
 
-	// 添加执行结果
+	// 执行结果
 	if len(record.Decisions) > 0 {
-		msg.WriteString("\n\n⚡ 执行结果")
+		msg.WriteString("\n⚡ 执行结果\n")
 		for _, decision := range record.Decisions {
 			decisionStatus := "❌"
 			if decision.Success {
@@ -755,32 +754,33 @@ func (at *AutoTrader) buildCompleteDecisionMessage(record *logger.DecisionRecord
 					decisionStatus = "✅"
 				}
 			}
-			msg.WriteString(fmt.Sprintf("\n%s %s %s", decisionStatus, decision.Symbol, decision.Action))
+			line := fmt.Sprintf("%s %s %s", decisionStatus, decision.Symbol, decision.Action)
 			if decision.Error != "" {
-				msg.WriteString(fmt.Sprintf(" (%s)", decision.Error))
+				line += fmt.Sprintf(" (%s)", decision.Error)
 			}
+			fmt.Fprintf(&msg, "%s\n", html.EscapeString(line))
 		}
 	}
 
-	// 添加账户状态
-	msg.WriteString(fmt.Sprintf("\n\n💰 账户状态"))
-	msg.WriteString(fmt.Sprintf("\n• 总余额: %.2f USDT", record.AccountState.TotalBalance))
-	msg.WriteString(fmt.Sprintf("\n• 可用余额: %.2f USDT", record.AccountState.AvailableBalance))
+	// 账户状态
+	fmt.Fprintf(&msg, "\n💰 账户状态\n")
+	fmt.Fprintf(&msg, "• 总余额: %.2f USDT\n", record.AccountState.TotalBalance)
+	fmt.Fprintf(&msg, "• 可用余额: %.2f USDT\n", record.AccountState.AvailableBalance)
 	if record.AccountState.PositionCount > 0 {
-		msg.WriteString(fmt.Sprintf("\n• 持仓数量: %d", record.AccountState.PositionCount))
-		msg.WriteString(fmt.Sprintf("\n• 未实现盈亏: %.2f USDT", record.AccountState.TotalUnrealizedProfit))
+		fmt.Fprintf(&msg, "• 持仓数量: %d\n", record.AccountState.PositionCount)
+		fmt.Fprintf(&msg, "• 未实现盈亏: %.2f USDT\n", record.AccountState.TotalUnrealizedProfit)
 	}
 
-	// 添加错误信息
+	// 错误信息
 	if record.ErrorMessage != "" {
 		safeError := sanitizeErrorMessage(record.ErrorMessage)
 		if safeError == "" {
 			safeError = "AI 服务暂时不可用，请稍后重试或检查网络/模型配置"
 		}
-		msg.WriteString(fmt.Sprintf("\n\n⚠️ 错误信息: %s", safeError))
+		fmt.Fprintf(&msg, "\n⚠️ 错误信息: %s\n", html.EscapeString(safeError))
 	}
 
-	msg.WriteString(fmt.Sprintf("\n\n🤖 由 %s 自动推送", at.name))
+	fmt.Fprintf(&msg, "\n🤖 由 %s 自动推送", html.EscapeString(at.name))
 
 	return msg.String()
 }
@@ -870,15 +870,13 @@ func (at *AutoTrader) buildFallbackMessage(record *logger.DecisionRecord) string
 	// 包含思维链（原样，不截断）
 	if record.CoTTrace != "" {
 		msg.WriteString("🤖 AI思维链:\n")
-		msg.WriteString(record.CoTTrace)
-		msg.WriteString("\n\n")
+		msg.WriteString(fmt.Sprintf("<pre>%s</pre>\n\n", html.EscapeString(record.CoTTrace)))
 	}
 
 	// 包含决策JSON（原样）
 	if record.DecisionJSON != "" {
 		msg.WriteString("📋 决策数据:\n")
-		msg.WriteString(record.DecisionJSON)
-		msg.WriteString("\n\n")
+		msg.WriteString(fmt.Sprintf("<pre>%s</pre>\n\n", html.EscapeString(record.DecisionJSON)))
 	}
 
 	// 基础执行结果
@@ -888,13 +886,13 @@ func (at *AutoTrader) buildFallbackMessage(record *logger.DecisionRecord) string
 			if i > 0 {
 				msg.WriteString(", ")
 			}
-			msg.WriteString(fmt.Sprintf("%s %s", decision.Symbol, decision.Action))
+			msg.WriteString(html.EscapeString(fmt.Sprintf("%s %s", decision.Symbol, decision.Action)))
 		}
 	} else {
 		msg.WriteString("无决策")
 	}
 
-	msg.WriteString(fmt.Sprintf("\n\n🤖 由 %s 自动推送", at.name))
+	msg.WriteString(fmt.Sprintf("\n\n🤖 由 %s 自动推送", html.EscapeString(at.name)))
 
 	return msg.String()
 }
