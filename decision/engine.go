@@ -644,6 +644,10 @@ func extractDecisions(response string) ([]Decision, error) {
 	if match := reDecisionTag.FindStringSubmatch(s); match != nil && len(match) > 1 {
 		jsonPart = strings.TrimSpace(match[1])
 		log.Printf("✓ 使用 <decision> 标签提取JSON")
+	} else if idx := strings.Index(s, "<decision>"); idx != -1 {
+		// 兼容缺失 </decision> 结尾的响应，直接截取标签之后的内容
+		jsonPart = strings.TrimSpace(s[idx+len("<decision>"):])
+		log.Printf("⚠️  <decision> 标签未闭合，使用起始标签后的内容解析")
 	} else {
 		// 后备方案：使用整个响应
 		jsonPart = s

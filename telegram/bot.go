@@ -1746,11 +1746,16 @@ func (tbm *TelegramBotManager) PushRawMessageToUser(telegramID int64, rawMsg str
 	}
 
 	const telegramLimit = 4096
-	chunks := splitRawMessage(formatted, telegramLimit)
+	// 预先转义为HTML，方便整体放入<pre>，确保可复制
+	escaped := html.EscapeString(formatted)
+	// 预留 <pre></pre> 包裹长度
+	preOverhead := len("<pre></pre>")
+	chunks := splitRawMessage(escaped, telegramLimit-preOverhead)
 
 	for i, chunk := range chunks {
-		msg := tgbotapi.NewMessage(telegramID, chunk)
-		msg.ParseMode = "" // 纯文本，确保原样展示
+		text := fmt.Sprintf("<pre>%s</pre>", chunk)
+		msg := tgbotapi.NewMessage(telegramID, text)
+		msg.ParseMode = "HTML" // 使用HTML预格式化，便于整体复制
 
 		if _, err := tbm.bot.Send(msg); err != nil {
 			log.Printf("❌ 发送原始消息失败 (段 %d/%d): %v", i+1, len(chunks), err)
