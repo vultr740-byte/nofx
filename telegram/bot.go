@@ -2176,7 +2176,7 @@ func analyzeMessageStructure(message string) MessageStructure {
 
 	lastIndex := 0
 	for _, section := range sections {
-		if index := strings.Index(message, section); index > lastIndex {
+		if index := strings.Index(message, section); index >= lastIndex && index != -1 {
 			structure.Sections = append(structure.Sections, Section{
 				Name:  section,
 				Start: index,
@@ -2189,6 +2189,31 @@ func analyzeMessageStructure(message string) MessageStructure {
 			}
 			lastIndex = index
 		}
+	}
+
+	// 保留在第一个已知章节前的前言内容（标题/状态行），避免被分段逻辑丢弃
+	if len(structure.Sections) > 0 && structure.Sections[0].Start > 0 {
+		preambleEnd := structure.Sections[0].Start
+		preamble := Section{
+			Name:  "preamble",
+			Start: 0,
+			End:   preambleEnd,
+		}
+		structure.Sections = append([]Section{preamble}, structure.Sections...)
+	}
+
+	// 如果未识别到任何章节，确保整个消息作为一个分段返回，避免内容被清空
+	if len(structure.Sections) == 0 {
+		structure.Sections = []Section{
+			{
+				Name:  "full",
+				Start: 0,
+				End:   len(message),
+			},
+		}
+	} else {
+		// 确保最后一段覆盖到消息末尾
+		structure.Sections[len(structure.Sections)-1].End = len(message)
 	}
 
 	return structure
