@@ -8,6 +8,7 @@ import (
 	"nofx/market"
 	"nofx/mcp"
 	"nofx/pool"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -179,7 +180,27 @@ func GetFullDecisionWithCustomPrompt(ctx *Context, mcpClient *mcp.Client, custom
 	// 🔍 DEBUG: 打印AI完整原始响应用于调试编码问题
 	log.Printf("=== AI完整响应 ===")
 	log.Printf("AI响应长度: %d 字符", len(aiResponse))
-	log.Printf("AI响应内容:\n%s", aiResponse)
+
+	// 分块打印长内容，避免终端截断
+	const maxChunkSize = 1500
+	responseLen := len(aiResponse)
+	if responseLen <= maxChunkSize {
+		log.Printf("AI响应内容:\n%s", aiResponse)
+	} else {
+		totalChunks := (responseLen + maxChunkSize - 1) / maxChunkSize
+		for i := 0; i < responseLen; i += maxChunkSize {
+			end := i + maxChunkSize
+			if end > responseLen {
+				end = responseLen
+			}
+			chunkNum := i/maxChunkSize + 1
+			log.Printf("AI响应内容(片段 %d/%d):\n%s", chunkNum, totalChunks, aiResponse[i:end])
+		}
+	}
+
+	// 同时保存完整AI响应到文件
+	logAIResponseToFile(aiResponse)
+
 	log.Printf("=== AI响应结束 ===")
 
 	// 4. 解析AI响应
@@ -952,4 +973,30 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 	}
 
 	return nil
+}
+
+// logAIResponseToFile 专门用于记录AI响应到文件
+func logAIResponseToFile(aiResponse string) {
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	filename := fmt.Sprintf("decision_logs/ai_response_%s.log", timestamp)
+
+	// 确保目录存在
+	if err := os.MkdirAll("decision_logs", 0755); err != nil {
+		log.Printf("❌ 创建decision_logs目录失败: %v", err)
+		return
+	}
+
+	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		log.Printf("❌ 创建AI响应日志文件失败: %v", err)
+		return
+	}
+	defer file.Close()
+
+	// 写入完整响应到文件
+	fmt.Fprintf(file, "AI响应时间: %s\n", timestamp)
+	fmt.Fprintf(file, "响应长度: %d 字符\n\n", len(aiResponse))
+	fmt.Fprintf(file, "完整响应内容:\n%s\n", aiResponse)
+
+	log.Printf("✅ AI响应已保存到文件: %s", filename)
 }

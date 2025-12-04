@@ -8,6 +8,7 @@ import (
 	"nofx/auth"
 	"nofx/config"
 	"nofx/crypto"
+	"nofx/logger"
 	"nofx/manager"
 	"nofx/market"
 	"nofx/pool"
@@ -189,6 +190,15 @@ func main() {
 	}
 	database.SetCryptoService(cryptoService)
 	log.Printf("✅ 加密服务初始化成功")
+
+	// 初始化日志系统
+	log.Printf("🔧 初始化日志系统...")
+	if err := logger.InitFromLogConfig(configFile.Log); err != nil {
+		log.Printf("❌ 日志系统初始化失败: %v", err)
+		log.Printf("🔄 使用默认日志系统")
+	} else {
+		log.Printf("✅ 日志系统初始化成功")
+	}
 
 	// 同步config.json到数据库
 	if err := syncConfigToDatabase(database, configFile); err != nil {
