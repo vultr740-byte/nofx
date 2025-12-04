@@ -556,7 +556,10 @@ func (at *AutoTrader) pushTradeExecutionToTelegram(action *logger.DecisionAction
 
 	message := builder.String()
 
-	if err := tgBotMgr.PushDecisionToUser(telegramID, message); err != nil {
+	// 包装为 <pre> 方便复制
+	formatted := fmt.Sprintf("<pre>%s</pre>", html.EscapeString(message))
+
+	if err := tgBotMgr.PushDecisionToUser(telegramID, formatted); err != nil {
 		log.Printf("⚠️ 推送交易执行信息到Telegram失败: %v", err)
 	}
 }
