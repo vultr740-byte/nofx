@@ -713,16 +713,6 @@ func (at *AutoTrader) formatRawAIResponse(record *logger.DecisionRecord) string 
 		b.WriteString("\n")
 	}
 
-	fmt.Fprintf(&b, "💰 账户状态\n")
-	fmt.Fprintf(&b, "• 总余额: %.2f USDT\n", record.AccountState.TotalBalance)
-	fmt.Fprintf(&b, "• 可用余额: %.2f USDT\n", record.AccountState.AvailableBalance)
-	if record.AccountState.PositionCount > 0 {
-		fmt.Fprintf(&b, "• 持仓数量: %d\n", record.AccountState.PositionCount)
-		fmt.Fprintf(&b, "• 未实现盈亏: %.2f USDT\n", record.AccountState.TotalUnrealizedProfit)
-	}
-
-	fmt.Fprintf(&b, "\n🤖 由 %s 自动推送", at.name)
-
 	return b.String()
 }
 

@@ -1670,23 +1670,17 @@ func (tbm *TelegramBotManager) PushDecisionToUser(telegramID int64, decisionMsg 
 	// 1. 预处理消息 - 确保UTF-8有效性和编码处理
 	processedMsg := tbm.preprocessMessage(decisionMsg)
 
-	// 2. 分段处理
-	chunks := splitDecisionMessage(processedMsg, telegramMessageChunkSize)
-	totalChunks := len(chunks)
-
-	if totalChunks > 1 {
-		log.Printf("📝 智能分段完成: %d 段，准备发送 (ChatID: %d)", totalChunks, telegramID)
-	}
+	// 2. 简单按长度分段（保持内容原样）
+	rawChunks := splitRawMessage(processedMsg, telegramMessageChunkSize)
+	totalChunks := len(rawChunks)
 
 	// 3. 发送每段并添加导航信息
 	successCount := 0
 	failedChunks := make([]int, 0)
 
-	for i, chunk := range chunks {
+	for i, chunk := range rawChunks {
 		chunkNum := i + 1
-
-		// 添加段头信息和导航提示
-		enhancedChunk := tbm.enhanceChunkWithNavigation(chunk, chunkNum, totalChunks)
+		enhancedChunk := tbm.enhanceChunkWithNavigation(decisionChunk{Text: chunk, IsJSON: strings.Contains(chunk, "```json")}, chunkNum, totalChunks)
 
 		log.Printf("📤 准备发送消息到 ChatID %d: 📄 AI决策报告 [%d/%d]", telegramID, chunkNum, totalChunks)
 
@@ -1701,7 +1695,7 @@ func (tbm *TelegramBotManager) PushDecisionToUser(telegramID int64, decisionMsg 
 			failedChunks = append(failedChunks, chunkNum)
 
 			// 如果发送失败，尝试简化格式重试
-			if retryErr := tbm.sendSimplifiedChunk(telegramID, chunk, chunkNum, totalChunks); retryErr != nil {
+			if retryErr := tbm.sendSimplifiedChunk(telegramID, decisionChunk{Text: chunk, IsJSON: strings.Contains(chunk, "```json")}, chunkNum, totalChunks); retryErr != nil {
 				log.Printf("❌ 第 %d 段简化重试也失败: %v", chunkNum, retryErr)
 				continue
 			} else {
