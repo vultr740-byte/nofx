@@ -2925,16 +2925,23 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 		return nil, fmt.Errorf("交易实例未初始化")
 	}
 
-	// 对非加密资产，使用 Hyperliquid Info API 提供的 allPerpMetas 进行 HIP-3 符号映射
+	// 基于 asset_type 控制符号映射/解析策略
 	resolvedSymbol := symbol
-	if assetType != "" && assetType != "crypto" && at.config.Exchange == "hyperliquid" {
+	if at.config.Exchange == "hyperliquid" {
 		if ht, ok := at.trader.(*HyperliquidTrader); ok {
-			mapped, err := ht.ResolveNonCryptoSymbol(symbol, true) // 与 /stocks 一致，使用主网 Info API
-			if err != nil {
-				return nil, fmt.Errorf("非加密资产符号映射失败: %w", err)
+			if strings.ToLower(strings.TrimSpace(assetType)) == "crypto" || assetType == "" {
+				// crypto：跳过 HIP-3 映射，直接标准化
+				resolvedSymbol = convertSymbolToHyperliquid(symbol)
+				log.Printf("✓ [HL] crypto 资产直通: %s -> %s", symbol, resolvedSymbol)
+			} else {
+				// 非 crypto：走 HIP-3 映射
+				mapped, err := ht.ResolveNonCryptoSymbol(symbol, true)
+				if err != nil {
+					return nil, fmt.Errorf("非加密资产符号映射失败: %w", err)
+				}
+				resolvedSymbol = mapped
+				log.Printf("🔄 [HL] 非加密资产映射: %s -> %s (asset_type=%s)", symbol, resolvedSymbol, assetType)
 			}
-			resolvedSymbol = mapped
-			log.Printf("🔄 非加密资产符号映射: %s -> %s (asset_type=%s)", symbol, resolvedSymbol, assetType)
 		}
 	}
 

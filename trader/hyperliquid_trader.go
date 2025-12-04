@@ -216,10 +216,10 @@ func (t *HyperliquidTrader) fetchPerpMetaAsset(coin string, forceMainnet bool) (
 				// 详细日志记录 API 返回的两个精度值
 				if asset.PxDecimals != nil {
 					log.Printf("🔍 [HIP-3 API] %s - SzDecimals: %d, PxDecimals: %d",
-							   name, asset.SzDecimals, *asset.PxDecimals)
+						name, asset.SzDecimals, *asset.PxDecimals)
 				} else {
 					log.Printf("🔍 [HIP-3 API] %s - SzDecimals: %d, PxDecimals: nil (将使用SzDecimals作为价格精度)",
-							   name, asset.SzDecimals)
+						name, asset.SzDecimals)
 				}
 				t.hip3Meta[name] = asset
 				return name, &asset, nil
@@ -756,7 +756,7 @@ func (t *HyperliquidTrader) SetMarginMode(symbol string, isCrossMargin bool) err
 
 // SetLeverage 设置杠杆
 func (t *HyperliquidTrader) SetLeverage(symbol string, leverage int) error {
-	coin, err := t.resolveCoin(symbol)
+	coin, err := t.resolveCoin(symbol, "")
 	if err != nil {
 		return err
 	}
@@ -801,7 +801,7 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 
 	// Hyperliquid symbol格式
 	log.Printf("📋 [订单执行流程] 步骤3: 解析币种符号")
-	coin, err := t.resolveCoin(symbol)
+	coin, err := t.resolveCoin(symbol, "")
 	if err != nil {
 		log.Printf("❌ [订单执行流程] 步骤3失败: 币种解析失败: %v", err)
 		return nil, err
@@ -886,7 +886,7 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 		Coin:  coin,
 		IsBuy: true,
 		Size:  roundedQuantity, // 使用四舍五入后的数量
-		Price: validatedPrice, // 使用验证后的价格（对股票会进行截断）
+		Price: validatedPrice,  // 使用验证后的价格（对股票会进行截断）
 		OrderType: hyperliquid.OrderType{
 			Limit: &hyperliquid.LimitOrderType{
 				Tif: hyperliquid.TifIoc, // Immediate or Cancel (类似市价单)
@@ -982,7 +982,7 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 
 	// Hyperliquid symbol格式
 	log.Printf("📋 [订单执行流程] 步骤3: 解析币种符号")
-	coin, err := t.resolveCoin(symbol)
+	coin, err := t.resolveCoin(symbol, "")
 	if err != nil {
 		log.Printf("❌ [订单执行流程] 步骤3失败: 币种解析失败: %v", err)
 		return nil, err
@@ -1067,7 +1067,7 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 		Coin:  coin,
 		IsBuy: false,
 		Size:  roundedQuantity, // 使用四舍五入后的数量
-		Price: validatedPrice, // 使用验证后的价格（对股票会进行截断）
+		Price: validatedPrice,  // 使用验证后的价格（对股票会进行截断）
 		OrderType: hyperliquid.OrderType{
 			Limit: &hyperliquid.LimitOrderType{
 				Tif: hyperliquid.TifIoc,
@@ -1156,7 +1156,7 @@ func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (map[stri
 	}
 
 	// Hyperliquid symbol格式
-	coin, err := t.resolveCoin(symbol)
+	coin, err := t.resolveCoin(symbol, "")
 	if err != nil {
 		return nil, err
 	}
@@ -1231,7 +1231,7 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (map[str
 	}
 
 	// Hyperliquid symbol格式
-	coin, err := t.resolveCoin(symbol)
+	coin, err := t.resolveCoin(symbol, "")
 	if err != nil {
 		return nil, err
 	}
@@ -1305,7 +1305,7 @@ func (t *HyperliquidTrader) CancelStopLossOrders(symbol string) error {
 
 	log.Printf("  🔍 %s 发现 %d 个触发挂单，开始分类...", symbol, len(triggerOrders))
 
-	coin, err := t.resolveCoin(symbol)
+	coin, err := t.resolveCoin(symbol, "")
 	if err != nil {
 		return err
 	}
@@ -1352,7 +1352,7 @@ func (t *HyperliquidTrader) CancelTakeProfitOrders(symbol string) error {
 		return fmt.Errorf("获取触发挂单失败: %w", err)
 	}
 
-	coin, err := t.resolveCoin(symbol)
+	coin, err := t.resolveCoin(symbol, "")
 	if err != nil {
 		return err
 	}
@@ -1380,7 +1380,7 @@ func (t *HyperliquidTrader) CancelTakeProfitOrders(symbol string) error {
 
 // CancelAllOrders 取消该币种的所有挂单
 func (t *HyperliquidTrader) CancelAllOrders(symbol string) error {
-	coin, err := t.resolveCoin(symbol)
+	coin, err := t.resolveCoin(symbol, "")
 	if err != nil {
 		return err
 	}
@@ -1409,7 +1409,7 @@ func (t *HyperliquidTrader) CancelAllOrders(symbol string) error {
 
 // CancelStopOrders 取消该币种的止盈/止损单（用于调整止盈止损位置）
 func (t *HyperliquidTrader) CancelStopOrders(symbol string) error {
-	coin, err := t.resolveCoin(symbol)
+	coin, err := t.resolveCoin(symbol, "")
 	if err != nil {
 		return err
 	}
@@ -1693,7 +1693,7 @@ func (t *HyperliquidTrader) getPositionSide(symbol string) (string, error) {
 
 // GetMarketPrice 获取市场价格
 func (t *HyperliquidTrader) GetMarketPrice(symbol string) (float64, error) {
-	coin, err := t.resolveCoin(symbol)
+	coin, err := t.resolveCoin(symbol, "")
 	if err != nil {
 		return 0, err
 	}
@@ -1825,8 +1825,20 @@ func (t *HyperliquidTrader) FormatQuantity(symbol string, quantity float64) (str
 
 // getSzDecimals 获取币种的数量精度
 func (t *HyperliquidTrader) getSzDecimals(coin string) int {
-	// 严格从 HIP-3 API 获取 SzDecimals，不使用任何默认值
 	normalizedCoin := normalizeHip3Symbol(coin)
+
+	// 优先处理常规加密资产（无冒号符号）- 使用 Meta.Universe 中的精度
+	if !strings.Contains(normalizedCoin, ":") {
+		if t.meta != nil && t.meta.Universe != nil {
+			for _, asset := range t.meta.Universe {
+				if strings.EqualFold(asset.Name, normalizedCoin) {
+					return asset.SzDecimals
+				}
+			}
+		}
+		log.Printf("❌ [Hyperliquid] Meta.Universe 未找到 %s 的 SzDecimals（crypto 资产）", normalizedCoin)
+		panic(fmt.Sprintf("SzDecimals not found in Meta.Universe for %s. Meta may be stale or API unavailable.", coin))
+	}
 
 	// 首先检查 HIP-3 缓存
 	if t.hip3Meta != nil {
@@ -1894,7 +1906,7 @@ func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
 	normalizedCoin := normalizeHip3Symbol(coin)
 
 	// Check HIP-3 cache first - 优先使用 PxDecimals
-	if t.hip3Meta != nil {
+	if t.hip3Meta != nil && strings.Contains(normalizedCoin, ":") {
 		if asset, ok := t.hip3Meta[normalizedCoin]; ok {
 			if asset.PxDecimals != nil {
 				log.Printf("✅ [HIP-3] %s 使用 API PxDecimals: %d 位小数", normalizedCoin, *asset.PxDecimals)
@@ -2093,14 +2105,14 @@ func (t *HyperliquidTrader) validateOrderPrice(coin string, price float64, isBuy
 func (t *HyperliquidTrader) validatePriceStep(coin string, price float64) (float64, error) {
 	if t.isStockAsset(coin) {
 		// 先截断到2位小数，确保符合步长要求
-		truncatedPrice := math.Floor(price*100) / 100  // 使用Floor截断，不是Round四舍五入
+		truncatedPrice := math.Floor(price*100) / 100 // 使用Floor截断，不是Round四舍五入
 		remainder := math.Mod(truncatedPrice*100, 1)
 		if remainder > 1e-10 {
 			log.Printf("❌ [HIP-3] 股票价格步长验证失败: %s 价格=%.8f, 余数=%.10f", coin, price, remainder)
 			return price, fmt.Errorf("股票价格步长验证失败: %s 价格 %.8f 必须是0.01的整数倍 (当前余数: %.10f)", coin, price, remainder)
 		}
 		log.Printf("✅ [HIP-3] 股票价格步长验证通过: %s %.8f -> %.8f (截断)", coin, price, truncatedPrice)
-		return truncatedPrice, nil  // 返回截断后的价格用于订单
+		return truncatedPrice, nil // 返回截断后的价格用于订单
 	}
 	return price, nil
 }
@@ -2257,7 +2269,7 @@ func (t *HyperliquidTrader) diagnosePriceIssues(symbol string) error {
 	log.Printf("🧪 [HIP-3] 开始价格处理诊断: %s", symbol)
 
 	// Test symbol resolution
-	coin, err := t.resolveCoin(symbol)
+	coin, err := t.resolveCoin(symbol, "")
 	if err != nil {
 		log.Printf("❌ 符号解析失败: %s -> %v", symbol, err)
 		return fmt.Errorf("symbol resolution failed: %w", err)
@@ -2345,19 +2357,31 @@ func convertSymbolFromHyperliquid(coin string) string {
 }
 
 // resolveCoin 支持HIP-3股票符号（带冒号），优先直接匹配，否则尝试通过AllMids匹配后缀
-func (t *HyperliquidTrader) resolveCoin(symbol string) (string, error) {
+// assetType: "crypto" 或其它（非空优先使用）；如果为空，按符号形态推断
+func (t *HyperliquidTrader) resolveCoin(symbol string, assetType string) (string, error) {
 	// 先处理显式符号
 	coin := convertSymbolToHyperliquid(symbol)
 	if strings.Contains(coin, ":") {
 		return coin, nil
 	}
 
-	// 始终优先使用 Info API 的 allPerpMetas 做HIP-3匹配（股票等非加密资产来源）
-	if coinFromInfo, err := t.resolveFromInfoAPI(coin, false); err == nil && coinFromInfo != "" {
-		log.Printf("🔄 InfoAPI 优先匹配到资产: %s (请求符号: %s)", coinFromInfo, symbol)
-		return coinFromInfo, nil
-	} else if err != nil {
-		log.Printf("⚠️ InfoAPI 优先匹配失败: %v", err)
+	loweredAssetType := strings.ToLower(strings.TrimSpace(assetType))
+	// crypto 类型：仅走 AllMids / 直接匹配，不做 HIP-3 映射
+	if loweredAssetType == "crypto" || loweredAssetType == "" {
+		allMids, err := t.exchange.Info().AllMids(t.ctx)
+		if err != nil {
+			return "", fmt.Errorf("获取交易对列表失败: %w", err)
+		}
+
+		if _, ok := allMids[coin]; ok {
+			return coin, nil
+		}
+		for k := range allMids {
+			if strings.EqualFold(k, coin) {
+				return k, nil
+			}
+		}
+		return "", fmt.Errorf("未找到交易对: %s", symbol)
 	}
 
 	// 查询所有mid价格以获取有效交易对列表
@@ -2375,6 +2399,14 @@ func (t *HyperliquidTrader) resolveCoin(symbol string) (string, error) {
 		if strings.EqualFold(k, coin) {
 			return k, nil
 		}
+	}
+
+	// 若纯币种未命中，再尝试 InfoAPI 做 HIP-3 匹配（股票等非加密资产）
+	if coinFromInfo, err := t.resolveFromInfoAPI(coin, false); err == nil && coinFromInfo != "" {
+		log.Printf("🔄 InfoAPI 匹配到资产: %s (请求符号: %s)", coinFromInfo, symbol)
+		return coinFromInfo, nil
+	} else if err != nil {
+		log.Printf("⚠️ InfoAPI 匹配失败: %v", err)
 	}
 
 	// 尝试匹配带前缀的HIP-3资产（形如 xyz:TSLA）
