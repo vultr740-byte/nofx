@@ -1730,6 +1730,37 @@ func (tbm *TelegramBotManager) PushDecisionToUser(telegramID int64, decisionMsg 
 	return nil
 }
 
+// PushRawMessageToUser 将AI原始响应直接推送到用户（无格式化/转义）
+func (tbm *TelegramBotManager) PushRawMessageToUser(telegramID int64, rawMsg string) error {
+	if tbm.bot == nil {
+		return fmt.Errorf("Telegram Bot未初始化")
+	}
+
+	if rawMsg == "" {
+		return fmt.Errorf("原始消息为空")
+	}
+
+	const telegramLimit = 4096
+	chunks := splitRawMessage(rawMsg, telegramLimit)
+
+	for i, chunk := range chunks {
+		msg := tgbotapi.NewMessage(telegramID, chunk)
+		msg.ParseMode = "" // 纯文本，确保原样展示
+
+		if _, err := tbm.bot.Send(msg); err != nil {
+			log.Printf("❌ 发送原始消息失败 (段 %d/%d): %v", i+1, len(chunks), err)
+			return err
+		}
+
+		if len(chunks) > 1 && i < len(chunks)-1 {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+
+	log.Printf("✅ 成功推送原始AI响应 (%d段, ChatID: %d)", len(chunks), telegramID)
+	return nil
+}
+
 // preprocessMessage 预处理消息确保有效性
 func (tbm *TelegramBotManager) preprocessMessage(message string) string {
 	// UTF-8有效性检查
@@ -2375,6 +2406,26 @@ func splitDecisionMessage(text string, chunkSize int) []decisionChunk {
 
 	log.Printf("✅ 智能分段完成: %d 段", len(result))
 	return result
+}
+
+// splitRawMessage 将长消息按字符数切分，保持内容原样
+func splitRawMessage(text string, limit int) []string {
+	if limit <= 0 {
+		return []string{text}
+	}
+
+	runes := []rune(text)
+	if len(runes) == 0 {
+		return []string{text}
+	}
+
+	var chunks []string
+	for len(runes) > limit {
+		chunks = append(chunks, string(runes[:limit]))
+		runes = runes[limit:]
+	}
+	chunks = append(chunks, string(runes))
+	return chunks
 }
 
 func wrapPlainChunks(chunks []string, isJSON bool) []decisionChunk {

@@ -12,12 +12,13 @@ import (
 
 // DecisionRecord 决策记录
 type DecisionRecord struct {
-	Timestamp      time.Time          `json:"timestamp"`       // 决策时间
-	CycleNumber    int                `json:"cycle_number"`    // 周期编号
-	SystemPrompt   string             `json:"system_prompt"`   // 系统提示词（发送给AI的系统prompt）
-	InputPrompt    string             `json:"input_prompt"`    // 发送给AI的输入prompt
-	CoTTrace       string             `json:"cot_trace"`       // AI思维链（输出）
-	DecisionJSON   string             `json:"decision_json"`   // 决策JSON
+	Timestamp      time.Time          `json:"timestamp"`     // 决策时间
+	CycleNumber    int                `json:"cycle_number"`  // 周期编号
+	SystemPrompt   string             `json:"system_prompt"` // 系统提示词（发送给AI的系统prompt）
+	InputPrompt    string             `json:"input_prompt"`  // 发送给AI的输入prompt
+	CoTTrace       string             `json:"cot_trace"`     // AI思维链（输出）
+	DecisionJSON   string             `json:"decision_json"` // 决策JSON
+	RawAIResponse  string             `json:"raw_ai_response,omitempty"`
 	AccountState   AccountSnapshot    `json:"account_state"`   // 账户状态快照
 	Positions      []PositionSnapshot `json:"positions"`       // 持仓快照
 	CandidateCoins []string           `json:"candidate_coins"` // 候选币种列表

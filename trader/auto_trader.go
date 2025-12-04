@@ -465,15 +465,29 @@ func (at *AutoTrader) pushDecisionToTelegram(record *logger.DecisionRecord) {
 		return
 	}
 
-	// 格式化决策消息
-	decisionMsg := at.formatDecisionForTelegram(record)
-
 	// 将userID转换为int64（Telegram ID）
 	telegramID, err := strconv.ParseInt(at.userID, 10, 64)
 	if err != nil {
 		log.Printf("⚠️ 无法解析Telegram ID: %v", err)
 		return
 	}
+
+	// 若存在AI原始响应，优先原样推送，不做任何格式变动
+	if record.RawAIResponse != "" {
+		if rawPusher, ok := at.telegramBotManager.(interface {
+			PushRawMessageToUser(telegramID int64, rawMsg string) error
+		}); ok {
+			if err := rawPusher.PushRawMessageToUser(telegramID, record.RawAIResponse); err != nil {
+				log.Printf("⚠️ 推送原始AI响应到Telegram失败: %v", err)
+			} else {
+				log.Printf("✅ 成功推送原始AI响应到Telegram (用户ID: %s)", at.userID)
+				return
+			}
+		}
+	}
+
+	// 格式化决策消息
+	decisionMsg := at.formatDecisionForTelegram(record)
 
 	// 推送消息到Telegram（同步，保证在执行结果之前发送）
 	if err := tgBotMgr.PushDecisionToUser(telegramID, decisionMsg); err != nil {
@@ -1322,6 +1336,7 @@ func (at *AutoTrader) runCycle() error {
 		record.SystemPrompt = decodeAllEncodings(decision.SystemPrompt)
 		record.InputPrompt = decodeAllEncodings(decision.UserPrompt)
 		record.CoTTrace = decodeAllEncodings(decision.CoTTrace)
+		record.RawAIResponse = decision.RawResponse
 		if len(decision.Decisions) > 0 {
 			decisionJSON, _ := json.MarshalIndent(decision.Decisions, "", "  ")
 			// 确保JSON在存储时也通过统一解码（Unicode + HTML实体）

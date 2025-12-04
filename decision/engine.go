@@ -179,6 +179,7 @@ type FullDecision struct {
 	UserPrompt   string     `json:"user_prompt"`   // 发送给AI的输入prompt
 	CoTTrace     string     `json:"cot_trace"`     // 思维链分析（AI输出）
 	Decisions    []Decision `json:"decisions"`     // 具体决策列表
+	RawResponse  string     `json:"raw_response,omitempty"`
 	Timestamp    time.Time  `json:"timestamp"`
 }
 
@@ -212,6 +213,10 @@ func GetFullDecisionWithCustomPrompt(ctx *Context, mcpClient *mcp.Client, custom
 
 	// 6. 解析处理后的响应
 	decision, err := parseFullDecisionResponse(processedResponse, ctx.Account.TotalEquity, ctx.BTCETHLeverage, ctx.AltcoinLeverage)
+	if decision == nil {
+		decision = &FullDecision{}
+	}
+	decision.RawResponse = aiResponse
 	if err != nil {
 		return decision, fmt.Errorf("解析AI响应失败: %w", err)
 	}
