@@ -176,6 +176,12 @@ func GetFullDecisionWithCustomPrompt(ctx *Context, mcpClient *mcp.Client, custom
 		return nil, fmt.Errorf("调用AI API失败: %w", err)
 	}
 
+	// 🔍 DEBUG: 打印AI完整原始响应用于调试编码问题
+	log.Printf("=== AI完整响应 ===")
+	log.Printf("AI响应长度: %d 字符", len(aiResponse))
+	log.Printf("AI响应内容:\n%s", aiResponse)
+	log.Printf("=== AI响应结束 ===")
+
 	// 4. 解析AI响应
 	decision, err := parseFullDecisionResponse(aiResponse, ctx.Account.TotalEquity, ctx.BTCETHLeverage, ctx.AltcoinLeverage)
 	if err != nil {
@@ -512,6 +518,17 @@ func parseFullDecisionResponse(aiResponse string, accountEquity float64, btcEthL
 	// 1. 提取思维链
 	cotTrace := extractCoTTrace(aiResponse)
 
+	// 🔍 DEBUG: 打印解析后的思维链
+	log.Printf("=== 解析后的思维链 ===")
+	log.Printf("思维链长度: %d 字符", len(cotTrace))
+	if len(cotTrace) > 500 {
+		log.Printf("思维链内容(前500字符):\n%s", cotTrace[:500])
+		log.Printf("思维链内容(截断)...")
+	} else {
+		log.Printf("思维链内容:\n%s", cotTrace)
+	}
+	log.Printf("=== 思维链结束 ===")
+
 	// 2. 提取JSON决策列表
 	decisions, err := extractDecisions(aiResponse)
 	if err != nil {
@@ -520,6 +537,21 @@ func parseFullDecisionResponse(aiResponse string, accountEquity float64, btcEthL
 			Decisions: []Decision{},
 		}, fmt.Errorf("提取决策失败: %w", err)
 	}
+
+	// 🔍 DEBUG: 打印解析后的决策
+	log.Printf("=== 解析后的决策 ===")
+	log.Printf("决策数量: %d", len(decisions))
+	for i, decision := range decisions {
+		log.Printf("决策 #%d: %s %s", i+1, decision.Symbol, decision.Action)
+		if decision.Reasoning != "" {
+			if len(decision.Reasoning) > 200 {
+				log.Printf("  Reasoning(前200字符): %s...", decision.Reasoning[:200])
+			} else {
+				log.Printf("  Reasoning: %s", decision.Reasoning)
+			}
+		}
+	}
+	log.Printf("=== 决策结束 ===")
 
 	// 3. 验证决策
 	if err := validateDecisions(decisions, accountEquity, btcEthLeverage, altcoinLeverage); err != nil {
