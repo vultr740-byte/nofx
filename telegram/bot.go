@@ -1753,7 +1753,8 @@ func (tbm *TelegramBotManager) PushRawMessageToUser(telegramID int64, rawMsg str
 		const telegramLimit = 3500
 		// 预先转义为HTML，方便整体放入<pre>，确保可复制
 		escaped := html.EscapeString(formatted)
-		// 预留 <pre></pre> 包裹长度
+
+		// 如果原始段落已经包含 ```json 代码块，尽量保持与决策块一致的整体发送
 		preOverhead := len("<pre></pre>")
 		chunks := splitRawMessage(escaped, telegramLimit-preOverhead)
 
@@ -2508,7 +2509,10 @@ func splitRawSections(text string) []string {
 			sections = append(sections, decision)
 		}
 		if after := strings.TrimSpace(text[end:]); after != "" {
-			sections = append(sections, after)
+			after = trimLeadingFence(after)
+			if after != "" {
+				sections = append(sections, after)
+			}
 		}
 	} else {
 		// 无闭合标签，剩余全部作为决策块
@@ -2521,6 +2525,24 @@ func splitRawSections(text string) []string {
 		return []string{text}
 	}
 	return sections
+}
+
+// trimLeadingFence 去掉开头单独一行的 ``` 代码块标记，避免决策后内容多出一个围栏
+func trimLeadingFence(s string) string {
+	lines := strings.Split(s, "\n")
+	i := 0
+	// 跳过空行
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	if i < len(lines) && strings.TrimSpace(lines[i]) == "```" {
+		i++
+		// 跳过后续空行
+		for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+			i++
+		}
+	}
+	return strings.Join(lines[i:], "\n")
 }
 
 func wrapPlainChunks(chunks []string, isJSON bool) []decisionChunk {
