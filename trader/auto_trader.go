@@ -659,11 +659,50 @@ func (at *AutoTrader) formatDecisionSummary(decisions []logger.DecisionAction) s
 	}
 }
 
-// 5. 如果遇到编码错误，检查：
-//   - 数据源是否包含不可见字符
-//   - 字符串拼接是否正确处理了转义
-//   - 是否有直接从外部源复制的内容
-func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) string {
+// preprocessDecisionRecord 统一处理决策记录中的所有编码问题
+func (at *AutoTrader) preprocessDecisionRecord(record *logger.DecisionRecord) *logger.DecisionRecord {
+	// 创建副本避免修改原始记录
+	processed := *record
+
+	// 处理CoT思维链编码问题
+	processed.CoTTrace = decodeAllEncodings(record.CoTTrace)
+
+	// 处理JSON编码问题
+	if record.DecisionJSON != "" {
+		processed.DecisionJSON = decodeAllEncodings(record.DecisionJSON)
+	}
+
+	// 确保UTF-8有效性
+	processed.CoTTrace = ensureUTF8Validity(processed.CoTTrace)
+	processed.DecisionJSON = ensureUTF8Validity(processed.DecisionJSON)
+
+	// 处理错误信息编码
+	if record.ErrorMessage != "" {
+		processed.ErrorMessage = decodeAllEncodings(record.ErrorMessage)
+		processed.ErrorMessage = ensureUTF8Validity(processed.ErrorMessage)
+	}
+
+	return &processed
+}
+
+// ensureUTF8Validity 确保字符串的UTF-8有效性
+func ensureUTF8Validity(text string) string {
+	// 移除无效的UTF-8字符和不可见控制字符
+	valid := make([]rune, 0, len(text))
+	for _, r := range text {
+		// 保留有效的UTF-8字符，移除控制字符（除了换行和制表符）
+		if r == '\n' || r == '\t' || r == '\r' {
+			valid = append(valid, r)
+		} else if r >= 32 && r <= 126 || r > 127 {
+			// 保留可打印ASCII字符和有效的多字节UTF-8字符
+			valid = append(valid, r)
+		}
+	}
+	return string(valid)
+}
+
+// buildCompleteDecisionMessage 构建完整的决策消息（不截断）
+func (at *AutoTrader) buildCompleteDecisionMessage(record *logger.DecisionRecord) string {
 	var statusEmoji string
 	if record.Success {
 		statusEmoji = "✅"
@@ -678,40 +717,35 @@ func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) s
 		title += " - " + decisionSummary
 	}
 
-	msg := fmt.Sprintf(`%s %s
+	var msg strings.Builder
+	msg.Grow(10000) // 预分配足够空间
 
-📊 周期信息
-• 决策时间: %s
-• 周期编号: #%d
-
-🤖 AI思维链`,
+	// 基础信息
+	msg.WriteString(fmt.Sprintf("%s %s\n\n📊 周期信息\n• 决策时间: %s\n• 周期编号: #%d\n\n🤖 AI思维链",
 		statusEmoji,
 		title,
 		record.Timestamp.Format("2006-01-02 15:04:05"),
-		record.CycleNumber,
-	)
+		record.CycleNumber))
 
-	// 添加AI思维链（使用智能截断）
-	// ⚠️ 重要：CoTTrace在存储时已经通过decodeUnicodeEscapes确保UTF-8安全
+	// 完整思维链（不截断）
 	if record.CoTTrace != "" {
-		cotTrace := record.CoTTrace
-		// 使用智能截断，提高长度限制到4000字符，保持逻辑结构
-		if len(cotTrace) > 4000 {
-			cotTrace = smartTruncate(cotTrace, 4000)
-		}
-		msg += fmt.Sprintf("\n```\n%s\n```", cotTrace)
+		msg.WriteString(fmt.Sprintf("\n```\n%s\n```", record.CoTTrace))
 	}
 
-	// 添加决策信息（使用格式化JSON）
-	// ⚠️ 重要：使用formatDecisionJSON确保Unicode解码和proper indentation
+	// 处理JSON部分（验证有效性）
 	if record.DecisionJSON != "" {
-		formattedJSON := formatDecisionJSON(record.DecisionJSON)
-		msg += fmt.Sprintf("\n\n📋 决策JSON\n```json\n%s\n```", formattedJSON)
+		if at.isValidJSON(record.DecisionJSON) {
+			formattedJSON := formatDecisionJSON(record.DecisionJSON)
+			msg.WriteString(fmt.Sprintf("\n\n📋 决策JSON\n```json\n%s\n```", formattedJSON))
+		} else {
+			// JSON格式化失败，提供原始内容
+			msg.WriteString(fmt.Sprintf("\n\n📋 决策数据\n```\n%s\n```", record.DecisionJSON))
+		}
 	}
 
 	// 添加执行结果
 	if len(record.Decisions) > 0 {
-		msg += "\n\n⚡ 执行结果"
+		msg.WriteString("\n\n⚡ 执行结果")
 		for _, decision := range record.Decisions {
 			decisionStatus := "❌"
 			if decision.Success {
@@ -721,35 +755,148 @@ func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) s
 					decisionStatus = "✅"
 				}
 			}
-			msg += fmt.Sprintf("\n%s %s %s", decisionStatus, decision.Symbol, decision.Action)
+			msg.WriteString(fmt.Sprintf("\n%s %s %s", decisionStatus, decision.Symbol, decision.Action))
 			if decision.Error != "" {
-				msg += fmt.Sprintf(" (%s)", decision.Error)
+				msg.WriteString(fmt.Sprintf(" (%s)", decision.Error))
 			}
 		}
 	}
 
 	// 添加账户状态
-	msg += fmt.Sprintf("\n\n💰 账户状态")
-	msg += fmt.Sprintf("\n• 总余额: %.2f USDT", record.AccountState.TotalBalance)
-	msg += fmt.Sprintf("\n• 可用余额: %.2f USDT", record.AccountState.AvailableBalance)
+	msg.WriteString(fmt.Sprintf("\n\n💰 账户状态"))
+	msg.WriteString(fmt.Sprintf("\n• 总余额: %.2f USDT", record.AccountState.TotalBalance))
+	msg.WriteString(fmt.Sprintf("\n• 可用余额: %.2f USDT", record.AccountState.AvailableBalance))
 	if record.AccountState.PositionCount > 0 {
-		msg += fmt.Sprintf("\n• 持仓数量: %d", record.AccountState.PositionCount)
-		msg += fmt.Sprintf("\n• 未实现盈亏: %.2f USDT", record.AccountState.TotalUnrealizedProfit)
+		msg.WriteString(fmt.Sprintf("\n• 持仓数量: %d", record.AccountState.PositionCount))
+		msg.WriteString(fmt.Sprintf("\n• 未实现盈亏: %.2f USDT", record.AccountState.TotalUnrealizedProfit))
 	}
 
 	// 添加错误信息
-	// ⚠️ 重要：确保错误消息是UTF-8安全的
 	if record.ErrorMessage != "" {
 		safeError := sanitizeErrorMessage(record.ErrorMessage)
 		if safeError == "" {
 			safeError = "AI 服务暂时不可用，请稍后重试或检查网络/模型配置"
 		}
-		msg += fmt.Sprintf("\n\n⚠️ 错误信息: %s", safeError)
+		msg.WriteString(fmt.Sprintf("\n\n⚠️ 错误信息: %s", safeError))
 	}
 
-	msg += fmt.Sprintf("\n\n🤖 由 %s 自动推送", at.name)
+	msg.WriteString(fmt.Sprintf("\n\n🤖 由 %s 自动推送", at.name))
+
+	return msg.String()
+}
+
+// isValidJSON 验证JSON字符串是否有效
+func (at *AutoTrader) isValidJSON(jsonStr string) bool {
+	var js json.RawMessage
+	return json.Unmarshal([]byte(jsonStr), &js) == nil
+}
+
+// validateMessageIntegrity 验证消息完整性
+func (at *AutoTrader) validateMessageIntegrity(msg string, originalRecord *logger.DecisionRecord) error {
+	// 1. 长度验证
+	if len(msg) == 0 {
+		return fmt.Errorf("消息为空")
+	}
+
+	// 2. 关键内容验证
+	if originalRecord.CoTTrace != "" && !strings.Contains(msg, "🤖 AI思维链") {
+		return fmt.Errorf("思维链内容丢失")
+	}
+
+	if originalRecord.DecisionJSON != "" && !strings.Contains(msg, "📋 决策JSON") {
+		return fmt.Errorf("决策JSON内容丢失")
+	}
+
+	// 3. UTF-8有效性验证
+	if !utf8.ValidString(msg) {
+		return fmt.Errorf("消息包含无效UTF-8字符")
+	}
+
+	// 4. 逻辑完整性验证
+	expectedSections := []string{
+		"📊 周期信息",
+		"💰 账户状态",
+	}
+
+	for _, section := range expectedSections {
+		if !strings.Contains(msg, section) {
+			log.Printf("⚠️ 缺少预期章节: %s", section)
+		}
+	}
+
+	return nil
+}
+
+// 5. 如果遇到编码错误，检查：
+//   - 数据源是否包含不可见字符
+//   - 字符串拼接是否正确处理了转义
+//   - 是否有直接从外部源复制的内容
+func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) string {
+	// 1. 统一编码处理 - 在最开始就处理所有编码问题
+	processedRecord := at.preprocessDecisionRecord(record)
+
+	// 2. 构建完整消息（不截断）
+	msg := at.buildCompleteDecisionMessage(processedRecord)
+
+	// 3. 验证消息完整性
+	if err := at.validateMessageIntegrity(msg, record); err != nil {
+		log.Printf("⚠️ 消息完整性验证失败: %v", err)
+		// 如果验证失败，尝试构建基础消息
+		msg = at.buildFallbackMessage(processedRecord)
+	}
 
 	return msg
+}
+
+// buildFallbackMessage 构建备用消息（当完整性验证失败时使用）
+func (at *AutoTrader) buildFallbackMessage(record *logger.DecisionRecord) string {
+	var statusEmoji string
+	if record.Success {
+		statusEmoji = "✅"
+	} else {
+		statusEmoji = "❌"
+	}
+
+	log.Printf("🔧 构建备用消息确保内容完整性")
+
+	// 简化的备用消息，确保核心信息不丢失
+	var msg strings.Builder
+	msg.Grow(5000)
+
+	msg.WriteString(fmt.Sprintf("%s AI决策报告（备用格式）\n\n", statusEmoji))
+	msg.WriteString(fmt.Sprintf("📊 决策时间: %s\n", record.Timestamp.Format("2006-01-02 15:04:05")))
+	msg.WriteString(fmt.Sprintf("📊 周期编号: #%d\n\n", record.CycleNumber))
+
+	// 包含思维链（原样，不截断）
+	if record.CoTTrace != "" {
+		msg.WriteString("🤖 AI思维链:\n")
+		msg.WriteString(record.CoTTrace)
+		msg.WriteString("\n\n")
+	}
+
+	// 包含决策JSON（原样）
+	if record.DecisionJSON != "" {
+		msg.WriteString("📋 决策数据:\n")
+		msg.WriteString(record.DecisionJSON)
+		msg.WriteString("\n\n")
+	}
+
+	// 基础执行结果
+	msg.WriteString("⚡ 执行结果: ")
+	if len(record.Decisions) > 0 {
+		for i, decision := range record.Decisions {
+			if i > 0 {
+				msg.WriteString(", ")
+			}
+			msg.WriteString(fmt.Sprintf("%s %s", decision.Symbol, decision.Action))
+		}
+	} else {
+		msg.WriteString("无决策")
+	}
+
+	msg.WriteString(fmt.Sprintf("\n\n🤖 由 %s 自动推送", at.name))
+
+	return msg.String()
 }
 
 // Run 运行自动交易主循环

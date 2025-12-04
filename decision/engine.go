@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // 预编译正则表达式（性能优化：避免每次调用时重新编译）
@@ -53,6 +54,32 @@ func decodeAllEncodings(text string) string {
 	text = strings.ReplaceAll(text, "\\u005c", "\\")
 
 	return text
+}
+
+// ensureUTF8Validity 确保字符串是有效的UTF-8编码
+func ensureUTF8Validity(text string) string {
+	if text == "" {
+		return text
+	}
+
+	// 检查是否为有效的UTF-8
+	if utf8.ValidString(text) {
+		return text
+	}
+
+	// 如果无效，尝试修复UTF-8编码
+	validBytes := make([]byte, 0, len(text))
+	for i := 0; i < len(text); {
+		r, size := utf8.DecodeRuneInString(text[i:])
+		if r == utf8.RuneError && size == 1 {
+			// 遇到无效字符，跳过或替换
+			continue
+		}
+		validBytes = append(validBytes, text[i:i+size]...)
+		i += size
+	}
+
+	return string(validBytes)
 }
 
 // PositionInfo 持仓信息
@@ -177,34 +204,14 @@ func GetFullDecisionWithCustomPrompt(ctx *Context, mcpClient *mcp.Client, custom
 		return nil, fmt.Errorf("调用AI API失败: %w", err)
 	}
 
-	// 🔍 DEBUG: 打印AI完整原始响应用于调试编码问题
-	log.Printf("=== AI完整响应 ===")
-	log.Printf("AI响应长度: %d 字符", len(aiResponse))
+	// 4. 立即统一解码 - 获取完整响应后立即处理
+	processedResponse := processAIResponse(aiResponse)
 
-	// 分块打印长内容，避免终端截断
-	const maxChunkSize = 1500
-	responseLen := len(aiResponse)
-	if responseLen <= maxChunkSize {
-		log.Printf("AI响应内容:\n%s", aiResponse)
-	} else {
-		totalChunks := (responseLen + maxChunkSize - 1) / maxChunkSize
-		for i := 0; i < responseLen; i += maxChunkSize {
-			end := i + maxChunkSize
-			if end > responseLen {
-				end = responseLen
-			}
-			chunkNum := i/maxChunkSize + 1
-			log.Printf("AI响应内容(片段 %d/%d):\n%s", chunkNum, totalChunks, aiResponse[i:end])
-		}
-	}
-
-	// 同时保存完整AI响应到文件
+	// 5. 保存原始响应到文件（处理过程已在processAIResponse中记录）
 	logAIResponseToFile(aiResponse)
 
-	log.Printf("=== AI响应结束 ===")
-
-	// 4. 解析AI响应
-	decision, err := parseFullDecisionResponse(aiResponse, ctx.Account.TotalEquity, ctx.BTCETHLeverage, ctx.AltcoinLeverage)
+	// 6. 解析处理后的响应
+	decision, err := parseFullDecisionResponse(processedResponse, ctx.Account.TotalEquity, ctx.BTCETHLeverage, ctx.AltcoinLeverage)
 	if err != nil {
 		return decision, fmt.Errorf("解析AI响应失败: %w", err)
 	}
@@ -999,4 +1006,82 @@ func logAIResponseToFile(aiResponse string) {
 	fmt.Fprintf(file, "完整响应内容:\n%s\n", aiResponse)
 
 	log.Printf("✅ AI响应已保存到文件: %s", filename)
+}
+
+// processAIResponse 统一处理AI响应的编码和完整性验证
+func processAIResponse(aiResponse string) string {
+	if aiResponse == "" {
+		return aiResponse
+	}
+
+	// 记录原始响应用于调试
+	originalResponse := aiResponse
+
+	// 第一步：统一解码处理
+	processedResponse := decodeAllEncodings(aiResponse)
+
+	// 第二步：确保UTF-8有效性
+	processedResponse = ensureUTF8Validity(processedResponse)
+
+	// 第三步：验证处理效果
+	hasHTMLEntities := strings.Contains(processedResponse, "&lt;") ||
+		strings.Contains(processedResponse, "&gt;") ||
+		strings.Contains(processedResponse, "&#34;")
+	hasUnicodeEscapes := strings.Contains(processedResponse, "\\u003") ||
+		strings.Contains(processedResponse, "\\u002")
+
+	// 第四步：如果仍有编码问题，尝试额外的解码策略
+	if hasHTMLEntities || hasUnicodeEscapes {
+		log.Printf("⚠️ 检测到残留编码问题 - HTML实体: %v, Unicode转义: %v", hasHTMLEntities, hasUnicodeEscapes)
+
+		// 二次解码处理
+		fallbackResponse := decodeAllEncodings(processedResponse)
+		fallbackResponse = ensureUTF8Validity(fallbackResponse)
+
+		// 检查二次处理是否有效
+		improved := !strings.Contains(fallbackResponse, "&lt;") &&
+			!strings.Contains(fallbackResponse, "\\u003")
+
+		if improved {
+			processedResponse = fallbackResponse
+			log.Printf("✅ 二次解码处理成功")
+		} else {
+			log.Printf("⚠️ 二次解码未能完全解决编码问题，将使用当前结果")
+		}
+	}
+
+	// 第五步：完整性验证
+	if len(processedResponse) < len(originalResponse)*50/100 {
+		log.Printf("⚠️ 处理后响应长度异常减少: %d -> %d (可能存在数据丢失)",
+			len(originalResponse), len(processedResponse))
+	}
+
+	// 第六步：记录处理结果
+	if processedResponse != originalResponse {
+		log.Printf("✅ AI响应编码处理完成: %d字符 -> %d字符",
+			len(originalResponse), len(processedResponse))
+
+		// 如果有显著变化，记录到文件
+		if len(processedResponse) != len(originalResponse) {
+			timestamp := time.Now().Format("2006-01-02_15-04-05")
+			filename := fmt.Sprintf("decision_logs/ai_response_processed_%s.log", timestamp)
+
+			if err := os.MkdirAll("decision_logs", 0755); err == nil {
+				file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+				if err == nil {
+					defer file.Close()
+					fmt.Fprintf(file, "AI响应处理时间: %s\n", timestamp)
+					fmt.Fprintf(file, "原始响应长度: %d 字符\n", len(originalResponse))
+					fmt.Fprintf(file, "处理后长度: %d 字符\n\n", len(processedResponse))
+					fmt.Fprintf(file, "原始响应:\n%s\n\n", originalResponse)
+					fmt.Fprintf(file, "处理后响应:\n%s\n", processedResponse)
+					log.Printf("✅ 编码处理详情已保存到: %s", filename)
+				}
+			}
+		}
+	} else {
+		log.Printf("✅ AI响应编码检查完成，无需处理")
+	}
+
+	return processedResponse
 }

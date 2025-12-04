@@ -61,6 +61,21 @@ type decisionChunk struct {
 	IsJSON bool
 }
 
+// MessageStructure 消息结构信息
+type MessageStructure struct {
+	HasCodeBlocks bool
+	HasJSON       bool
+	HasReasoning  bool
+	Sections      []Section
+}
+
+// Section 消息段落信息
+type Section struct {
+	Name  string
+	Start int
+	End   int
+}
+
 // NewTelegramBotManager 创建 Telegram Bot 管理器
 func NewTelegramBotManager(cfg *config.TelegramBotConfig, db config.DatabaseInterface, traderMgr *manager.TraderManager) (*TelegramBotManager, error) {
 	bot, err := tgbotapi.NewBotAPI(cfg.BotToken)
@@ -1646,65 +1661,126 @@ func (tbm *TelegramBotManager) getPromptDisplayName(templateName string) string 
 	return templateName
 }
 
-// PushDecisionToUser 推送AI决策到指定用户
+// PushDecisionToUser 推送AI决策到指定用户（用户友好的分段指示）
 func (tbm *TelegramBotManager) PushDecisionToUser(telegramID int64, decisionMsg string) error {
 	if tbm.bot == nil {
 		return fmt.Errorf("Telegram Bot未初始化")
 	}
 
-	// ⚠️ 调试UTF-8编码问题：记录消息的UTF-8有效性
-	log.Printf("🔍 [DEBUG] 检查消息UTF-8编码 (ChatID: %d, 长度: %d)", telegramID, len(decisionMsg))
-	if !utf8.ValidString(decisionMsg) {
-		log.Printf("❌ [DEBUG] 消息包含无效UTF-8字符！")
-		// 清理无效字符
-		cleanMsg := strings.ToValidUTF8(decisionMsg, "�")
-		log.Printf("✅ [DEBUG] 已清理无效UTF-8字符，使用清理后的消息")
-		decisionMsg = cleanMsg
-	} else {
-		log.Printf("✅ [DEBUG] 消息UTF-8编码有效")
-	}
+	// 1. 预处理消息 - 确保UTF-8有效性和编码处理
+	processedMsg := tbm.preprocessMessage(decisionMsg)
 
-	chunks := splitDecisionMessage(decisionMsg, telegramMessageChunkSize)
+	// 2. 分段处理
+	chunks := splitDecisionMessage(processedMsg, telegramMessageChunkSize)
 	totalChunks := len(chunks)
 
 	if totalChunks > 1 {
-		log.Printf("📝 决策消息较长，准备分段发送 (%d 段)", totalChunks)
+		log.Printf("📝 智能分段完成: %d 段，准备发送 (ChatID: %d)", totalChunks, telegramID)
 	}
 
+	// 3. 发送每段并添加导航信息
 	successCount := 0
 	failedChunks := make([]int, 0)
 
 	for i, chunk := range chunks {
-		chunkText := formatDecisionChunk(chunk, i, totalChunks)
-		chunkSize := len(chunkText)
+		chunkNum := i + 1
 
-		log.Printf("📤 发送第 %d/%d 段 (大小: %d 字符, ChatID: %d)",
-			i+1, totalChunks, chunkSize, telegramID)
+		// 添加段头信息和导航提示
+		enhancedChunk := tbm.enhanceChunkWithNavigation(chunk, chunkNum, totalChunks)
 
-		// Add delay between chunks to respect rate limits
+		log.Printf("📤 准备发送消息到 ChatID %d: 📄 AI决策报告 [%d/%d]", telegramID, chunkNum, totalChunks)
+
+		// 段间延迟优化（减少到500ms，提高响应速度）
 		if i > 0 {
-			time.Sleep(1 * time.Second)
+			time.Sleep(300 * time.Millisecond)
 		}
 
-		// Track success/failure
-		if err := tbm.sendMessageWithError(telegramID, chunkText); err != nil {
-			log.Printf("❌ 第 %d 段发送失败: %v", i+1, err)
-			failedChunks = append(failedChunks, i+1)
+		// 发送消息
+		if err := tbm.sendMessageWithError(telegramID, enhancedChunk); err != nil {
+			log.Printf("❌ 第 %d 段发送失败: %v", chunkNum, err)
+			failedChunks = append(failedChunks, chunkNum)
+
+			// 如果发送失败，尝试简化格式重试
+			if retryErr := tbm.sendSimplifiedChunk(telegramID, chunk, chunkNum, totalChunks); retryErr != nil {
+				log.Printf("❌ 第 %d 段简化重试也失败: %v", chunkNum, retryErr)
+				continue
+			} else {
+				log.Printf("✅ 第 %d 段简化重试成功", chunkNum)
+				successCount++
+			}
 		} else {
 			successCount++
-			log.Printf("✅ 第 %d/%d 段发送成功", i+1, totalChunks)
+			log.Printf("✅ 第 %d/%d 段发送成功", chunkNum, totalChunks)
+
+			// 如果不是最后一段，添加进度提示
+			if chunkNum < totalChunks {
+				time.Sleep(100 * time.Millisecond) // 短暂延迟确保用户体验
+			}
 		}
 	}
 
-	// Summary logging
+	// 4. 总结日志
 	if len(failedChunks) > 0 {
 		log.Printf("⚠️ 部分段落发送失败 - 成功: %d/%d, 失败段号: %v",
 			successCount, totalChunks, failedChunks)
-		return fmt.Errorf("部分段落发送失败: %v", failedChunks)
+		return fmt.Errorf("部分段落发送失败，已成功发送 %d/%d 段", successCount, totalChunks)
 	}
 
-	log.Printf("✅ 成功推送AI决策到Telegram (ChatID: %d, 段数: %d)", telegramID, successCount)
+	log.Printf("✅ 成功推送完整AI决策报告 (%d段, ChatID: %d)", totalChunks, telegramID)
 	return nil
+}
+
+// preprocessMessage 预处理消息确保有效性
+func (tbm *TelegramBotManager) preprocessMessage(message string) string {
+	// UTF-8有效性检查
+	log.Printf("🔍 [DEBUG] 检查消息UTF-8编码 (长度: %d)", len(message))
+	if !utf8.ValidString(message) {
+		log.Printf("❌ 消息包含无效UTF-8字符，进行清理")
+		cleanMsg := ensureUTF8Validity(message)
+		log.Printf("✅ 已清理无效UTF-8字符")
+		return cleanMsg
+	} else {
+		log.Printf("✅ 消息UTF-8编码有效")
+		return message
+	}
+}
+
+// enhanceChunkWithEnhancement 为分段添加导航信息
+func (tbm *TelegramBotManager) enhanceChunkWithNavigation(chunk decisionChunk, chunkNum, totalChunks int) string {
+	content := chunk.Text
+
+	// 如果有多段，添加段头和导航信息
+	if totalChunks > 1 {
+		var header strings.Builder
+
+		// 段头信息
+		header.WriteString(fmt.Sprintf("📄 AI决策报告 [%d/%d]\n\n", chunkNum, totalChunks))
+
+		// 添加导航提示
+		if chunkNum == 1 {
+			header.WriteString(fmt.Sprintf("📋 完整报告共%d段，正在继续发送...\n\n", totalChunks))
+		} else if chunkNum == totalChunks {
+			header.WriteString("✅ 报告发送完成\n\n")
+		} else {
+			header.WriteString(fmt.Sprintf("📄 继续发送第%d段...\n\n", chunkNum+1))
+		}
+
+		// 确保内容不以换行开头
+		content = strings.TrimLeft(content, "\n")
+
+		return header.String() + content
+	}
+
+	return content
+}
+
+// sendSimplifiedChunk 发送简化格式的段落（重试机制）
+func (tbm *TelegramBotManager) sendSimplifiedChunk(telegramID int64, chunk decisionChunk, chunkNum, totalChunks int) error {
+	simplifiedContent := fmt.Sprintf("📄 AI决策报告 [%d/%d]\n\n%s", chunkNum, totalChunks, chunk.Text)
+
+	msg := tgbotapi.NewMessage(telegramID, simplifiedContent)
+	_, err := tbm.bot.Send(msg)
+	return err
 }
 
 // GetTraderManager 获取TraderManager实例
@@ -2080,45 +2156,199 @@ func splitMessageIntoChunks(text string, chunkSize int) []string {
 	return chunks
 }
 
+// analyzeMessageStructure 分析消息结构
+func analyzeMessageStructure(message string) MessageStructure {
+	structure := MessageStructure{
+		HasCodeBlocks: strings.Contains(message, "```"),
+		HasJSON:       strings.Contains(message, "📋 决策JSON"),
+		HasReasoning:  strings.Contains(message, "🤖 AI思维链"),
+		Sections:      make([]Section, 0),
+	}
+
+	// 识别主要分段
+	sections := []string{
+		"📊 周期信息",
+		"🤖 AI思维链",
+		"📋 决策JSON",
+		"⚡ 执行结果",
+		"💰 账户状态",
+	}
+
+	lastIndex := 0
+	for _, section := range sections {
+		if index := strings.Index(message, section); index > lastIndex {
+			structure.Sections = append(structure.Sections, Section{
+				Name:  section,
+				Start: index,
+				End:   len(message), // 默认到结尾，会被下一节更新
+			})
+
+			// 更新上一节的结束位置
+			if len(structure.Sections) > 1 {
+				structure.Sections[len(structure.Sections)-2].End = index
+			}
+			lastIndex = index
+		}
+	}
+
+	return structure
+}
+
+// intelligentChunking 基于结构进行智能分段
+func intelligentChunking(message string, structure MessageStructure, chunkSize int) []string {
+	var chunks []string
+
+	for _, section := range structure.Sections {
+		sectionContent := message[section.Start:section.End]
+
+		// 如果单个章节超过限制，需要进一步分割
+		if len(sectionContent) > chunkSize {
+			// 智能分割长章节
+			subChunks := chunkLongSection(sectionContent, chunkSize)
+			chunks = append(chunks, subChunks...)
+		} else {
+			// 检查添加这个章节是否会超出当前块的限制
+			if len(chunks) == 0 {
+				chunks = append(chunks, sectionContent)
+			} else {
+				lastChunk := chunks[len(chunks)-1]
+				if len(lastChunk)+len(sectionContent) <= chunkSize {
+					chunks[len(chunks)-1] = lastChunk + sectionContent
+				} else {
+					chunks = append(chunks, sectionContent)
+				}
+			}
+		}
+	}
+
+	return chunks
+}
+
+// chunkLongSection 智能分割长章节
+func chunkLongSection(content string, chunkSize int) []string {
+	var chunks []string
+	lines := strings.Split(content, "\n")
+	var currentChunk strings.Builder
+	currentChunk.Grow(chunkSize)
+
+	for _, line := range lines {
+		// 如果单行就超过限制，强制截断
+		if len(line) > chunkSize {
+			// 先添加当前累积的内容
+			if currentChunk.Len() > 0 {
+				chunks = append(chunks, currentChunk.String())
+				currentChunk.Reset()
+				currentChunk.Grow(chunkSize)
+			}
+
+			// 分割长行
+			for len(line) > chunkSize {
+				splitPos := chunkSize - 50 // 保留空间给省略号
+				chunk := line[:splitPos] + "...[长行截断]"
+				chunks = append(chunks, chunk)
+				line = line[splitPos:]
+			}
+			currentChunk.WriteString(line)
+			currentChunk.WriteString("\n")
+			continue
+		}
+
+		// 检查添加这一行是否会超出限制
+		testLength := currentChunk.Len() + len(line) + 1 // +1 for newline
+
+		if testLength > chunkSize {
+			// 保存当前块
+			chunks = append(chunks, currentChunk.String())
+			// 重置并开始新块
+			currentChunk.Reset()
+			currentChunk.Grow(chunkSize)
+		}
+
+		currentChunk.WriteString(line)
+		currentChunk.WriteString("\n")
+	}
+
+	// 添加最后一个块
+	if currentChunk.Len() > 0 {
+		chunks = append(chunks, currentChunk.String())
+	}
+
+	return chunks
+}
+
+// validateChunks 验证分段完整性
+func validateChunks(chunks []string) []string {
+	var validChunks []string
+
+	for i, chunk := range chunks {
+		// UTF-8验证
+		if !utf8.ValidString(chunk) {
+			log.Printf("❌ 第%d段UTF-8无效，尝试修复", i+1)
+			chunk = ensureUTF8Validity(chunk)
+		}
+
+		// 长度验证 (Telegram API limit is 4096 characters)
+		const maxTelegramLength = 4096
+		if len(chunk) > maxTelegramLength {
+			log.Printf("❌ 第%d段超过长度限制(%d)，强制截断", i+1, len(chunk))
+			chunk = chunk[:maxTelegramLength-50] + "...[截断]"
+		}
+
+		// 内容验证
+		if len(strings.TrimSpace(chunk)) == 0 {
+			log.Printf("⚠️ 第%d段内容为空，跳过", i+1)
+			continue
+		}
+
+		validChunks = append(validChunks, chunk)
+	}
+
+	return validChunks
+}
+
+// ensureUTF8Validity 确保字符串的UTF-8有效性（telegram/bot.go版本）
+func ensureUTF8Validity(text string) string {
+	// 移除无效的UTF-8字符和不可见控制字符
+	valid := make([]rune, 0, len(text))
+	for _, r := range text {
+		// 保留有效的UTF-8字符，移除控制字符（除了换行和制表符）
+		if r == '\n' || r == '\t' || r == '\r' {
+			valid = append(valid, r)
+		} else if r >= 32 && r <= 126 || r > 127 {
+			// 保留可打印ASCII字符和有效的多字节UTF-8字符
+			valid = append(valid, r)
+		}
+	}
+	return string(valid)
+}
+
 func splitDecisionMessage(text string, chunkSize int) []decisionChunk {
-	if chunkSize <= 0 {
-		return []decisionChunk{{Text: text}}
+	// 1. 识别消息结构
+	structure := analyzeMessageStructure(text)
+
+	// 2. 基于结构进行智能分段
+	chunks := intelligentChunking(text, structure, chunkSize)
+
+	// 3. 验证分段完整性
+	validatedChunks := validateChunks(chunks)
+
+	// 4. 转换为decisionChunk格式
+	result := make([]decisionChunk, 0, len(validatedChunks))
+	for _, chunk := range validatedChunks {
+		isJSON := strings.Contains(chunk, "📋 决策JSON") || strings.Contains(chunk, "```json")
+		result = append(result, decisionChunk{
+			Text:   chunk,
+			IsJSON: isJSON,
+		})
 	}
 
-	if len(text) <= chunkSize {
-		return []decisionChunk{{Text: text}}
-	}
-
-	markerIdx := strings.Index(text, decisionJSONMarker)
-
-	if markerIdx <= 0 {
-		return wrapPlainChunks(splitMessageIntoChunks(text, chunkSize), false)
-	}
-
-	var leadingChunks []string
-
-	before := strings.TrimRight(text[:markerIdx], "\n")
-	if strings.TrimSpace(before) != "" {
-		leadingChunks = splitMessageIntoChunks(before, chunkSize)
-	}
-
-	after := strings.TrimLeft(text[markerIdx:], "\n")
-	if strings.TrimSpace(after) == "" {
-		return wrapPlainChunks(leadingChunks, false)
-	}
-
-	after = strings.TrimPrefix(after, decisionJSONMarker)
-	after = strings.TrimLeft(after, "\n")
-
-	jsonChunks := splitMessageIntoChunks(after, chunkSize)
-
-	result := wrapPlainChunks(leadingChunks, false)
-	result = append(result, wrapPlainChunks(jsonChunks, true)...)
-
+	// 如果没有有效分段，返回原始内容
 	if len(result) == 0 {
+		log.Printf("⚠️ 智能分段失败，回退到原始内容")
 		return []decisionChunk{{Text: text}}
 	}
 
+	log.Printf("✅ 智能分段完成: %d 段", len(result))
 	return result
 }
 
