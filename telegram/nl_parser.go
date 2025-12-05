@@ -197,6 +197,17 @@ func (p *NLParser) parseWithAI(message string) (*ParsedCommand, error) {
 	log.Printf("   AI完整响应: %s", response)
 	log.Printf("   提取的JSON: %s", jsonStr)
 
+	// 🛠 补全金额：AI 漏掉时从原始消息兜底提取（优先带货币符号/单位的数值）
+	if cmd.Amount == 0 {
+		if amt, currency, ok := p.extractAmountFromMessage(message, cmd.Leverage); ok {
+			cmd.Amount = amt
+			if cmd.Currency == "" {
+				cmd.Currency = currency
+			}
+			log.Printf("💰 兜底提取金额: $%.2f (%s)", cmd.Amount, cmd.Currency)
+		}
+	}
+
 	// 验证关键字段
 	if cmd.AssetType == "" {
 		log.Printf("❌ AssetType字段为空，AI解析不完整")
@@ -281,8 +292,8 @@ func (p *NLParser) extractJSON(response string) string {
 					jsonCandidate := response[startIdx : i+1]
 					// 简单验证是否包含必需字段
 					if strings.Contains(jsonCandidate, "\"action\"") &&
-					   strings.Contains(jsonCandidate, "\"symbol\"") &&
-					   strings.Contains(jsonCandidate, "\"asset_type\"") {
+						strings.Contains(jsonCandidate, "\"symbol\"") &&
+						strings.Contains(jsonCandidate, "\"asset_type\"") {
 						return jsonCandidate
 					}
 				}
@@ -350,6 +361,33 @@ func (p *NLParser) normalizeCommand(cmd ParsedCommand) ParsedCommand {
 	}
 
 	return cmd
+}
+
+// extractAmountFromMessage 在 AI 未给出金额时，从原始消息中提取带货币提示的数字
+func (p *NLParser) extractAmountFromMessage(message string, leverage int) (float64, string, bool) {
+	// 优先匹配带货币前缀（$ 或 ￥）
+	prefixPattern := regexp.MustCompile(`(?i)[\$\u00a5￥]\s*([0-9]+(?:\.[0-9]+)?)`)
+	if matches := prefixPattern.FindStringSubmatch(message); len(matches) > 1 {
+		val, err := strconv.ParseFloat(matches[1], 64)
+		if err == nil && (leverage == 0 || math.Abs(val-float64(leverage)) > 1e-9) {
+			return val, "USD", true
+		}
+	}
+
+	// 再匹配数字后缀带货币单位（usd/usdt/usdc/u）
+	suffixPattern := regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*(usd|usdt|usdc|u)\b`)
+	if matches := suffixPattern.FindStringSubmatch(message); len(matches) > 2 {
+		val, err := strconv.ParseFloat(matches[1], 64)
+		if err == nil && (leverage == 0 || math.Abs(val-float64(leverage)) > 1e-9) {
+			currency := strings.ToUpper(matches[2])
+			if currency == "U" {
+				currency = "USD"
+			}
+			return val, currency, true
+		}
+	}
+
+	return 0, "", false
 }
 
 // ValidateCommand 验证解析后的命令
