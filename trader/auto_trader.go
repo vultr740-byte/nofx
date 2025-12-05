@@ -917,6 +917,9 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 				jsonBlock = processedRecord.DecisionJSON
 			}
 			fmt.Fprintf(&b, "\n📋 决策JSON\n<pre>%s</pre>\n", html.EscapeString(jsonBlock))
+		} else {
+			// 即使决策为空，也明确告知用户，保证“周期信息+决策”在同一条
+			fmt.Fprintf(&b, "\n📋 决策JSON\n<pre>%s</pre>\n", "无结构化决策（AI未输出 decision 标签/JSON）")
 		}
 
 		if len(processedRecord.Decisions) > 0 {
