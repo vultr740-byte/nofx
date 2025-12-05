@@ -2996,6 +2996,9 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 		return nil, fmt.Errorf("交易实例未初始化")
 	}
 
+	// 统一符号大小写，避免 "eth"/"Eth" 与仓位 "ETHUSDT" 不匹配
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+
 	// 基于 asset_type 控制符号映射/解析策略
 	resolvedSymbol := symbol
 	if at.config.Exchange == "hyperliquid" {
