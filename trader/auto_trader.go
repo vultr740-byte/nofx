@@ -904,10 +904,7 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 	{
 		var b strings.Builder
 		b.Grow(4000)
-		fmt.Fprintf(&b, "%s %s\n\n", statusEmoji, html.EscapeString(title))
-		fmt.Fprintf(&b, "📊 周期信息\n")
-		fmt.Fprintf(&b, "• 决策时间: %s\n", processedRecord.Timestamp.Format("2006-01-02 15:04:05"))
-		fmt.Fprintf(&b, "• 周期编号: #%d\n", processedRecord.CycleNumber)
+		fmt.Fprintf(&b, "%s AI决策周期: #%d\n\n", statusEmoji, processedRecord.CycleNumber)
 
 		if processedRecord.DecisionJSON != "" {
 			var jsonBlock string
