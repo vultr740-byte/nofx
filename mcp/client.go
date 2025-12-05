@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -211,6 +212,7 @@ func (client *Client) callOnce(systemPrompt, userPrompt string) (string, error) 
 		"messages":    messages,
 		"temperature": 0.5, // 降低temperature以提高JSON格式稳定性
 		"max_tokens":  client.MaxTokens,
+		"stream":      true, // 启用流式，减少长响应截断概率
 	}
 
 	// 注意：response_format 参数仅 OpenAI 支持，DeepSeek/Qwen 不支持
@@ -259,34 +261,13 @@ func (client *Client) callOnce(systemPrompt, userPrompt string) (string, error) 
 	}
 	defer resp.Body.Close()
 
-	// 读取响应
-	body, err := io.ReadAll(resp.Body)
+	// 读取流式响应
+	content, err := readStreamContent(resp)
 	if err != nil {
-		return "", fmt.Errorf("读取响应失败: %w", err)
+		return "", err
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API返回错误 (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	// 解析响应
-	var result struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("解析响应失败: %w", err)
-	}
-
-	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("API返回空响应")
-	}
-
-	return result.Choices[0].Message.Content, nil
+	return content, nil
 }
 
 // isRetryableError 判断错误是否可重试
@@ -309,4 +290,69 @@ func isRetryableError(err error) bool {
 		}
 	}
 	return false
+}
+
+// readStreamContent 解析 OpenAI/DeepSeek 兼容的流式响应
+func readStreamContent(resp *http.Response) (string, error) {
+	defer resp.Body.Close()
+
+	// 提前处理非200状态码
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API返回错误 (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	// 增加单行大小，避免长增量被截断
+	const maxLine = 1024 * 1024
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, maxLine)
+
+	var sb strings.Builder
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "[DONE]" {
+			break
+		}
+
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			return "", fmt.Errorf("解析流式分片失败: %w", err)
+		}
+
+		for _, choice := range chunk.Choices {
+			if choice.Delta.Content != "" {
+				sb.WriteString(choice.Delta.Content)
+			} else if choice.Message.Content != "" {
+				sb.WriteString(choice.Message.Content)
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("读取流式响应失败: %w", err)
+	}
+
+	result := sb.String()
+	if result == "" {
+		return "", fmt.Errorf("流式响应为空")
+	}
+	return result, nil
 }
