@@ -1167,8 +1167,8 @@ func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (map[stri
 		return nil, err
 	}
 
-	// ⚠️ 关键：根据币种精度要求，四舍五入数量
-	roundedQuantity := t.roundToSzDecimals(coin, quantity)
+	// ⚠️ 关键：根据币种精度要求，向上取整数量，避免减仓不足留下残余
+	roundedQuantity := t.roundToSzDecimalsCeil(coin, quantity)
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
 	// ⚠️ 关键：价格也需要处理为5位有效数字
@@ -1242,8 +1242,8 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (map[str
 		return nil, err
 	}
 
-	// ⚠️ 关键：根据币种精度要求，四舍五入数量
-	roundedQuantity := t.roundToSzDecimals(coin, quantity)
+	// ⚠️ 关键：根据币种精度要求，向上取整数量，避免减仓不足留下残余
+	roundedQuantity := t.roundToSzDecimalsCeil(coin, quantity)
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
 	// ⚠️ 关键：价格也需要处理为5位有效数字
@@ -1899,6 +1899,19 @@ func (t *HyperliquidTrader) roundToSzDecimals(coin string, quantity float64) flo
 
 	// 截断到步长，避免向上取整导致无效数量
 	return math.Floor(quantity*multiplier) / multiplier
+}
+
+// roundToSzDecimalsCeil 将数量向上取整到步长，避免平仓时截断留下残余
+func (t *HyperliquidTrader) roundToSzDecimalsCeil(coin string, quantity float64) float64 {
+	szDecimals := t.getSzDecimals(coin)
+
+	// 计算倍数（10^szDecimals）
+	multiplier := 1.0
+	for i := 0; i < szDecimals; i++ {
+		multiplier *= 10.0
+	}
+
+	return math.Ceil(quantity*multiplier) / multiplier
 }
 
 // getPxDecimals 获取价格小数精度（优先使用API的PxDecimals，SzDecimals作为后备）
