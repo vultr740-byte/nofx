@@ -35,7 +35,8 @@ type NLParser struct {
 func NewNLParser(mcpClient *mcp.Client) *NLParser {
 	return &NLParser{
 		mcpClient: mcpClient,
-		enabled:   true,
+		// 如果没有 MCP 客户端，默认禁用，避免后续空指针
+		enabled: mcpClient != nil,
 	}
 }
 
@@ -53,6 +54,10 @@ func (p *NLParser) SetEnabled(enabled bool) {
 func (p *NLParser) ParseCommand(message string) (*ParsedCommand, error) {
 	if !p.IsEnabled() {
 		return nil, fmt.Errorf("自然语言解析器未启用")
+	}
+
+	if p.mcpClient == nil {
+		return nil, fmt.Errorf("自然语言解析器未配置 MCP 客户端")
 	}
 
 	// 首先尝试快速检测是否可能是交易命令
