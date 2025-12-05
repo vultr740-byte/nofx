@@ -366,7 +366,7 @@ func (p *NLParser) normalizeCommand(cmd ParsedCommand) ParsedCommand {
 // extractAmountFromMessage 在 AI 未给出金额时，从原始消息中提取带货币提示的数字
 func (p *NLParser) extractAmountFromMessage(message string, leverage int) (float64, string, bool) {
 	// 优先匹配带货币前缀（$ 或 ￥）
-	prefixPattern := regexp.MustCompile(`(?i)[\$\u00a5￥]\s*([0-9]+(?:\.[0-9]+)?)`)
+	prefixPattern := regexp.MustCompile(`(?i)[$¥￥]\s*([0-9]+(?:\.[0-9]+)?)`)
 	if matches := prefixPattern.FindStringSubmatch(message); len(matches) > 1 {
 		val, err := strconv.ParseFloat(matches[1], 64)
 		if err == nil && (leverage == 0 || math.Abs(val-float64(leverage)) > 1e-9) {
