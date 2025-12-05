@@ -616,11 +616,10 @@ func extractCoTTrace(response string) string {
 		return decodeAllEncodings(rawContent) // 立即解码HTML实体和Unicode转义
 	}
 
-	// 方法3: 后备方案 - 查找JSON数组的开始位置
-	jsonStart := strings.Index(response, "[")
-	if jsonStart > 0 {
-		log.Printf("⚠️  使用旧版格式（[ 字符分离）提取思维链")
-		rawContent := strings.TrimSpace(response[:jsonStart])
+	// 方法3: 后备方案 - 查找决策JSON数组（必须像 `[ { ... } ]`）的开始位置
+	if loc := reJSONArray.FindStringIndex(response); loc != nil {
+		log.Printf("⚠️  使用旧版格式（JSON数组定位）提取思维链")
+		rawContent := strings.TrimSpace(response[:loc[0]])
 		return decodeAllEncodings(rawContent) // 立即解码HTML实体和Unicode转义
 	}
 
