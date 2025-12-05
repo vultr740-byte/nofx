@@ -325,16 +325,11 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 
 	ctx := context.Background()
 
-	// 创建Exchange客户端（Exchange包含Info功能）
-	exchange := hyperliquid.NewExchange(
-		ctx,
-		privateKey,
-		apiURL,
-		nil,        // Meta will be fetched automatically
-		"",         // vault address (empty for personal account)
-		walletAddr, // wallet address
-		nil,        // SpotMeta will be fetched automatically
-	)
+	// 创建Exchange客户端（Exchange包含Info功能），增加panic防护避免网络/CloudFront异常导致崩溃
+	exchange, err := safeNewHyperliquidExchange(ctx, privateKey, apiURL, walletAddr)
+	if err != nil {
+		return nil, err
+	}
 
 	log.Printf("✓ Hyperliquid交易器初始化成功 (testnet=%v, wallet=%s)", testnet, walletAddr)
 
@@ -388,6 +383,26 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 		stopLossOrders:   make(map[string]orderRef),
 		takeProfitOrders: make(map[string]orderRef),
 	}, nil
+}
+
+// safeNewHyperliquidExchange 包装 hyperliquid.NewExchange，防止内部panic导致进程崩溃
+func safeNewHyperliquidExchange(ctx context.Context, privateKey *ecdsa.PrivateKey, apiURL string, walletAddr string) (ex *hyperliquid.Exchange, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("初始化 Hyperliquid Exchange 失败（panic）: %v", r)
+		}
+	}()
+
+	ex = hyperliquid.NewExchange(
+		ctx,
+		privateKey,
+		apiURL,
+		nil,        // Meta will be fetched automatically
+		"",         // vault address (empty for personal account)
+		walletAddr, // wallet address
+		nil,        // SpotMeta will be fetched automatically
+	)
+	return ex, nil
 }
 
 // GetBalance 获取账户余额

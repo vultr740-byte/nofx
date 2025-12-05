@@ -86,29 +86,32 @@ func (s *HyperliquidService) GetPositions(agentKey, walletAddr string, testnet b
 }
 
 // GetPositionsWithData 获取持仓并返回消息和原始数据
-func (s *HyperliquidService) GetPositionsWithData(agentKey, walletAddr string, testnet bool) (string, []map[string]interface{}, error) {
-	// 添加panic恢复机制，防止整个程序崩溃
+func (s *HyperliquidService) GetPositionsWithData(agentKey, walletAddr string, testnet bool) (message string, positions []map[string]interface{}, err error) {
+	// 添加panic恢复机制，防止整个程序崩溃，并向上游返回错误避免发送空消息
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("GetPositionsWithData panic recovered: %v", r)
+			err = fmt.Errorf("获取持仓失败: %v", r)
 		}
 	}()
 
 	// 创建 Hyperliquid 交易器
-	trader, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
-	if err != nil {
-		return "", nil, fmt.Errorf("创建 Hyperliquid 交易器失败: %w", err)
+	trader, newErr := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
+	if newErr != nil {
+		err = fmt.Errorf("创建 Hyperliquid 交易器失败: %w", newErr)
+		return
 	}
 
 	// 获取持仓
-	positions, err := trader.GetPositions()
+	positions, err = trader.GetPositions()
 	if err != nil {
-		return "", nil, fmt.Errorf("获取持仓失败: %w", err)
+		err = fmt.Errorf("获取持仓失败: %w", err)
+		return
 	}
 
 	// 格式化持仓信息
-	message := s.formatPositionsMessage(positions)
-	return message, positions, nil
+	message = s.formatPositionsMessage(positions)
+	return
 }
 
 // formatBalanceMessage 格式化余额消息
