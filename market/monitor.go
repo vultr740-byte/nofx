@@ -10,11 +10,11 @@ import (
 )
 
 type WSMonitor struct {
-	wsClient       *WSClient
-	combinedClient *CombinedStreamsClient
-	symbols        []string
-	featuresMap    sync.Map
-	alertsChan     chan Alert
+	wsClient        *WSClient
+	combinedClient  *CombinedStreamsClient
+	symbols         []string
+	featuresMap     sync.Map
+	alertsChan      chan Alert
 	klineDataMap3m  sync.Map // 存储每个交易对的K线历史数据
 	klineDataMap15m sync.Map // 存储每个交易对的15分钟K线历史数据
 	klineDataMap4h  sync.Map // 存储每个交易对的K线历史数据
@@ -29,15 +29,16 @@ type WSMonitor struct {
 func getKlineLimit(timeframe string) int {
 	switch timeframe {
 	case "3m":
-		return 20  // 3分钟数据：20根 = 1小时历史
+		return 20 // 3分钟数据：20根 = 1小时历史
 	case "15m":
-		return 32  // 15分钟数据：32根 = 8小时历史
+		return 50 // 15分钟数据：50根 ≈ 12.5小时历史
 	case "4h":
-		return 50  // 4小时数据：50根 = 8.3天历史
+		return 50 // 4小时数据：50根 = 8.3天历史
 	default:
 		return 100 // 默认值
 	}
 }
+
 type SymbolStats struct {
 	LastActiveTime   time.Time
 	AlertCount       int
