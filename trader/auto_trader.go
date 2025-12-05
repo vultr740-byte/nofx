@@ -473,25 +473,17 @@ func (at *AutoTrader) pushDecisionToTelegram(record *logger.DecisionRecord) {
 		return
 	}
 
-	// 若存在AI原始响应，优先原样推送，不做任何格式变动
-	if record.RawAIResponse != "" {
-		if err := tgBotMgr.PushRawMessageToUser(telegramID, at.formatRawAIResponse(record)); err != nil {
-			log.Printf("⚠️ 推送原始AI响应到Telegram失败: %v", err)
-		} else {
-			log.Printf("✅ 成功推送原始AI响应到Telegram (用户ID: %s)", at.userID)
+	// 格式化为多段消息：1) 周期+决策JSON(+执行结果) 2) 思维链 3) 账户信息/错误
+	messages := at.formatDecisionMessagesForTelegram(record)
+
+	for idx, msg := range messages {
+		if err := tgBotMgr.PushDecisionToUser(telegramID, msg); err != nil {
+			log.Printf("⚠️ 推送决策到Telegram失败 (段 %d/%d): %v", idx+1, len(messages), err)
 			return
 		}
 	}
 
-	// 格式化决策消息
-	decisionMsg := at.formatDecisionForTelegram(record)
-
-	// 推送消息到Telegram（同步，保证在执行结果之前发送）
-	if err := tgBotMgr.PushDecisionToUser(telegramID, decisionMsg); err != nil {
-		log.Printf("⚠️ 推送决策到Telegram失败: %v", err)
-	} else {
-		log.Printf("✅ 成功推送AI决策到Telegram (用户ID: %s)", at.userID)
-	}
+	log.Printf("✅ 成功推送AI决策到Telegram (用户ID: %s)", at.userID)
 }
 
 // pushTradeExecutionToTelegram 推送单笔交易执行结果（仅TG交易员）
@@ -888,21 +880,101 @@ func (at *AutoTrader) validateMessageIntegrity(msg string, originalRecord *logge
 //   - 数据源是否包含不可见字符
 //   - 字符串拼接是否正确处理了转义
 //   - 是否有直接从外部源复制的内容
-func (at *AutoTrader) formatDecisionForTelegram(record *logger.DecisionRecord) string {
+// formatDecisionMessagesForTelegram 将决策拆分为三段：周期+决策JSON(+执行结果) / 思维链 / 账户信息
+func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionRecord) []string {
 	// 1. 统一编码处理 - 在最开始就处理所有编码问题
 	processedRecord := at.preprocessDecisionRecord(record)
 
-	// 2. 构建完整消息（不截断）
-	msg := at.buildCompleteDecisionMessage(processedRecord)
+	var messages []string
 
-	// 3. 验证消息完整性
-	if err := at.validateMessageIntegrity(msg, record); err != nil {
-		log.Printf("⚠️ 消息完整性验证失败: %v", err)
-		// 如果验证失败，尝试构建基础消息
-		msg = at.buildFallbackMessage(processedRecord)
+	// 状态图标
+	statusEmoji := "❌"
+	if record.Success {
+		statusEmoji = "✅"
 	}
 
-	return msg
+	// 决策摘要作为标题
+	decisionSummary := at.formatDecisionSummary(processedRecord.Decisions)
+	title := "AI决策报告"
+	if decisionSummary != "" {
+		title += " - " + decisionSummary
+	}
+
+	// 1) 周期信息 + 决策JSON + 执行结果
+	{
+		var b strings.Builder
+		b.Grow(4000)
+		fmt.Fprintf(&b, "%s %s\n\n", statusEmoji, html.EscapeString(title))
+		fmt.Fprintf(&b, "📊 周期信息\n")
+		fmt.Fprintf(&b, "• 决策时间: %s\n", processedRecord.Timestamp.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(&b, "• 周期编号: #%d\n", processedRecord.CycleNumber)
+
+		if processedRecord.DecisionJSON != "" {
+			var jsonBlock string
+			if at.isValidJSON(processedRecord.DecisionJSON) {
+				jsonBlock = formatDecisionJSON(processedRecord.DecisionJSON)
+			} else {
+				jsonBlock = processedRecord.DecisionJSON
+			}
+			fmt.Fprintf(&b, "\n📋 决策JSON\n<pre>%s</pre>\n", html.EscapeString(jsonBlock))
+		}
+
+		if len(processedRecord.Decisions) > 0 {
+			b.WriteString("\n⚡ 执行结果\n")
+			for _, decision := range processedRecord.Decisions {
+				decisionStatus := "❌"
+				if decision.Success {
+					if decision.Action == "wait" || decision.Action == "hold" {
+						decisionStatus = "⏳"
+					} else {
+						decisionStatus = "✅"
+					}
+				}
+				line := fmt.Sprintf("%s %s %s", decisionStatus, decision.Symbol, decision.Action)
+				if decision.Error != "" {
+					line += fmt.Sprintf(" (%s)", decision.Error)
+				}
+				fmt.Fprintf(&b, "%s\n", html.EscapeString(line))
+			}
+		}
+
+		messages = append(messages, b.String())
+	}
+
+	// 2) 精简思维链
+	if processedRecord.CoTTrace != "" {
+		var b strings.Builder
+		b.Grow(len(processedRecord.CoTTrace) + 200)
+		b.WriteString("🤖 AI思维链\n")
+		fmt.Fprintf(&b, "<pre>%s</pre>\n", html.EscapeString(processedRecord.CoTTrace))
+		messages = append(messages, b.String())
+	}
+
+	// 3) 账户信息 + 错误
+	{
+		var b strings.Builder
+		b.Grow(500)
+		b.WriteString("💰 账户状态\n")
+		fmt.Fprintf(&b, "• 总余额: %.2f USDT\n", processedRecord.AccountState.TotalBalance)
+		fmt.Fprintf(&b, "• 可用余额: %.2f USDT\n", processedRecord.AccountState.AvailableBalance)
+		if processedRecord.AccountState.PositionCount > 0 {
+			fmt.Fprintf(&b, "• 持仓数量: %d\n", processedRecord.AccountState.PositionCount)
+			fmt.Fprintf(&b, "• 未实现盈亏: %.2f USDT\n", processedRecord.AccountState.TotalUnrealizedProfit)
+		}
+
+		if processedRecord.ErrorMessage != "" {
+			safeError := sanitizeErrorMessage(processedRecord.ErrorMessage)
+			if safeError == "" {
+				safeError = "AI 服务暂时不可用，请稍后重试或检查网络/模型配置"
+			}
+			fmt.Fprintf(&b, "\n⚠️ 错误信息: %s\n", html.EscapeString(safeError))
+		}
+
+		fmt.Fprintf(&b, "\n🤖 由 %s 自动推送", html.EscapeString(at.name))
+		messages = append(messages, b.String())
+	}
+
+	return messages
 }
 
 // buildFallbackMessage 构建备用消息（当完整性验证失败时使用）
