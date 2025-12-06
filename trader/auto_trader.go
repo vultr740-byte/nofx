@@ -907,38 +907,96 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 		fmt.Fprintf(&b, "%s AI决策周期: #%d\n\n", statusEmoji, processedRecord.CycleNumber)
 
 		if len(processedRecord.Decisions) > 0 {
-			b.WriteString("📋 决策内容\n")
-			for _, d := range processedRecord.Decisions {
-				line := fmt.Sprintf("• %s %s", html.EscapeString(d.Symbol), html.EscapeString(d.Action))
-				if d.Leverage > 0 {
-					line += fmt.Sprintf(" x%d", d.Leverage)
+			// 动作emoji映射函数
+			getActionEmoji := func(action string) string {
+				emojiMap := map[string]string{
+					"hold":              "💎",
+					"wait":              "⏳",
+					"open_long":         "📈",
+					"open_short":        "📉",
+					"close_long":        "✅",
+					"close_short":       "✅",
+					"update_stop_loss":  "🛡️",
+					"update_take_profit": "🎯",
+					"partial_close":     "📊",
 				}
-				if d.Quantity > 0 {
-					line += fmt.Sprintf(" | 数量: %.4f", d.Quantity)
+				if emoji, ok := emojiMap[strings.ToLower(action)]; ok {
+					return emoji
 				}
+				return "•"
+			}
+
+			// 动作名称映射（用于显示中文名称）
+			getActionName := func(action string) string {
+				nameMap := map[string]string{
+					"hold":              "持有",
+					"wait":              "等待",
+					"open_long":         "做多开仓",
+					"open_short":        "做空开仓",
+					"close_long":        "做多平仓",
+					"close_short":       "做空平仓",
+					"update_stop_loss":  "调整止损",
+					"update_take_profit": "调整止盈",
+					"partial_close":     "部分平仓",
+				}
+				if name, ok := nameMap[strings.ToLower(action)]; ok {
+					return name
+				}
+				return action
+			}
+
+			for i, d := range processedRecord.Decisions {
+				// 第一行：符号 + emoji动作（无📌图标）
+				actionEmoji := getActionEmoji(d.Action)
+				actionName := getActionName(d.Action)
+				fmt.Fprintf(&b, "%s · %s %s\n", html.EscapeString(d.Symbol), actionEmoji, html.EscapeString(actionName))
+
+				// 第二行：交易参数（如果有）
+				var params []string
 				if d.Price > 0 {
-					line += fmt.Sprintf(" | 价格: %.4f", d.Price)
+					params = append(params, fmt.Sprintf("💰 价格: %.4f", d.Price))
 				}
 				if d.StopLoss != nil {
-					line += fmt.Sprintf(" | 止损: %.4f", *d.StopLoss)
+					params = append(params, fmt.Sprintf("🛡️ 止损: %.4f", *d.StopLoss))
 				}
 				if d.TakeProfit != nil {
-					line += fmt.Sprintf(" | 止盈: %.4f", *d.TakeProfit)
+					params = append(params, fmt.Sprintf("🎯 止盈: %.4f", *d.TakeProfit))
+				}
+				if d.Leverage > 0 {
+					params = append(params, fmt.Sprintf("⚡ 杠杆: %dx", d.Leverage))
+				}
+				if d.Quantity > 0 {
+					params = append(params, fmt.Sprintf("📊 数量: %.4f", d.Quantity))
 				}
 				if d.Profit != 0 {
-					line += fmt.Sprintf(" | 本次盈亏: %.2f", d.Profit)
+					profitEmoji := "💵"
+					if d.Profit < 0 {
+						profitEmoji = "💸"
+					}
+					params = append(params, fmt.Sprintf("%s 本次盈亏: %.2f", profitEmoji, d.Profit))
 				}
-				if d.Error != "" {
-					line += fmt.Sprintf("\n  错误: %s", html.EscapeString(d.Error))
+
+				if len(params) > 0 {
+					fmt.Fprintf(&b, "   %s\n", strings.Join(params, "  |  "))
 				}
-				// 决策理由来自原始JSON的 reasoning
+
+				// 理由（如果有）- 先显示理由
 				if record.DecisionJSON != "" {
 					reason := extractReasoningFromJSON(record.DecisionJSON, d.Symbol, d.Action)
 					if reason != "" {
-						line += fmt.Sprintf("\n  理由: %s", html.EscapeString(reason))
+						fmt.Fprintf(&b, "   💭 理由: %s\n", html.EscapeString(reason))
 					}
 				}
-				fmt.Fprintf(&b, "%s\n", line)
+
+				// 错误信息（如果有）- 在理由之后显示
+				if d.Error != "" {
+					fmt.Fprintf(&b, "   ⚠️ 错误: %s\n", html.EscapeString(d.Error))
+				}
+
+				// 决策项之间添加空行（最后一个不添加）
+				if i < len(processedRecord.Decisions)-1 {
+					b.WriteString("\n")
+				}
 			}
 		} else {
 			b.WriteString("📋 决策内容\n")
