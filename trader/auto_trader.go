@@ -981,7 +981,7 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 	if processedRecord.CoTTrace != "" {
 		var b strings.Builder
 		b.Grow(len(processedRecord.CoTTrace) + 200)
-		b.WriteString("🤖 AI思维链\n")
+		b.WriteString("🤖 AI思考过程\n")
 		fmt.Fprintf(&b, "<pre>%s</pre>\n", html.EscapeString(processedRecord.CoTTrace))
 		messages = append(messages, b.String())
 	}
