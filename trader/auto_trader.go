@@ -907,25 +907,6 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 		fmt.Fprintf(&b, "%s AI决策周期: #%d\n\n", statusEmoji, processedRecord.CycleNumber)
 
 		if len(processedRecord.Decisions) > 0 {
-			// 动作emoji映射函数
-			getActionEmoji := func(action string) string {
-				emojiMap := map[string]string{
-					"hold":              "💎",
-					"wait":              "⏳",
-					"open_long":         "📈",
-					"open_short":        "📉",
-					"close_long":        "✅",
-					"close_short":       "✅",
-					"update_stop_loss":  "🛡️",
-					"update_take_profit": "🎯",
-					"partial_close":     "📊",
-				}
-				if emoji, ok := emojiMap[strings.ToLower(action)]; ok {
-					return emoji
-				}
-				return "•"
-			}
-
 			// 动作名称映射（用于显示中文名称）
 			getActionName := func(action string) string {
 				nameMap := map[string]string{
@@ -946,10 +927,9 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 			}
 
 			for i, d := range processedRecord.Decisions {
-				// 第一行：符号 + emoji动作（无📌图标）
-				actionEmoji := getActionEmoji(d.Action)
+				// 第一行：符号 + 动作名称（顶部已有状态图标，这里不重复）
 				actionName := getActionName(d.Action)
-				fmt.Fprintf(&b, "%s · %s %s\n", html.EscapeString(d.Symbol), actionEmoji, html.EscapeString(actionName))
+				fmt.Fprintf(&b, "%s · %s\n", html.EscapeString(d.Symbol), html.EscapeString(actionName))
 
 			// 交易参数（如果有）- 参考执行成功消息的格式，每个参数单独一行
 			if d.Quantity > 0 {
@@ -971,17 +951,17 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 				fmt.Fprintf(&b, "• 止盈: %.4f\n", *d.TakeProfit)
 			}
 
-				// 理由（如果有）- 先显示理由
+				// 理由（如果有）
 				if record.DecisionJSON != "" {
 					reason := extractReasoningFromJSON(record.DecisionJSON, d.Symbol, d.Action)
 					if reason != "" {
-						fmt.Fprintf(&b, "   💭 理由: %s\n", html.EscapeString(reason))
+						fmt.Fprintf(&b, "• 理由: %s\n", html.EscapeString(reason))
 					}
 				}
 
-				// 错误信息（如果有）- 在理由之后显示
+				// 错误信息（如果有）
 				if d.Error != "" {
-					fmt.Fprintf(&b, "   ⚠️ 错误: %s\n", html.EscapeString(d.Error))
+					fmt.Fprintf(&b, "• 错误: %s\n", html.EscapeString(d.Error))
 				}
 
 				// 决策项之间添加空行（最后一个不添加）
