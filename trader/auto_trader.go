@@ -906,36 +906,36 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 		b.Grow(4000)
 		fmt.Fprintf(&b, "%s AI决策周期: #%d\n\n", statusEmoji, processedRecord.CycleNumber)
 
-		b.WriteString("📋 决策内容（JSON）\n")
-		if processedRecord.DecisionJSON != "" {
-			var jsonBlock string
-			if at.isValidJSON(processedRecord.DecisionJSON) {
-				jsonBlock = formatDecisionJSON(processedRecord.DecisionJSON)
-			} else {
-				jsonBlock = processedRecord.DecisionJSON
-			}
-			fmt.Fprintf(&b, "<pre>%s</pre>\n", html.EscapeString(jsonBlock))
-		} else {
-			fmt.Fprintf(&b, "<pre>%s</pre>\n", "无结构化决策（AI未输出 decision 标签/JSON）")
-		}
-
 		if len(processedRecord.Decisions) > 0 {
-			b.WriteString("\n⚡ 执行结果\n")
-			for _, decision := range processedRecord.Decisions {
-				decisionStatus := "❌"
-				if decision.Success {
-					if decision.Action == "wait" || decision.Action == "hold" {
-						decisionStatus = "⏳"
-					} else {
-						decisionStatus = "✅"
-					}
+			b.WriteString("📋 决策内容\n")
+			for _, d := range processedRecord.Decisions {
+				line := fmt.Sprintf("• %s %s", html.EscapeString(d.Symbol), html.EscapeString(d.Action))
+				if d.Leverage > 0 {
+					line += fmt.Sprintf(" x%d", d.Leverage)
 				}
-				line := fmt.Sprintf("%s %s %s", decisionStatus, decision.Symbol, decision.Action)
-				if decision.Error != "" {
-					line += fmt.Sprintf(" (%s)", decision.Error)
+				if d.Quantity > 0 {
+					line += fmt.Sprintf(" | 数量: %.4f", d.Quantity)
 				}
-				fmt.Fprintf(&b, "%s\n", html.EscapeString(line))
+				if d.Price > 0 {
+					line += fmt.Sprintf(" | 价格: %.4f", d.Price)
+				}
+				if d.StopLoss != nil {
+					line += fmt.Sprintf(" | 止损: %.4f", *d.StopLoss)
+				}
+				if d.TakeProfit != nil {
+					line += fmt.Sprintf(" | 止盈: %.4f", *d.TakeProfit)
+				}
+				if d.Profit != 0 {
+					line += fmt.Sprintf(" | 本次盈亏: %.2f", d.Profit)
+				}
+				if d.Error != "" {
+					line += fmt.Sprintf("\n  错误: %s", html.EscapeString(d.Error))
+				}
+				fmt.Fprintf(&b, "%s\n", line)
 			}
+		} else {
+			b.WriteString("📋 决策内容\n")
+			b.WriteString("• 无结构化决策（AI未输出 decision 标签/JSON）\n")
 		}
 
 		messages = append(messages, b.String())
