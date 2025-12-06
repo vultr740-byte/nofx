@@ -927,16 +927,17 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 			}
 
 			for i, d := range processedRecord.Decisions {
-				// 第一行：符号 + 动作名称（顶部已有状态图标，这里不重复）
+				// 第一行：符号 + 动作（参考 /positions 格式）
 				actionName := getActionName(d.Action)
-				fmt.Fprintf(&b, "%s · %s\n", html.EscapeString(d.Symbol), html.EscapeString(actionName))
+				if d.Leverage > 0 {
+					fmt.Fprintf(&b, "<b>%s → %s (%dx)</b>\n", html.EscapeString(d.Symbol), html.EscapeString(actionName), d.Leverage)
+				} else {
+					fmt.Fprintf(&b, "<b>%s → %s</b>\n", html.EscapeString(d.Symbol), html.EscapeString(actionName))
+				}
 
 			// 交易参数（如果有）- 参考执行成功消息的格式，每个参数单独一行
 			if d.Quantity > 0 {
 				fmt.Fprintf(&b, "• 数量: %.4f\n", d.Quantity)
-			}
-			if d.Leverage > 0 {
-				fmt.Fprintf(&b, "• 杠杆: %dx\n", d.Leverage)
 			}
 			if d.Price > 0 {
 				fmt.Fprintf(&b, "• 价格: %.4f\n", d.Price)
