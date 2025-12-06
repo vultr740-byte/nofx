@@ -1680,14 +1680,21 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		marginUsed := (quantity * markPrice) / float64(leverage)
 		totalMarginUsed += marginUsed
 
-		// 把当前币种的止盈/止损传递给AI（选择距离当前价格最近的一个）
+		// 把当前币种的止盈/止损传递给AI（直接使用 GetPositions 返回的数据）
 		var bestSL *decision.TpSlOrderInfo
 		var bestTP *decision.TpSlOrderInfo
-		if hlTrader, ok := at.trader.(*HyperliquidTrader); ok {
-			if triggerOrders, err := hlTrader.ListActiveTpSlOrders(symbol); err != nil {
-				log.Printf("⚠️ [%s] 获取触发挂单失败: %v", symbol, err)
-			} else if len(triggerOrders) > 0 {
-				bestSL, bestTP = pickBestTpSlOrders(triggerOrders, side, markPrice)
+
+		// 从 GetPositions 返回的 map 中提取止盈止损价格
+		if slPrice, ok := pos["stopLoss"].(float64); ok && slPrice > 0 {
+			bestSL = &decision.TpSlOrderInfo{
+				Kind:  "sl",
+				Price: slPrice,
+			}
+		}
+		if tpPrice, ok := pos["takeProfit"].(float64); ok && tpPrice > 0 {
+			bestTP = &decision.TpSlOrderInfo{
+				Kind:  "tp",
+				Price: tpPrice,
 			}
 		}
 
