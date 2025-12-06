@@ -931,6 +931,13 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 				if d.Error != "" {
 					line += fmt.Sprintf("\n  错误: %s", html.EscapeString(d.Error))
 				}
+				// 决策理由来自原始JSON的 reasoning
+				if record.DecisionJSON != "" {
+					reason := extractReasoningFromJSON(record.DecisionJSON, d.Symbol, d.Action)
+					if reason != "" {
+						line += fmt.Sprintf("\n  理由: %s", html.EscapeString(reason))
+					}
+				}
 				fmt.Fprintf(&b, "%s\n", line)
 			}
 		} else {
@@ -975,6 +982,28 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 	}
 
 	return messages
+}
+
+// extractReasoningFromJSON 从决策JSON中按符号+动作提取理由
+func extractReasoningFromJSON(jsonStr, symbol, action string) string {
+	var decisions []map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &decisions); err != nil {
+		return ""
+	}
+
+	sym := strings.ToUpper(symbol)
+	act := strings.ToLower(action)
+
+	for _, d := range decisions {
+		ds, _ := d["symbol"].(string)
+		da, _ := d["action"].(string)
+		if strings.ToUpper(ds) == sym && strings.ToLower(da) == act {
+			if reason, ok := d["reasoning"].(string); ok {
+				return reason
+			}
+		}
+	}
+	return ""
 }
 
 // buildFallbackMessage 构建备用消息（当完整性验证失败时使用）
