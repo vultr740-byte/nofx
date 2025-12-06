@@ -864,7 +864,6 @@ func (at *AutoTrader) validateMessageIntegrity(msg string, originalRecord *logge
 	// 4. 逻辑完整性验证
 	expectedSections := []string{
 		"📊 周期信息",
-		"💰 账户状态",
 	}
 
 	for _, section := range expectedSections {
@@ -987,27 +986,20 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 		messages = append(messages, b.String())
 	}
 
-	// 3) 账户信息 + 错误
+	// 3) 错误信息 + 签名
 	{
 		var b strings.Builder
-		b.Grow(500)
-		b.WriteString("💰 账户状态\n")
-		fmt.Fprintf(&b, "• 总余额: %.2f USDT\n", processedRecord.AccountState.TotalBalance)
-		fmt.Fprintf(&b, "• 可用余额: %.2f USDT\n", processedRecord.AccountState.AvailableBalance)
-		if processedRecord.AccountState.PositionCount > 0 {
-			fmt.Fprintf(&b, "• 持仓数量: %d\n", processedRecord.AccountState.PositionCount)
-			fmt.Fprintf(&b, "• 未实现盈亏: %.2f USDT\n", processedRecord.AccountState.TotalUnrealizedProfit)
-		}
+		b.Grow(200)
 
 		if processedRecord.ErrorMessage != "" {
 			safeError := sanitizeErrorMessage(processedRecord.ErrorMessage)
 			if safeError == "" {
 				safeError = "AI 服务暂时不可用，请稍后重试或检查网络/模型配置"
 			}
-			fmt.Fprintf(&b, "\n⚠️ 错误信息: %s\n", html.EscapeString(safeError))
+			fmt.Fprintf(&b, "⚠️ 错误信息: %s\n\n", html.EscapeString(safeError))
 		}
 
-		fmt.Fprintf(&b, "\n🤖 由 %s 自动推送", html.EscapeString(at.name))
+		fmt.Fprintf(&b, "🤖 由 %s 自动推送", html.EscapeString(at.name))
 		messages = append(messages, b.String())
 	}
 
