@@ -986,21 +986,13 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 		messages = append(messages, b.String())
 	}
 
-	// 3) 错误信息 + 签名
-	{
-		var b strings.Builder
-		b.Grow(200)
-
-		if processedRecord.ErrorMessage != "" {
-			safeError := sanitizeErrorMessage(processedRecord.ErrorMessage)
-			if safeError == "" {
-				safeError = "AI 服务暂时不可用，请稍后重试或检查网络/模型配置"
-			}
-			fmt.Fprintf(&b, "⚠️ 错误信息: %s\n\n", html.EscapeString(safeError))
+	// 3) 错误信息（如有）
+	if processedRecord.ErrorMessage != "" {
+		safeError := sanitizeErrorMessage(processedRecord.ErrorMessage)
+		if safeError == "" {
+			safeError = "AI 服务暂时不可用，请稍后重试或检查网络/模型配置"
 		}
-
-		fmt.Fprintf(&b, "🤖 由 %s 自动推送", html.EscapeString(at.name))
-		messages = append(messages, b.String())
+		messages = append(messages, fmt.Sprintf("⚠️ 错误信息: %s", html.EscapeString(safeError)))
 	}
 
 	return messages
