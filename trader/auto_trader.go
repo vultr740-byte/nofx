@@ -951,34 +951,25 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 				actionName := getActionName(d.Action)
 				fmt.Fprintf(&b, "%s · %s %s\n", html.EscapeString(d.Symbol), actionEmoji, html.EscapeString(actionName))
 
-				// 第二行：交易参数（如果有）
-				var params []string
-				if d.Price > 0 {
-					params = append(params, fmt.Sprintf("💰 价格: %.4f", d.Price))
-				}
-				if d.StopLoss != nil {
-					params = append(params, fmt.Sprintf("🛡️ 止损: %.4f", *d.StopLoss))
-				}
-				if d.TakeProfit != nil {
-					params = append(params, fmt.Sprintf("🎯 止盈: %.4f", *d.TakeProfit))
-				}
-				if d.Leverage > 0 {
-					params = append(params, fmt.Sprintf("⚡ 杠杆: %dx", d.Leverage))
-				}
-				if d.Quantity > 0 {
-					params = append(params, fmt.Sprintf("📊 数量: %.4f", d.Quantity))
-				}
-				if d.Profit != 0 {
-					profitEmoji := "💵"
-					if d.Profit < 0 {
-						profitEmoji = "💸"
-					}
-					params = append(params, fmt.Sprintf("%s 本次盈亏: %.2f", profitEmoji, d.Profit))
-				}
-
-				if len(params) > 0 {
-					fmt.Fprintf(&b, "   %s\n", strings.Join(params, "  |  "))
-				}
+			// 交易参数（如果有）- 参考执行成功消息的格式，每个参数单独一行
+			if d.Quantity > 0 {
+				fmt.Fprintf(&b, "• 数量: %.4f\n", d.Quantity)
+			}
+			if d.Leverage > 0 {
+				fmt.Fprintf(&b, "• 杠杆: %dx\n", d.Leverage)
+			}
+			if d.Price > 0 {
+				fmt.Fprintf(&b, "• 价格: %.4f\n", d.Price)
+			}
+			if d.Profit != 0 {
+				fmt.Fprintf(&b, "• 盈亏: %.2f USDT\n", d.Profit)
+			}
+			if d.StopLoss != nil {
+				fmt.Fprintf(&b, "• 止损: %.4f\n", *d.StopLoss)
+			}
+			if d.TakeProfit != nil {
+				fmt.Fprintf(&b, "• 止盈: %.4f\n", *d.TakeProfit)
+			}
 
 				// 理由（如果有）- 先显示理由
 				if record.DecisionJSON != "" {
