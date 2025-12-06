@@ -900,11 +900,24 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 		title += " - " + decisionSummary
 	}
 
-	// 1) 周期信息 + 决策JSON + 执行结果
+	// 1) 决策周期 + 决策JSON + 执行结果（整合为一条）
 	{
 		var b strings.Builder
 		b.Grow(4000)
 		fmt.Fprintf(&b, "%s AI决策周期: #%d\n\n", statusEmoji, processedRecord.CycleNumber)
+
+		b.WriteString("📋 决策内容（JSON）\n")
+		if processedRecord.DecisionJSON != "" {
+			var jsonBlock string
+			if at.isValidJSON(processedRecord.DecisionJSON) {
+				jsonBlock = formatDecisionJSON(processedRecord.DecisionJSON)
+			} else {
+				jsonBlock = processedRecord.DecisionJSON
+			}
+			fmt.Fprintf(&b, "<pre>%s</pre>\n", html.EscapeString(jsonBlock))
+		} else {
+			fmt.Fprintf(&b, "<pre>%s</pre>\n", "无结构化决策（AI未输出 decision 标签/JSON）")
+		}
 
 		if len(processedRecord.Decisions) > 0 {
 			b.WriteString("\n⚡ 执行结果\n")
@@ -928,26 +941,7 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 		messages = append(messages, b.String())
 	}
 
-	// 2) 决策JSON单独发送
-	{
-		var b strings.Builder
-		b.Grow(4000)
-		b.WriteString("📋 决策JSON\n")
-		if processedRecord.DecisionJSON != "" {
-			var jsonBlock string
-			if at.isValidJSON(processedRecord.DecisionJSON) {
-				jsonBlock = formatDecisionJSON(processedRecord.DecisionJSON)
-			} else {
-				jsonBlock = processedRecord.DecisionJSON
-			}
-			fmt.Fprintf(&b, "<pre>%s</pre>\n", html.EscapeString(jsonBlock))
-		} else {
-			fmt.Fprintf(&b, "<pre>%s</pre>\n", "无结构化决策（AI未输出 decision 标签/JSON）")
-		}
-		messages = append(messages, b.String())
-	}
-
-	// 3) 精简思维链
+	// 2) 精简思维链
 	if processedRecord.CoTTrace != "" {
 		var b strings.Builder
 		b.Grow(len(processedRecord.CoTTrace) + 200)
@@ -956,7 +950,7 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 		messages = append(messages, b.String())
 	}
 
-	// 4) 账户信息 + 错误
+	// 3) 账户信息 + 错误
 	{
 		var b strings.Builder
 		b.Grow(500)
