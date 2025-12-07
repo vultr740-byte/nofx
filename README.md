@@ -178,6 +178,7 @@ NOFX is currently **fully operational in cryptocurrency markets** with the follo
 - **Margin Management**: Total usage ≤90%, AI-controlled allocation
 - **Risk-Reward Enforcement**: Mandatory ≥1:2 stop-loss to take-profit ratio
 - **Anti-Stacking Protection**: Prevents duplicate positions in same asset/direction
+- **Profit Drawdown Protection**: Auto-closes positions when profit >5% and drawdown from peak ≥40% (checked every minute)
 
 ### ⚡ Low-Latency Execution Engine
 - **Multi-Exchange API Integration**: Binance Futures, Hyperliquid DEX, Aster DEX
