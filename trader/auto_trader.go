@@ -1072,6 +1072,18 @@ func (at *AutoTrader) buildFallbackMessage(record *logger.DecisionRecord) string
 // Run 运行自动交易主循环
 func (at *AutoTrader) Run() error {
 	at.isRunning = true
+	at.startTime = time.Now()
+
+	// 🔥 关键修复：重新创建停止通道，确保重启后能正常工作
+	// 如果上次运行后通道被关闭了，需要创建新的通道
+	select {
+	case <-at.stopMonitorCh:
+		// 通道已关闭，需要重新创建
+		at.stopMonitorCh = make(chan struct{})
+	default:
+		// 通道未关闭，正常使用
+	}
+
 	log.Println("🚀 AI驱动自动交易系统启动")
 
 	log.Printf("📥 [InitBalance] trader=%s user=%s initial=%.2f (config/db)", at.name, at.userID, at.initialBalance)
