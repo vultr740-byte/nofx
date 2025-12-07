@@ -10,19 +10,20 @@ import (
 type SessionState string
 
 const (
-	StateIdle               SessionState = "idle"                 // 空闲状态
-	StateCreatingTrader     SessionState = "creating_trader"      // 创建交易员中
-	StateChoosingPrompt     SessionState = "choosing_prompt"      // 选择提示词模板
-	StateChoosingAIModel    SessionState = "choosing_ai_model"    // 选择AI模型提供商
-	StateSettingAPIKey      SessionState = "setting_api_key"      // 设置 API KEY
-	StateUpdatingAIProvider SessionState = "updating_ai_provider" // 更新 AI 提供商
-	StateUpdatingAPIKey     SessionState = "updating_api_key"     // 更新 API KEY
-	StateSettingBalance     SessionState = "setting_balance"      // 设置初始资金
-	StateSettingRisk        SessionState = "setting_risk"         // 设置风险级别
-	StateSettingLeverage    SessionState = "setting_leverage"     // 设置杠杆倍数
-	StateSettingInterval    SessionState = "setting_interval"     // 设置扫描间隔
-	StateConfirm            SessionState = "confirm"              // 确认配置
-	StateQuickSetup         SessionState = "quick_setup"          // 快速配置（选择风险级别）
+	StateIdle                SessionState = "idle"                  // 空闲状态
+	StateCreatingTrader      SessionState = "creating_trader"       // 创建交易员中
+	StateChoosingPrompt      SessionState = "choosing_prompt"       // 选择提示词模板
+	StateChoosingAIModel     SessionState = "choosing_ai_model"     // 选择AI模型提供商
+	StateSettingAPIKey       SessionState = "setting_api_key"       // 设置 API KEY
+	StateUpdatingAIProvider  SessionState = "updating_ai_provider"  // 更新 AI 提供商
+	StateUpdatingAPIKey      SessionState = "updating_api_key"      // 更新 API KEY
+	StateSettingBalance      SessionState = "setting_balance"       // 设置初始资金
+	StateSettingRisk         SessionState = "setting_risk"          // 设置风险级别
+	StateSettingLeverage     SessionState = "setting_leverage"      // 设置杠杆倍数
+	StateSettingInterval     SessionState = "setting_interval"      // 设置扫描间隔
+	StateConfirm             SessionState = "confirm"               // 确认配置
+	StateQuickSetup          SessionState = "quick_setup"           // 快速配置（选择风险级别）
+	StateEditingCustomPrompt SessionState = "editing_custom_prompt" // 编辑自定义 Prompt
 )
 
 // PromptTemplate 提示词模板配置

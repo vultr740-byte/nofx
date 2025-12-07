@@ -79,6 +79,7 @@ type DatabaseInterface interface {
 	GetActiveGasSponsorshipForUser(walletAddr string, tgUserID int64) (*TgGasSponsorshipRecord, error)
 	HasRecentGasSponsorshipForUser(walletAddr string, tgUserID int64, withinHours int) (bool, error)
 	UpdateTgTraderConfig(tgUserID int64, traderID string, traderRecord *TgTraderRecord) error
+	UpdateTgTraderCustomPrompt(tgUserID int64, traderID string, customPrompt string) error
 	DeleteTgTrader(tgUserID int64, traderID string) error
 	GetTgTraderConfig(tgUserID int64, traderID string) (*TgTraderRecord, error)
 	Close() error
@@ -3511,6 +3512,31 @@ func (d *Database) UpdateTgTraderConfig(tgUserID int64, traderID string, traderR
 	}
 
 	return nil
+}
+
+// UpdateTgTraderCustomPrompt 更新TG交易员自定义Prompt
+func (d *Database) UpdateTgTraderCustomPrompt(tgUserID int64, traderID string, customPrompt string) error {
+	var query string
+	var args []interface{}
+
+	if d.usePostgreSQL {
+		query = `
+			UPDATE tg_traders
+			SET custom_prompt = $1, updated_at = NOW()
+			WHERE tg_user_id = $2 AND id = $3
+		`
+		args = []interface{}{customPrompt, tgUserID, traderID}
+	} else {
+		query = `
+			UPDATE tg_traders
+			SET custom_prompt = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE tg_user_id = ? AND id = ?
+		`
+		args = []interface{}{customPrompt, tgUserID, traderID}
+	}
+
+	_, err := d.db.Exec(query, args...)
+	return err
 }
 
 // DeleteTgTrader 删除TG交易员

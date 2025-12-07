@@ -632,6 +632,9 @@ func (tbm *TelegramBotManager) handleMenu(update tgbotapi.Update) {
 			tgbotapi.NewInlineKeyboardButtonData("🧠 更新 AI API KEY", fmt.Sprintf("menu_set_api|%d", telegramID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📝 自定义 Prompt", fmt.Sprintf("menu_custom_prompt|%d", telegramID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔑 导出 Agent 私钥", fmt.Sprintf("menu_export|%d", telegramID)),
 		),
 	)
@@ -763,6 +766,12 @@ func (tbm *TelegramBotManager) handleRegularMessage(update tgbotapi.Update) {
 	// 处理 API KEY 更新流程
 	if session.State == StateUpdatingAIProvider || session.State == StateUpdatingAPIKey {
 		tbm.handleAPIKeyUpdateFlow(update, session)
+		return
+	}
+
+	// 处理自定义 Prompt 编辑
+	if session.State == StateEditingCustomPrompt {
+		tbm.handleCustomPromptInput(update, session)
 		return
 	}
 
@@ -1962,6 +1971,10 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleAcknowledgePrivateKey(callback, chatID, telegramID)
 	case "menu_set_api":
 		tbm.handleMenuSetAPI(callback, chatID, telegramID)
+	case "menu_custom_prompt":
+		tbm.handleMenuCustomPrompt(callback, chatID, telegramID)
+	case "clear_custom_prompt":
+		tbm.handleClearCustomPrompt(callback, chatID, telegramID)
 	default:
 		log.Printf("❌ 未知动作: %s", action)
 		tbm.answerCallbackQuery(callback.ID, "未知操作")
@@ -2062,6 +2075,177 @@ func (tbm *TelegramBotManager) handleAcknowledgePrivateKey(callback *tgbotapi.Ca
 func (tbm *TelegramBotManager) handleMenuSetAPI(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
 	tbm.answerCallbackQuery(callback.ID, "🔐 正在打开 AI 配置...")
 	tbm.startAPIKeyUpdate(chatID, telegramID)
+}
+
+// handleMenuCustomPrompt 处理自定义 Prompt 菜单
+func (tbm *TelegramBotManager) handleMenuCustomPrompt(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	tbm.answerCallbackQuery(callback.ID, "📝 打开自定义 Prompt 设置...")
+
+	// 获取当前交易员配置
+	trader, err := tbm.getPrimaryTrader(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, "❌ 未找到交易员，请先使用 /start 初始化账号")
+		return
+	}
+
+	if !trader.IsConfigured {
+		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /create_trader 完成设置")
+		return
+	}
+
+	// 显示当前自定义 Prompt
+	var message string
+	if trader.CustomPrompt != "" {
+		// 截断显示，避免消息过长
+		displayPrompt := trader.CustomPrompt
+		if len(displayPrompt) > 500 {
+			displayPrompt = displayPrompt[:500] + "...(已截断)"
+		}
+		message = fmt.Sprintf(`📝 <b>自定义 Prompt 设置</b>
+
+<b>当前自定义 Prompt:</b>
+<code>%s</code>
+
+💡 <b>使用说明:</b>
+• 自定义 Prompt 会附加到基础策略 Prompt 之后
+• 可用于添加个人交易偏好、风险控制规则等
+• 修改后立即生效，无需重启交易员
+
+请直接发送新的自定义 Prompt 内容，或点击下方按钮：`, esc(displayPrompt))
+	} else {
+		message = `📝 <b>自定义 Prompt 设置</b>
+
+<b>当前状态:</b> 未设置自定义 Prompt
+
+💡 <b>使用说明:</b>
+• 自定义 Prompt 会附加到基础策略 Prompt 之后
+• 可用于添加个人交易偏好、风险控制规则等
+• 例如: "优先做多，避免追涨杀跌，单笔仓位不超过总资金的20%"
+
+请直接发送您的自定义 Prompt 内容（输入 "cancel" 取消）：`
+	}
+
+	// 设置会话状态
+	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
+	sessionMgr.ClearSession(telegramID)
+	session := sessionMgr.GetOrCreateSession(telegramID)
+	session.State = StateEditingCustomPrompt
+	sessionMgr.UpdateSessionState(telegramID, StateEditingCustomPrompt)
+
+	// 创建按钮（仅当有自定义 Prompt 时显示清除按钮）
+	if trader.CustomPrompt != "" {
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("🗑️ 清除自定义 Prompt", fmt.Sprintf("clear_custom_prompt|%d", telegramID)),
+			),
+		)
+		tbm.sendMessageWithInlineKeyboard(chatID, message, keyboard)
+	} else {
+		tbm.sendMessage(chatID, message)
+	}
+}
+
+// handleClearCustomPrompt 处理清除自定义 Prompt
+func (tbm *TelegramBotManager) handleClearCustomPrompt(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	tbm.answerCallbackQuery(callback.ID, "🗑️ 正在清除...")
+
+	// 清除会话状态
+	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
+	sessionMgr.ClearSession(telegramID)
+
+	trader, err := tbm.getPrimaryTrader(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, "❌ 未找到交易员")
+		return
+	}
+
+	// 更新数据库
+	if err := tbm.db.UpdateTgTraderCustomPrompt(telegramID, trader.ID, ""); err != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 清除失败: %s", esc(err)))
+		return
+	}
+
+	// 同步更新运行中的交易员
+	if trader.IsRunning {
+		if traderObj, err := tbm.tgTraderMgr.GetTgTrader(trader.ID); err == nil {
+			traderObj.SetCustomPrompt("")
+			log.Printf("🔁 已同步清除运行中交易员 %s 的自定义 Prompt", trader.Name)
+		}
+	}
+
+	tbm.sendMessage(chatID, "✅ 已清除自定义 Prompt")
+}
+
+// handleCustomPromptInput 处理自定义 Prompt 输入
+func (tbm *TelegramBotManager) handleCustomPromptInput(update tgbotapi.Update, session *UserSession) {
+	chatID := update.Message.Chat.ID
+	telegramID := update.Message.From.ID
+	input := strings.TrimSpace(update.Message.Text)
+
+	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
+
+	// 检查取消命令
+	if strings.EqualFold(input, "cancel") || input == "取消" {
+		sessionMgr.ClearSession(telegramID)
+		tbm.sendMessage(chatID, "❌ 已取消自定义 Prompt 设置")
+		return
+	}
+
+	// 验证输入长度
+	if len(input) > 2000 {
+		tbm.sendMessage(chatID, "❌ Prompt 内容过长，请限制在 2000 字符以内")
+		return
+	}
+
+	if len(input) < 5 {
+		tbm.sendMessage(chatID, "❌ Prompt 内容过短，请至少输入 5 个字符，或输入 'cancel' 取消")
+		return
+	}
+
+	// 获取交易员
+	trader, err := tbm.getPrimaryTrader(telegramID)
+	if err != nil {
+		sessionMgr.ClearSession(telegramID)
+		tbm.sendMessage(chatID, "❌ 未找到交易员")
+		return
+	}
+
+	// 更新数据库
+	if err := tbm.db.UpdateTgTraderCustomPrompt(telegramID, trader.ID, input); err != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 保存失败: %s", esc(err)))
+		return
+	}
+
+	// 同步更新运行中的交易员（关键：立即生效）
+	immediateEffect := false
+	if trader.IsRunning {
+		if traderObj, err := tbm.tgTraderMgr.GetTgTrader(trader.ID); err == nil {
+			traderObj.SetCustomPrompt(input)
+			immediateEffect = true
+			log.Printf("🔁 已同步更新运行中交易员 %s 的自定义 Prompt", trader.Name)
+		}
+	}
+
+	sessionMgr.ClearSession(telegramID)
+
+	// 显示成功消息
+	displayPrompt := input
+	if len(displayPrompt) > 200 {
+		displayPrompt = displayPrompt[:200] + "..."
+	}
+
+	effectMsg := "💡 将在交易员启动后生效"
+	if immediateEffect {
+		effectMsg = "🟢 已立即生效，下次 AI 决策将使用新的 Prompt"
+	}
+
+	successMsg := fmt.Sprintf(`✅ <b>自定义 Prompt 已保存</b>
+
+<code>%s</code>
+
+%s`, esc(displayPrompt), effectMsg)
+
+	tbm.sendMessage(chatID, successMsg)
 }
 
 func (tbm *TelegramBotManager) handleStopTraderCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
