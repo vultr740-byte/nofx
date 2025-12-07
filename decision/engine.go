@@ -167,9 +167,9 @@ type Decision struct {
 	ClosePercentage float64 `json:"close_percentage,omitempty"` // 用于 partial_close (0-100)
 
 	// 通用参数
-	Confidence       int     `json:"confidence,omitempty"` // 信心度 (0-100)
-	RiskUSD          float64 `json:"risk_usd,omitempty"`   // 最大美元风险
-	Reasoning        string  `json:"reasoning"`
+	Confidence int     `json:"confidence,omitempty"` // 信心度 (0-100)
+	RiskUSD    float64 `json:"risk_usd,omitempty"`   // 最大美元风险
+	Reasoning  string  `json:"reasoning"`
 }
 
 // FullDecision AI的完整决策（包含思维链）
@@ -354,7 +354,7 @@ func buildSystemPromptWithCustom(accountEquity float64, btcEthLeverage, altcoinL
 	sb.WriteString("# 📌 个性化交易策略\n\n")
 	sb.WriteString(customPrompt)
 	sb.WriteString("\n\n")
-	sb.WriteString("注意: 以上个性化策略是对基础规则的补充，不能违背基础风险控制原则。\n")
+	sb.WriteString("注意: 以上个性化策略是对基础规则的补充，需严格遵守，同时不能违背基础风险控制原则。\n")
 
 	return sb.String()
 }
