@@ -186,6 +186,13 @@ NOFX is currently **fully operational in cryptocurrency markets** with the follo
 - **Priority Execution**: Close existing positions first, then open new ones
 - **Slippage Control**: Pre-execution validation, real-time precision checks
 
+### 🗣️ Natural Language Trading (Telegram Bot)
+- **AI-Powered Command Parsing**: Trade using natural language like "long BTC 2x $100" or "做多 ETH 3倍 50U"
+- **Multi-Language Support**: English and Chinese command recognition
+- **Smart Asset Detection**: Auto-identifies crypto, stocks, forex, and commodities
+- **Confidence Validation**: Only executes commands with ≥80% parsing confidence
+- **Trade Confirmation**: Interactive confirmation before execution
+
 ### 🎨 Professional Monitoring Interface
 - **Binance-Style Dashboard**: Professional dark theme with real-time updates
 - **Equity Curves**: Historical account value tracking (USD/percentage toggle)
