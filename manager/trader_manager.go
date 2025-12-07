@@ -836,10 +836,16 @@ func (tm *TraderManager) loadTGTraderFromDB(database *config.Database, tgTrader 
 	agentKey := tgTrader.PrivateKey
 	walletAddr := tgTrader.WalletAddress
 
-	// 检查交易员是否已经在运行
-	if _, exists := tm.traders[tgTrader.ID]; exists {
-		log.Printf("⚠️ TG交易员 %s 已存在于内存中，跳过", tgTrader.ID)
-		return nil
+	// 检查交易员是否已经在内存中
+	if existingTrader, exists := tm.traders[tgTrader.ID]; exists {
+		// 如果交易员正在运行，跳过更新
+		if existingTrader.IsRunning() {
+			log.Printf("⚠️ TG交易员 %s 正在运行中，跳过配置更新", tgTrader.ID)
+			return nil
+		}
+		// 交易员已停止，从内存中移除以便重新创建（使用最新配置）
+		log.Printf("🔄 TG交易员 %s 已停止，将重新加载数据库配置", tgTrader.ID)
+		delete(tm.traders, tgTrader.ID)
 	}
 
 	// 确保扫描间隔不为0
