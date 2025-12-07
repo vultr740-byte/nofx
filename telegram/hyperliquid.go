@@ -81,8 +81,17 @@ func (s *HyperliquidService) GetPositions(agentKey, walletAddr string, testnet b
 		return "", fmt.Errorf("获取持仓失败: %w", err)
 	}
 
-	// 格式化持仓信息
-	return s.formatPositionsMessage(positions), nil
+	// 获取余额以获取总资产
+	balance, balanceErr := trader.GetBalance()
+	totalAssets := 0.0
+	if balanceErr == nil {
+		if total, ok := balance["totalWalletBalance"].(float64); ok {
+			totalAssets = total
+		}
+	}
+
+	// 格式化持仓信息（传入总资产）
+	return s.formatPositionsMessage(positions, totalAssets), nil
 }
 
 // GetPositionsWithData 获取持仓并返回消息和原始数据
@@ -109,8 +118,17 @@ func (s *HyperliquidService) GetPositionsWithData(agentKey, walletAddr string, t
 		return
 	}
 
-	// 格式化持仓信息
-	message = s.formatPositionsMessage(positions)
+	// 获取余额以获取总资产
+	balance, balanceErr := trader.GetBalance()
+	totalAssets := 0.0
+	if balanceErr == nil {
+		if total, ok := balance["totalWalletBalance"].(float64); ok {
+			totalAssets = total
+		}
+	}
+
+	// 格式化持仓信息（传入总资产）
+	message = s.formatPositionsMessage(positions, totalAssets)
 	return
 }
 
@@ -158,7 +176,7 @@ func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}
 }
 
 // formatPositionsMessage 格式化持仓消息
-func (s *HyperliquidService) formatPositionsMessage(positions []map[string]interface{}) string {
+func (s *HyperliquidService) formatPositionsMessage(positions []map[string]interface{}, totalAssets float64) string {
 	if len(positions) == 0 {
 		return `🕒 暂无持仓
 
@@ -261,9 +279,10 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 
 	message.WriteString(fmt.Sprintf(`
 📋 <b>持仓汇总</b>
+总资产: <code>%.2f USDC</code>
 活跃持仓: <code>%d 个</code>
 总未实现盈亏: <code>%.2f USDC (%.2f%%)</code>`,
-		positionCount, totalUnrealized, totalProfitPercent,
+		totalAssets, positionCount, totalUnrealized, totalProfitPercent,
 	))
 
 	return message.String()
