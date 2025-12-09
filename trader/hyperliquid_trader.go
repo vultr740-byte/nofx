@@ -276,6 +276,15 @@ type HyperliquidTrader struct {
 	takeProfitOrders map[string]orderRef // symbol -> 最近一次止盈挂单
 }
 
+const hyenaBuilderAddress = "0x1924b8561eeF20e70Ede628A296175D358BE80e5"
+
+func hyenaBuilderInfo() *hyperliquid.BuilderInfo {
+	return &hyperliquid.BuilderInfo{
+		Builder: hyenaBuilderAddress,
+		Fee:     0,
+	}
+}
+
 type orderRef struct {
 	oid   int64
 	cloid string
@@ -931,7 +940,7 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 		err = t.executeOrderWithRetry(&order, 3) // 最多重试3次
 	} else {
 		log.Printf("📈 [HIP-3] 加密货币使用标准执行: %s", coin)
-		_, err = t.exchange.Order(t.ctx, order, nil)
+		_, err = t.exchange.Order(t.ctx, order, hyenaBuilderInfo())
 	}
 
 	// 📋 [API调用] 记录API调用结束时间和结果
@@ -1112,7 +1121,7 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 		err = t.executeOrderWithRetry(&order, 3) // 最多重试3次
 	} else {
 		log.Printf("📈 [HIP-3] 加密货币使用标准执行: %s", coin)
-		_, err = t.exchange.Order(t.ctx, order, nil)
+		_, err = t.exchange.Order(t.ctx, order, hyenaBuilderInfo())
 	}
 
 	// 📋 [API调用] 记录API调用结束时间和结果
@@ -1204,7 +1213,7 @@ func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (map[stri
 		ReduceOnly: true, // 只平仓，不开新仓
 	}
 
-	_, err = t.exchange.Order(t.ctx, order, nil)
+	_, err = t.exchange.Order(t.ctx, order, hyenaBuilderInfo())
 	if err != nil {
 		return nil, fmt.Errorf("平多仓失败: %w", err)
 	}
@@ -1279,7 +1288,7 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (map[str
 		ReduceOnly: true,
 	}
 
-	_, err = t.exchange.Order(t.ctx, order, nil)
+	_, err = t.exchange.Order(t.ctx, order, hyenaBuilderInfo())
 	if err != nil {
 		return nil, fmt.Errorf("平空仓失败: %w", err)
 	}
@@ -1777,7 +1786,7 @@ func (t *HyperliquidTrader) SetStopLoss(symbol string, positionSide string, quan
 		ClientOrderID: &slCloid,
 	}
 
-	status, err := t.exchange.Order(t.ctx, order, nil)
+	status, err := t.exchange.Order(t.ctx, order, hyenaBuilderInfo())
 	if err != nil {
 		return fmt.Errorf("设置止损失败: %w", err)
 	}
@@ -1818,7 +1827,7 @@ func (t *HyperliquidTrader) SetTakeProfit(symbol string, positionSide string, qu
 		ClientOrderID: &tpCloid,
 	}
 
-	status, err := t.exchange.Order(t.ctx, order, nil)
+	status, err := t.exchange.Order(t.ctx, order, hyenaBuilderInfo())
 	if err != nil {
 		return fmt.Errorf("设置止盈失败: %w", err)
 	}
@@ -2188,7 +2197,7 @@ func (t *HyperliquidTrader) executeOrderWithRetry(order *hyperliquid.CreateOrder
 		log.Printf("🚀 [重试API] 调用时间: %s", apiCallStart.Format("2006-01-02 15:04:05.000"))
 
 		// 执行订单
-		_, err := t.exchange.Order(t.ctx, *order, nil)
+		_, err := t.exchange.Order(t.ctx, *order, hyenaBuilderInfo())
 
 		apiCallEnd := time.Now()
 		apiCallDuration := apiCallEnd.Sub(apiCallStart)
