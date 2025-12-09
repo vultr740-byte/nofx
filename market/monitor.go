@@ -33,7 +33,7 @@ func getKlineLimit(timeframe string) int {
 	case "15m":
 		return 50 // 15分钟数据：50根 ≈ 12.5小时历史
 	case "4h":
-		return 50 // 4小时数据：50根 = 8.3天历史
+		return 21 // 4小时数据：21根 = 3.5天历史
 	default:
 		return 100 // 默认值
 	}
