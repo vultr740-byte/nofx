@@ -76,25 +76,73 @@ func (p *NLParser) ParseCommand(message string) (*ParsedCommand, error) {
 
 // isTradingCommand 快速检测是否是交易相关的消息
 func (p *NLParser) isTradingCommand(message string) bool {
-	// 检查是否包含交易相关关键词
-	tradingKeywords := []string{
-		"做多", "做空", "开多", "开空", "买入", "卖出", "买", "卖",
-		"long", "short", "buy", "sell",
-		"倍", "x", "X",
-		"平仓", "平", "close",
-		"止损", "止盈", "stop", "take",
-		"$", "U", "USD", "USDT", "USDC",
-		"BTC", "ETH", "SOL", "BNB", "DOGE", "ADA", "DOT", "LINK", "MATIC",
+	// 1. 消息过长通常是讨论/说明，不是交易命令（交易命令一般很简短）
+	if len(message) > 50 {
+		return false
 	}
 
-	msgLower := strings.ToLower(message)
-	for _, keyword := range tradingKeywords {
-		if strings.Contains(msgLower, strings.ToLower(keyword)) {
-			return true
+	// 2. 包含规则/讨论性词汇的不是交易命令
+	discussionWords := []string{
+		"禁止", "不要", "不能", "不可", "避免", "注意",
+		"规则", "策略", "纪律", "原则", "建议",
+		"因此", "所以", "如果", "当", "必须",
+		"状态下", "情况下", "条件下",
+	}
+	for _, word := range discussionWords {
+		if strings.Contains(message, word) {
+			return false
 		}
 	}
 
-	return false
+	// 3. 检查是否包含交易动作关键词
+	actionKeywords := []string{
+		"做多", "做空", "开多", "开空", "买入", "卖出",
+		"long", "short", "buy", "sell",
+		"平仓", "close", "全平",
+		"止损", "止盈", "stop", "take",
+	}
+
+	// 4. 检查是否包含交易标的关键词
+	symbolKeywords := []string{
+		"BTC", "ETH", "SOL", "BNB", "DOGE", "ADA", "DOT", "LINK", "MATIC",
+		"比特币", "以太坊", "特斯拉", "苹果", "黄金",
+		"TSLA", "AAPL", "NVDA", "GOLD",
+	}
+
+	// 5. 检查是否包含金额/杠杆关键词
+	amountKeywords := []string{
+		"倍", "x", "X",
+		"$", "U", "USD", "USDT", "USDC",
+	}
+
+	msgLower := strings.ToLower(message)
+
+	hasAction := false
+	for _, keyword := range actionKeywords {
+		if strings.Contains(msgLower, strings.ToLower(keyword)) {
+			hasAction = true
+			break
+		}
+	}
+
+	hasSymbol := false
+	for _, keyword := range symbolKeywords {
+		if strings.Contains(msgLower, strings.ToLower(keyword)) {
+			hasSymbol = true
+			break
+		}
+	}
+
+	hasAmount := false
+	for _, keyword := range amountKeywords {
+		if strings.Contains(msgLower, strings.ToLower(keyword)) {
+			hasAmount = true
+			break
+		}
+	}
+
+	// 必须同时包含：(动作词) AND (标的词 OR 金额词)
+	return hasAction && (hasSymbol || hasAmount)
 }
 
 // parseWithAI 使用 AI 模型解析命令
