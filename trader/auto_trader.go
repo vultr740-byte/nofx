@@ -2879,6 +2879,31 @@ func (at *AutoTrader) formatSymbolForExchange(symbol string) string {
 	return symbol
 }
 
+// matchPositionSymbol 灵活匹配持仓符号
+// 处理 "SUI" 与 "SUIUSDT" 的匹配，以及 HIP-3 格式 "xyz:TSLA"
+func matchPositionSymbol(posSymbol, targetSymbol string) bool {
+	// 精确匹配
+	if posSymbol == targetSymbol {
+		return true
+	}
+	// 去掉 USDT 后缀后匹配 (SUIUSDT vs SUI)
+	if strings.TrimSuffix(posSymbol, "USDT") == targetSymbol {
+		return true
+	}
+	// 添加 USDT 后缀后匹配 (SUI vs SUIUSDT)
+	if posSymbol == targetSymbol+"USDT" {
+		return true
+	}
+	// HIP-3 格式匹配 (xyz:TSLA vs TSLA)
+	if strings.Contains(posSymbol, ":") {
+		parts := strings.SplitN(posSymbol, ":", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[1], targetSymbol) {
+			return true
+		}
+	}
+	return false
+}
+
 // 启动回撤监控
 func (at *AutoTrader) startDrawdownMonitor() {
 	at.monitorWg.Add(1)
@@ -3119,8 +3144,9 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 
 		// 查找对应交易对的持仓
 		for _, pos := range positions {
-			if pos["symbol"] == resolvedSymbol {
-				formattedSymbol := at.formatSymbolForExchange(resolvedSymbol)
+			posSymbol, _ := pos["symbol"].(string)
+			if matchPositionSymbol(posSymbol, resolvedSymbol) {
+				formattedSymbol := at.formatSymbolForExchange(posSymbol)
 				if pos["side"] == "long" {
 					return at.trader.CloseLong(formattedSymbol, amount)
 				} else if pos["side"] == "short" {
@@ -3179,7 +3205,7 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 
 		for _, pos := range positions {
 			sym, _ := pos["symbol"].(string)
-			if strings.ToUpper(sym) != strings.ToUpper(symbol) {
+			if !matchPositionSymbol(sym, resolvedSymbol) {
 				continue
 			}
 			side, _ := pos["side"].(string)
