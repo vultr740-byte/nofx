@@ -285,6 +285,91 @@ func hyenaBuilderInfo() *hyperliquid.BuilderInfo {
 	}
 }
 
+// CheckBuilderApproval 检查是否已授权 Builder
+func (t *HyperliquidTrader) CheckBuilderApproval() (bool, error) {
+	payload := map[string]interface{}{
+		"type": "clearinghouseState",
+		"user": t.walletAddr,
+	}
+	jsonBody, err := json.Marshal(payload)
+	if err != nil {
+		return false, fmt.Errorf("序列化请求失败: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", infoAPIURL(t.testnet), bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return false, fmt.Errorf("创建请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return false, fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	// 检查 builderFeeApprovals 数组
+	approvals, ok := result["builderFeeApprovals"].([]interface{})
+	if !ok {
+		return false, nil
+	}
+
+	targetAddr := strings.ToLower(hyenaBuilderAddress)
+	for _, approval := range approvals {
+		approvalMap, ok := approval.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		builder, ok := approvalMap["builder"].(string)
+		if ok && strings.ToLower(builder) == targetAddr {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// ApproveBuilder 授权 Builder（一次性操作）
+func (t *HyperliquidTrader) ApproveBuilder() error {
+	log.Printf("🔐 正在授权 Builder: %s", hyenaBuilderAddress)
+
+	// 使用 SDK 的 ApproveBuilderFee 方法
+	// 参数: builder地址, maxFeeRate (bps, "1" = 0.01%)
+	_, err := t.exchange.ApproveBuilderFee(t.ctx, hyenaBuilderAddress, "1")
+	if err != nil {
+		return fmt.Errorf("授权 Builder 失败: %w", err)
+	}
+
+	log.Printf("✅ Builder 授权成功: %s", hyenaBuilderAddress)
+	return nil
+}
+
+// EnsureBuilderApproved 确保 Builder 已授权（检查+授权）
+func (t *HyperliquidTrader) EnsureBuilderApproved() error {
+	approved, err := t.CheckBuilderApproval()
+	if err != nil {
+		log.Printf("⚠️ 检查 Builder 授权状态失败: %v，尝试直接授权...", err)
+	}
+
+	if approved {
+		log.Printf("✅ Builder 已授权: %s", hyenaBuilderAddress)
+		return nil
+	}
+
+	log.Printf("📝 Builder 未授权，正在进行一次性授权...")
+	return t.ApproveBuilder()
+}
+
 type orderRef struct {
 	oid   int64
 	cloid string
@@ -381,7 +466,8 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 		}
 	}
 
-	return &HyperliquidTrader{
+	// 创建 trader 实例
+	trader := &HyperliquidTrader{
 		exchange:         exchange,
 		ctx:              ctx,
 		walletAddr:       walletAddr,
@@ -391,7 +477,15 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 		isCrossMargin:    true, // 默认使用全仓模式
 		stopLossOrders:   make(map[string]orderRef),
 		takeProfitOrders: make(map[string]orderRef),
-	}, nil
+	}
+
+	// 🔐 自动检查并授权 Builder（一次性）
+	if err := trader.EnsureBuilderApproved(); err != nil {
+		log.Printf("⚠️ Builder 授权失败（非致命错误，可能需要手动授权）: %v", err)
+		// 不阻塞初始化，只是警告
+	}
+
+	return trader, nil
 }
 
 // safeNewHyperliquidExchange 包装 hyperliquid.NewExchange，防止内部panic导致进程崩溃
