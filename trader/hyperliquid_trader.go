@@ -283,11 +283,9 @@ type HyperliquidTrader struct {
 
 const hyenaBuilderAddress = "0x1924b8561eeF20e70Ede628A296175D358BE80e5"
 
+// Builder功能暂时禁用：未使用API Wallet时会导致授权失败
 func hyenaBuilderInfo() *hyperliquid.BuilderInfo {
-	return &hyperliquid.BuilderInfo{
-		Builder: hyenaBuilderAddress,
-		Fee:     0,
-	}
+	return nil
 }
 
 // CheckBuilderApproval 检查是否已授权 Builder
@@ -491,10 +489,7 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 	}
 
 	// 🔐 自动检查并授权 Builder（一次性）
-	if err := trader.EnsureBuilderApproved(); err != nil {
-		log.Printf("⚠️ Builder 授权失败（非致命错误，可能需要手动授权）: %v", err)
-		// 不阻塞初始化，只是警告
-	}
+	// Builder 功能暂时禁用（主钱包私钥不可用于 API 授权）
 
 	return trader, nil
 }
@@ -1098,7 +1093,7 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 	log.Printf("🚀 [API调用] 调用时间: %s", apiCallStart.Format("2006-01-02 15:04:05.000"))
 
 	// ✅ 单次执行下单，失败直接返回，便于定位问题
-		_, err = t.exchange.Order(t.ctx, order, hyenaBuilderInfo())
+		_, err = t.exchange.Order(t.ctx, order, nil) // builder 暂停
 
 	// 📋 [API调用] 记录API调用结束时间和结果
 	apiCallEnd := time.Now()
@@ -1281,7 +1276,7 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 	log.Printf("🚀 [API调用] 调用时间: %s", apiCallStart.Format("2006-01-02 15:04:05.000"))
 
 	// ✅ 单次执行下单，失败直接返回，便于定位问题
-		_, err = t.exchange.Order(t.ctx, order, hyenaBuilderInfo())
+		_, err = t.exchange.Order(t.ctx, order, nil) // builder 暂停
 
 	// 📋 [API调用] 记录API调用结束时间和结果
 	apiCallEnd := time.Now()
@@ -1380,7 +1375,7 @@ func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (map[stri
 		ReduceOnly: true, // 只平仓，不开新仓
 	}
 
-		_, err = t.exchange.Order(t.ctx, order, hyenaBuilderInfo())
+		_, err = t.exchange.Order(t.ctx, order, nil) // builder 暂停
 	if err != nil {
 		return nil, fmt.Errorf("平多仓失败: %w", err)
 	}
@@ -1455,7 +1450,7 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (map[str
 		ReduceOnly: true,
 	}
 
-		_, err = t.exchange.Order(t.ctx, order, hyenaBuilderInfo())
+		_, err = t.exchange.Order(t.ctx, order, nil) // builder 暂停
 	if err != nil {
 		return nil, fmt.Errorf("平空仓失败: %w", err)
 	}
@@ -1953,7 +1948,7 @@ func (t *HyperliquidTrader) SetStopLoss(symbol string, positionSide string, quan
 		ClientOrderID: &slCloid,
 	}
 
-	status, err := t.exchange.Order(t.ctx, order, hyenaBuilderInfo())
+	status, err := t.exchange.Order(t.ctx, order, nil) // builder 暂停
 	if err != nil {
 		return fmt.Errorf("设置止损失败: %w", err)
 	}
@@ -1994,7 +1989,7 @@ func (t *HyperliquidTrader) SetTakeProfit(symbol string, positionSide string, qu
 		ClientOrderID: &tpCloid,
 	}
 
-	status, err := t.exchange.Order(t.ctx, order, hyenaBuilderInfo())
+	status, err := t.exchange.Order(t.ctx, order, nil) // builder 暂停
 	if err != nil {
 		return fmt.Errorf("设置止盈失败: %w", err)
 	}
@@ -2416,7 +2411,7 @@ func (t *HyperliquidTrader) executeOrderWithRetry(order *hyperliquid.CreateOrder
 		}
 
 		// 执行订单
-		_, err := t.exchange.Order(t.ctx, *order, hyenaBuilderInfo())
+		_, err := t.exchange.Order(t.ctx, *order, nil) // builder 暂停
 
 		apiCallEnd := time.Now()
 		apiCallDuration := apiCallEnd.Sub(apiCallStart)
