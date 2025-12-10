@@ -2048,12 +2048,11 @@ func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
 			if asset.PxDecimals != nil {
 				log.Printf("✅ [HIP-3] %s 使用 API PxDecimals: %d 位小数", normalizedCoin, *asset.PxDecimals)
 				return *asset.PxDecimals, true
-			} else {
-				// PxDecimals 为 nil，返回 false 让调用方使用股票专用的 2 位小数精度逻辑
-				// 注意：SzDecimals 是数量精度，不应用于价格精度
-				log.Printf("🔄 [HIP-3] %s PxDecimals 为 nil，将使用股票默认精度 (2位小数)", normalizedCoin)
-				return 0, false
-			}
+		} else {
+			// PxDecimals 为 nil，返回 false 让调用方使用 5 位有效数字规则（与 crypto 一致）
+			log.Printf("🔄 [HIP-3] %s PxDecimals 为 nil，将使用 5 位有效数字规则", normalizedCoin)
+			return 0, false
+		}
 		}
 	}
 
@@ -2063,12 +2062,11 @@ func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
 			if asset.PxDecimals != nil {
 				log.Printf("✅ [HIP-3] %s 刷新后使用 PxDecimals: %d 位小数", norm, *asset.PxDecimals)
 				return *asset.PxDecimals, true
-			} else {
-				// PxDecimals 为 nil，返回 false 让调用方使用股票专用的 2 位小数精度逻辑
-				// 注意：SzDecimals 是数量精度，不应用于价格精度
-				log.Printf("🔄 [HIP-3] %s 刷新后 PxDecimals 为 nil，将使用股票默认精度 (2位小数)", norm)
-				return 0, false
-			}
+		} else {
+			// PxDecimals 为 nil，返回 false 让调用方使用 5 位有效数字规则（与 crypto 一致）
+			log.Printf("🔄 [HIP-3] %s 刷新后 PxDecimals 为 nil，将使用 5 位有效数字规则", norm)
+			return 0, false
+		}
 		}
 	} else if err != nil {
 		log.Printf("❌ [HIP-3] 获取 %s 价格精度失败: %v", coin, err)
@@ -2177,7 +2175,9 @@ func (t *HyperliquidTrader) roundPriceToSigfigs(price float64, truncate bool) fl
 	return math.Round(price*multiplier) / multiplier
 }
 
-// roundPriceForStock 股票专用价格舍入方法 - 强制2位小数以符合Hyperliquid步长要求
+// roundPriceForStock [已废弃] 此函数不再被调用
+// 股票和加密货币现在统一使用 roundPriceToSigfigs()
+// 保留此函数仅作为参考，后续可删除
 func (t *HyperliquidTrader) roundPriceForStock(price float64, truncate bool) float64 {
 	if price == 0 {
 		return 0
@@ -2223,21 +2223,14 @@ func (t *HyperliquidTrader) validateOrderPrice(coin string, price float64, isBuy
 	log.Printf("✅ [HIP-3] 价格验证通过: 市场价格=%.6f, 订单价格=%.6f, 偏差=%.2f%%",
 		marketPrice, price, deviation*100)
 
-	// Price step validation for stocks (critical fix)
-	if t.isStockAsset(coin) {
-		truncatedPrice, err := t.validatePriceStep(coin, price)
-		if err != nil {
-			log.Printf("❌ [HIP-3] %v", err)
-			return price, err
-		}
-		// 返回截断后的价格用于订单创建
-		return truncatedPrice, nil
-	}
-
+	// 统一使用 5 位有效数字规则，不再对股票做额外的 2 位小数截断
+	// 价格精度已在 roundPriceForCoin() 中统一处理
 	return price, nil
 }
 
-// validatePriceStep 验证价格是否为有效步长的整数倍（针对股票资产）
+// validatePriceStep [已废弃] 此函数不再被调用
+// 股票和加密货币现在统一使用 5 位有效数字规则
+// 保留此函数仅作为参考，后续可删除
 func (t *HyperliquidTrader) validatePriceStep(coin string, price float64) (float64, error) {
 	if t.isStockAsset(coin) {
 		// 先截断到2位小数，确保符合步长要求
@@ -2392,11 +2385,10 @@ func (t *HyperliquidTrader) adjustPriceForRetry(currentPrice float64, attempt in
 		log.Printf("🔧 [HIP-3] 卖单价格调整: %.8f * %.3f -> %.8f", currentPrice, 1.0-additionalDeviation, adjustedPrice)
 	}
 
-	// 强制2位小数舍入（适用于所有股票资产）
-	multiplier := 100.0
-	result := math.Round(adjustedPrice*multiplier) / multiplier
+	// 使用 5 位有效数字规则（与 crypto 和初始订单处理一致）
+	result := t.roundPriceToSigfigs(adjustedPrice, false)
 
-	log.Printf("📐 [HIP-3] 重试价格舍入: %.8f -> %.8f", adjustedPrice, result)
+	log.Printf("📐 [HIP-3] 重试价格舍入 (5位有效数字): %.8f -> %.8f", adjustedPrice, result)
 	return result
 }
 
