@@ -93,6 +93,12 @@ A high-performance decentralized perpetual futures exchange!
 - ✅ Support for both mainnet and testnet
 - ✅ No API keys needed - just your Ethereum private key
 
+**HIP-3 (Stocks) Notes:**
+- ✅ Correct asset mapping for HIP-3 stocks (e.g., `xyz:TSLA`) using `allPerpMetas` so orders hit the right market (no more BTC misrouting).
+- ✅ Orders use 5-sig-fig rounding + 2-decimal tick for stocks, with price multipliers aligned to crypto (1.01/0.99).
+- ✅ Positions pull across all HIP-3 dex markets (xyz/flx/vntl/hyna), so `/positions` shows stock holdings.
+- ✅ Leverage defaults and margin mode respect HIP-3 rules: isolated enforced when required; missing leverage falls back to your configured Altcoin leverage.
+
 **New Workflow:**
 1. **Configure AI Models**: Add your DeepSeek/Qwen API keys through the web interface
 2. **Configure Exchanges**: Set up Binance/Hyperliquid API credentials
