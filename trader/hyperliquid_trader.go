@@ -624,15 +624,67 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	return result, nil
 }
 
-// GetPositions 获取所有持仓
-func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
-	// 获取账户状态
-	accountState, err := t.exchange.Info().UserState(t.ctx, t.walletAddr)
-	if err != nil {
-		return nil, fmt.Errorf("获取持仓失败: %w", err)
+// fetchUserStateWithDex 调用 clearinghouseState，支持 dex 参数以获取不同 perp 市场（含 HIP-3）
+func (t *HyperliquidTrader) fetchUserStateWithDex(dex string) (*hyperliquid.UserState, error) {
+	payload := map[string]interface{}{
+		"type": "clearinghouseState",
+		"user": t.walletAddr,
+	}
+	if dex != "" {
+		payload["dex"] = dex
 	}
 
-	log.Printf("🔍 [DEBUG] Hyperliquid API返回 %d 个资产持仓", len(accountState.AssetPositions))
+	reqBody, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest("POST", infoAPIURL(t.testnet), bytes.NewBuffer(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "NOFX-Hyperliquid-Positions")
+
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败(dex=%s): %w", dex, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败(dex=%s): %w", dex, err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("clearinghouseState 返回状态码 %d (dex=%s): %s", resp.StatusCode, dex, string(body))
+	}
+
+	var state hyperliquid.UserState
+	if err := json.Unmarshal(body, &state); err != nil {
+		return nil, fmt.Errorf("解析响应失败(dex=%s): %w", dex, err)
+	}
+	return &state, nil
+}
+
+// GetPositions 获取所有持仓
+func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
+	// 获取账户状态（默认 perp + 各 HIP-3 dex）
+	dexes := []string{"", "xyz", "flx", "vntl", "hyna"}
+	var allPositions []hyperliquid.AssetPosition
+	for _, dex := range dexes {
+		state, err := t.fetchUserStateWithDex(dex)
+		if err != nil {
+			log.Printf("⚠️ 获取持仓失败(dex=%s): %v", dex, err)
+			continue
+		}
+		if len(state.AssetPositions) > 0 {
+			log.Printf("🔍 [DEBUG] dex=%s 返回 %d 个资产持仓", dex, len(state.AssetPositions))
+		}
+		allPositions = append(allPositions, state.AssetPositions...)
+	}
+	if len(allPositions) == 0 {
+		log.Printf("🔍 [DEBUG] 未获取到任何持仓")
+	}
 
 	// 预先获取触发类挂单，用于止盈/止损信息
 	frontendOrders, err := t.exchange.Info().FrontendOpenOrders(t.ctx, t.walletAddr)
@@ -651,7 +703,7 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 	var result []map[string]interface{}
 
 	// 遍历所有持仓
-	for i, assetPos := range accountState.AssetPositions {
+	for i, assetPos := range allPositions {
 		position := assetPos.Position
 
 		// 记录原始数据用于调试
@@ -675,7 +727,7 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 		posMap := make(map[string]interface{})
 
 		// 标准化symbol格式（Hyperliquid使用如"BTC"，我们转换为"BTCUSDT"）
-		symbol := position.Coin + "USDT"
+		symbol := convertSymbolFromHyperliquid(position.Coin)
 		posMap["symbol"] = symbol
 
 		// 持仓数量和方向 - 保留原始符号用于平仓判断
