@@ -1028,14 +1028,8 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 	log.Printf("🚀 [API调用] 开始执行订单API调用...")
 	log.Printf("🚀 [API调用] 调用时间: %s", apiCallStart.Format("2006-01-02 15:04:05.000"))
 
-	// ✅ 使用带重试机制的价格执行
-	if t.isStockAsset(coin) {
-		log.Printf("🔄 [HIP-3] 股票资产使用重试机制: %s", coin)
-		err = t.executeOrderWithRetry(&order, 3) // 最多重试3次
-	} else {
-		log.Printf("📈 [HIP-3] 加密货币使用标准执行: %s", coin)
-		_, err = t.exchange.Order(t.ctx, order, nil) // hyenaBuilderInfo() 暂时禁用
-	}
+	// ✅ 单次执行下单，失败直接返回，便于定位问题
+	_, err = t.exchange.Order(t.ctx, order, nil) // hyenaBuilderInfo() 暂时禁用
 
 	// 📋 [API调用] 记录API调用结束时间和结果
 	apiCallEnd := time.Now()
@@ -1209,14 +1203,8 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 	log.Printf("🚀 [API调用] 开始执行订单API调用...")
 	log.Printf("🚀 [API调用] 调用时间: %s", apiCallStart.Format("2006-01-02 15:04:05.000"))
 
-	// ✅ 使用带重试机制的价格执行
-	if t.isStockAsset(coin) {
-		log.Printf("🔄 [HIP-3] 股票资产使用重试机制: %s", coin)
-		err = t.executeOrderWithRetry(&order, 3) // 最多重试3次
-	} else {
-		log.Printf("📈 [HIP-3] 加密货币使用标准执行: %s", coin)
-		_, err = t.exchange.Order(t.ctx, order, nil) // hyenaBuilderInfo() 暂时禁用
-	}
+	// ✅ 单次执行下单，失败直接返回，便于定位问题
+	_, err = t.exchange.Order(t.ctx, order, nil) // hyenaBuilderInfo() 暂时禁用
 
 	// 📋 [API调用] 记录API调用结束时间和结果
 	apiCallEnd := time.Now()
