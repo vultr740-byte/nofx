@@ -106,8 +106,8 @@ func (p *NLParser) isTradingCommand(message string) bool {
 	// 4. 检查是否包含交易标的关键词
 	symbolKeywords := []string{
 		"BTC", "ETH", "SOL", "BNB", "DOGE", "ADA", "DOT", "LINK", "MATIC",
-		"比特币", "以太坊", "特斯拉", "苹果", "黄金",
-		"TSLA", "AAPL", "NVDA", "GOLD",
+		"比特币", "以太坊", "特斯拉", "苹果", "黄金", "谷歌",
+		"TSLA", "AAPL", "NVDA", "GOLD", "GOOGL", "GOOG", "GOOGLE",
 	}
 
 	// 5. 检查是否包含金额/杠杆关键词
