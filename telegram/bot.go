@@ -1,9 +1,11 @@
 package telegram
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"log"
+	"math"
 	"math/big"
 	"strconv"
 	"strings"
@@ -800,6 +802,11 @@ func (tbm *TelegramBotManager) handleRegularMessage(update tgbotapi.Update) {
 		return
 	}
 
+	// 转发消息专用处理：仅解析文本转发，忽略其他类型
+	if tbm.handleForwardedSentiment(update) {
+		return
+	}
+
 	// 尝试解析自然语言交易命令
 	if tbm.handleNaturalLanguageCommand(update) {
 		return // 如果成功处理了交易命令，直接返回
@@ -811,6 +818,160 @@ func (tbm *TelegramBotManager) handleRegularMessage(update tgbotapi.Update) {
 	} else {
 		tbm.sendMessage(chatID, "💡 我只理解命令。使用 /help 查看可用命令。")
 	}
+}
+
+// handleForwardedSentiment 处理转发文本的多空倾向解析
+func (tbm *TelegramBotManager) handleForwardedSentiment(update tgbotapi.Update) bool {
+	if update.Message == nil {
+		return false
+	}
+
+	msg := update.Message
+	chatID := msg.Chat.ID
+	telegramID := msg.From.ID
+
+	isForward := msg.ForwardDate != 0 || msg.ForwardFrom != nil || msg.ForwardFromChat != nil || msg.ForwardSenderName != ""
+	if !isForward {
+		return false
+	}
+
+	content := strings.TrimSpace(msg.Text)
+	if content == "" {
+		content = strings.TrimSpace(msg.Caption)
+	}
+
+	if content == "" {
+		tbm.sendMessage(chatID, "❌ 转发消息不含文本，当前仅支持文本解析。")
+		return true
+	}
+
+	// 获取运行中的交易员与 MCP 客户端
+	tgTraders, err := tbm.db.GetTgTraders(telegramID)
+	if err != nil || len(tgTraders) == 0 {
+		tbm.sendMessage(chatID, "❌ 未找到交易员配置，请先创建交易员")
+		return true
+	}
+	var runningTrader *config.TgTraderRecord
+	for _, trader := range tgTraders {
+		if trader.IsRunning {
+			runningTrader = &trader
+			break
+		}
+	}
+	if runningTrader == nil {
+		tbm.sendMessage(chatID, "❌ 交易员未运行，请先启动交易员")
+		return true
+	}
+
+	autoTrader, err := tbm.tgTraderMgr.GetTgTrader(runningTrader.ID)
+	if err != nil || autoTrader == nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 获取交易员失败: %v", err))
+		return true
+	}
+	client := autoTrader.GetMCPClient()
+	if client == nil {
+		tbm.sendMessage(chatID, "❌ AI 解析服务未配置，请先完成模型配置")
+		return true
+	}
+
+	// 截断超长文本，避免 prompt 过大
+	const maxLen = 3000
+	truncated := false
+	if utf8.RuneCountInString(content) > maxLen {
+		runes := []rune(content)
+		head := string(runes[:1500])
+		tail := string(runes[len(runes)-1500:])
+		content = head + "\n...【内容已截断】...\n" + tail
+		truncated = true
+	}
+
+	// 来源描述
+	var source string
+	switch {
+	case msg.ForwardFromChat != nil && msg.ForwardFromChat.Title != "":
+		source = msg.ForwardFromChat.Title
+	case msg.ForwardFrom != nil && msg.ForwardFrom.UserName != "":
+		source = msg.ForwardFrom.UserName
+	case msg.ForwardSenderName != "":
+		source = msg.ForwardSenderName
+	default:
+		source = "未知来源"
+	}
+	fwdTime := time.Unix(int64(msg.ForwardDate), 0).Format("2006-01-02 15:04:05")
+
+	systemPrompt := `你是一个加密市场多空倾向判定器。只基于给定文本判断“做多/做空/等待”，不要输出交易对、金额或杠杆。输出严格 JSON 对象：
+{
+  "action": "open_long|open_short|wait",
+  "long_confidence": 0-100,
+  "short_confidence": 0-100,
+  "reasoning": "不超过200字的简洁依据"
+}
+规则：
+- 若任一信心值 <60，或长短差值 <10，则 action=wait，并说明原因
+- 若文本无明确方向，action=wait
+- 禁止任何代码块/Markdown/额外文本`
+
+	userPrompt := fmt.Sprintf("来源: %s\n转发时间: %s\n是否截断: %t\n请判断多空倾向并按要求输出JSON。\n\n转发内容:\n%s", source, fwdTime, truncated, content)
+
+	log.Printf("🤖 [转发解析] 用户:%d 来源:%s 截断:%t 长度:%d", telegramID, source, truncated, len(content))
+
+	aiResp, err := client.CallWithMessages(systemPrompt, userPrompt)
+	if err != nil {
+		log.Printf("❌ 转发消息AI解析失败: %v", err)
+		tbm.sendMessage(chatID, "⚠️ AI 解析服务暂时不可用，请稍后重试。")
+		return true
+	}
+
+	type sentimentDecision struct {
+		Action          string  `json:"action"`
+		LongConfidence  float64 `json:"long_confidence"`
+		ShortConfidence float64 `json:"short_confidence"`
+		Reasoning       string  `json:"reasoning"`
+	}
+
+	cleanResp := stripCodeFences(strings.TrimSpace(aiResp))
+	var decision sentimentDecision
+	if err := json.Unmarshal([]byte(cleanResp), &decision); err != nil {
+		log.Printf("❌ 解析 AI JSON 失败: %v | 原始响应: %s", err, aiResp)
+		tbm.sendMessage(chatID, "⚠️ AI 返回格式异常，无法解析。")
+		return true
+	}
+
+	// 本地安全校验与降级
+	validAction := map[string]bool{"open_long": true, "open_short": true, "wait": true}
+	if !validAction[decision.Action] {
+		decision.Action = "wait"
+	}
+	diff := math.Abs(decision.LongConfidence - decision.ShortConfidence)
+	if decision.LongConfidence < 60 && decision.ShortConfidence < 60 {
+		decision.Action = "wait"
+	}
+	if diff < 10 {
+		decision.Action = "wait"
+	}
+	if decision.Action == "open_long" && decision.LongConfidence < decision.ShortConfidence {
+		decision.Action = "wait"
+	}
+	if decision.Action == "open_short" && decision.ShortConfidence < decision.LongConfidence {
+		decision.Action = "wait"
+	}
+
+	pretty, _ := json.MarshalIndent(decision, "", "  ")
+	reply := fmt.Sprintf("📥 已解析转发文本（来源: %s）\n🤖 AI决策 JSON:\n```json\n%s\n```", source, string(pretty))
+	tbm.sendMessage(chatID, reply)
+	return true
+}
+
+// stripCodeFences 去除 ``` 包裹的代码块
+func stripCodeFences(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "```") {
+		s = strings.TrimPrefix(s, "```json")
+		s = strings.TrimPrefix(s, "```")
+		s = strings.TrimSuffix(s, "```")
+		s = strings.TrimSpace(s)
+	}
+	return s
 }
 
 // setupCommands 设置 Bot 自定义菜单
