@@ -1040,6 +1040,14 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 	log.Printf("🏁 [API调用] 结果: %s", map[bool]string{true: "成功", false: "失败"}[err == nil])
 
 	if err != nil {
+		// 额外打印参考价对比，便于排查 “reference price” 相关错误
+		if refPrice, refErr := t.GetMarketPrice(symbol); refErr == nil && refPrice > 0 {
+			deviation := (order.Price - refPrice) / refPrice * 100
+			log.Printf("📊 [价格对比] 订单价格=%.8f, 参考价格=%.8f, 偏差=%.2f%%", order.Price, refPrice, deviation)
+		} else if refErr != nil {
+			log.Printf("⚠️ [价格对比] 获取参考价格失败: %v", refErr)
+		}
+
 		log.Printf("❌ [API调用] 失败原因: %v", err)
 		log.Printf("❌ [订单执行流程] 最终步骤失败: API调用失败")
 		log.Printf("🚀 [订单执行流程] ===== 开多仓执行流程失败 =====")
@@ -1215,6 +1223,14 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 	log.Printf("🏁 [API调用] 结果: %s", map[bool]string{true: "成功", false: "失败"}[err == nil])
 
 	if err != nil {
+		// 额外打印参考价对比，便于排查 “reference price” 相关错误
+		if refPrice, refErr := t.GetMarketPrice(symbol); refErr == nil && refPrice > 0 {
+			deviation := (order.Price - refPrice) / refPrice * 100
+			log.Printf("📊 [价格对比] 订单价格=%.8f, 参考价格=%.8f, 偏差=%.2f%%", order.Price, refPrice, deviation)
+		} else if refErr != nil {
+			log.Printf("⚠️ [价格对比] 获取参考价格失败: %v", refErr)
+		}
+
 		log.Printf("❌ [API调用] 失败原因: %v", err)
 		log.Printf("❌ [订单执行流程] 最终步骤失败: API调用失败")
 		log.Printf("🚀 [订单执行流程] ===== 开空仓执行流程失败 =====")
