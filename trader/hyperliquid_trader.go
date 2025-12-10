@@ -2102,12 +2102,11 @@ func (t *HyperliquidTrader) logPriceDetails(symbol, coin string, price float64, 
 		log.Printf("   • PxDecimals: 未找到")
 	}
 
+	sigfigPrice := t.roundPriceToSigfigs(price, false)
 	if t.isStockAsset(coin) {
-		stockPrice := t.roundPriceForStock(price, false)
-		log.Printf("   • 股票舍入价格: %.8f", stockPrice)
-		log.Printf("   • 资产类型: HIP-3 股票")
+		log.Printf("   • 5位有效数字舍入价格: %.8f", sigfigPrice)
+		log.Printf("   • 资产类型: HIP-3 股票 (使用5位有效数字)")
 	} else {
-		sigfigPrice := t.roundPriceToSigfigs(price, false)
 		log.Printf("   • 有效数字舍入价格: %.8f", sigfigPrice)
 		log.Printf("   • 资产类型: 加密货币")
 	}
@@ -2132,16 +2131,14 @@ func (t *HyperliquidTrader) roundPriceForCoin(coin string, price float64, trunca
 		return result
 	}
 
-	// Stock-specific fallback
-	if t.isStockAsset(coin) {
-		result := t.roundPriceForStock(price, truncate)
-		log.Printf("📊 [HIP-3] 股票价格舍入: %.8f -> %.8f", price, result)
-		return result
-	}
-
-	// Crypto fallback
+	// 当 PxDecimals=nil 时，无论是股票还是加密货币，都使用 5 位有效数字规则
+	// Hyperliquid HIP-3 股票和加密货币在 PxDecimals 未指定时使用相同的精度规则
 	result := t.roundPriceToSigfigs(price, truncate)
-	log.Printf("📈 [HIP-3] 加密货币价格舍入: %.8f -> %.8f", price, result)
+	if t.isStockAsset(coin) {
+		log.Printf("📊 [HIP-3] 股票价格使用 5 位有效数字: %.8f -> %.8f", price, result)
+	} else {
+		log.Printf("📈 [HIP-3] 加密货币价格舍入: %.8f -> %.8f", price, result)
+	}
 	return result
 }
 
