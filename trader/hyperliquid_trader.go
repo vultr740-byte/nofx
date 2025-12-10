@@ -2049,9 +2049,10 @@ func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
 				log.Printf("✅ [HIP-3] %s 使用 API PxDecimals: %d 位小数", normalizedCoin, *asset.PxDecimals)
 				return *asset.PxDecimals, true
 			} else {
-				// PxDecimals 为 nil，HIP-3 资产使用 SzDecimals 作为价格精度
-				log.Printf("🔄 [HIP-3] %s PxDecimals 为 nil，使用 SzDecimals=%d 作为价格精度", normalizedCoin, asset.SzDecimals)
-				return asset.SzDecimals, true
+				// PxDecimals 为 nil，HIP-3 股票默认使用 2 位小数（标准股票价格格式 $0.01 步长）
+				// 注意：SzDecimals 是数量精度，不是价格精度，不能混用
+				log.Printf("🔄 [HIP-3] %s PxDecimals 为 nil，使用默认 2 位小数（股票标准）", normalizedCoin)
+				return 2, true
 			}
 		}
 	}
@@ -2063,9 +2064,10 @@ func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
 				log.Printf("✅ [HIP-3] %s 刷新后使用 PxDecimals: %d 位小数", norm, *asset.PxDecimals)
 				return *asset.PxDecimals, true
 			} else {
-				// PxDecimals 为 nil，HIP-3 资产使用 SzDecimals 作为价格精度
-				log.Printf("🔄 [HIP-3] %s 刷新后 PxDecimals 为 nil，使用 SzDecimals=%d 作为价格精度", norm, asset.SzDecimals)
-				return asset.SzDecimals, true
+				// PxDecimals 为 nil，HIP-3 股票默认使用 2 位小数（标准股票价格格式 $0.01 步长）
+				// 注意：SzDecimals 是数量精度，不是价格精度，不能混用
+				log.Printf("🔄 [HIP-3] %s 刷新后 PxDecimals 为 nil，使用默认 2 位小数（股票标准）", norm)
+				return 2, true
 			}
 		}
 	} else if err != nil {
@@ -2385,7 +2387,7 @@ func (t *HyperliquidTrader) adjustPriceForRetry(coin string, currentPrice float6
 		log.Printf("🔧 [HIP-3] 卖单价格调整: %.8f * %.3f -> %.8f", currentPrice, 1.0-additionalDeviation, adjustedPrice)
 	}
 
-	// 使用 roundPriceForCoin 统一处理（HIP-3 股票用 SzDecimals，加密货币用 5 位有效数字）
+	// 使用 roundPriceForCoin 统一处理（HIP-3 股票用 2 位小数，加密货币用 5 位有效数字）
 	result := t.roundPriceForCoin(coin, adjustedPrice, false)
 
 	log.Printf("📐 [HIP-3] 重试价格舍入: %.8f -> %.8f", adjustedPrice, result)
