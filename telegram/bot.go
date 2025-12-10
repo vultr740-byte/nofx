@@ -958,7 +958,25 @@ func (tbm *TelegramBotManager) handleForwardedSentiment(update tgbotapi.Update) 
 
 	pretty, _ := json.MarshalIndent(decision, "", "  ")
 	reply := fmt.Sprintf("📥 已解析转发文本（来源: %s）\n🤖 AI决策 JSON:\n```json\n%s\n```", source, string(pretty))
-	tbm.sendMessage(chatID, reply)
+
+	var keyboard tgbotapi.InlineKeyboardMarkup
+	if decision.Action == "open_long" {
+		btn1 := tgbotapi.NewInlineKeyboardButtonData("3x做多BTC", fmt.Sprintf("fwd_trade|%d|long|BTCUSDT|3|20", telegramID))
+		btn2 := tgbotapi.NewInlineKeyboardButtonData("3x做多ETH", fmt.Sprintf("fwd_trade|%d|long|ETHUSDT|3|20", telegramID))
+		keyboard = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(btn1, btn2))
+	} else if decision.Action == "open_short" {
+		btn1 := tgbotapi.NewInlineKeyboardButtonData("3x做空BTC", fmt.Sprintf("fwd_trade|%d|short|BTCUSDT|3|20", telegramID))
+		btn2 := tgbotapi.NewInlineKeyboardButtonData("3x做空ETH", fmt.Sprintf("fwd_trade|%d|short|ETHUSDT|3|20", telegramID))
+		keyboard = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(btn1, btn2))
+	}
+
+	if len(keyboard.InlineKeyboard) > 0 {
+		msg := tgbotapi.NewMessage(chatID, reply)
+		msg.ReplyMarkup = keyboard
+		tbm.bot.Send(msg)
+	} else {
+		tbm.sendMessage(chatID, reply)
+	}
 	return true
 }
 
@@ -2093,14 +2111,14 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 
 	// 解析回调数据
 	parts := strings.Split(data, "|")
-	if len(parts) != 2 {
+	if len(parts) < 2 {
 		log.Printf("❌ 无效的回调数据格式: %s", data)
 		tbm.answerCallbackQuery(callback.ID, "无效的请求")
 		return
 	}
 
-	action, telegramIDStr := parts[0], parts[1]
-	telegramID, err := strconv.ParseInt(telegramIDStr, 10, 64)
+	action := parts[0]
+	telegramID, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
 		log.Printf("❌ 解析用户ID失败: %v", err)
 		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
@@ -2136,6 +2154,8 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleMenuCustomPrompt(callback, chatID, telegramID)
 	case "clear_custom_prompt":
 		tbm.handleClearCustomPrompt(callback, chatID, telegramID)
+	case "fwd_trade":
+		tbm.handleForwardTradeCallback(callback, chatID, telegramID, parts)
 	default:
 		log.Printf("❌ 未知动作: %s", action)
 		tbm.answerCallbackQuery(callback.ID, "未知操作")
@@ -2176,7 +2196,6 @@ func (tbm *TelegramBotManager) handleExportPrivateKeyCallback(callback *tgbotapi
 		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
 		return
 	}
-
 	if !tbm.hasHyperliquidAccount(telegramID) {
 		tbm.sendMessage(chatID, "❌ 尚未创建 Hyperliquid 账户，请先使用 /start 完成初始化")
 		return
@@ -2224,6 +2243,53 @@ Agent 私钥:
 		return
 	}
 	tbm.scheduleDeleteMessage(chatID, sentMsg.MessageID, 10*time.Second)
+}
+
+// handleForwardTradeCallback 处理转发消息快捷多空按钮
+func (tbm *TelegramBotManager) handleForwardTradeCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
+	// fwd_trade|user|side|symbol|leverage|amount
+	if len(parts) != 6 {
+		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
+		return
+	}
+	side := parts[2]
+	symbol := parts[3]
+	lev, _ := strconv.Atoi(parts[4])
+	amount, _ := strconv.ParseFloat(parts[5], 64)
+
+	tbm.answerCallbackQuery(callback.ID, "⏳ 正在执行...")
+
+	// 找到运行中的交易员
+	tgTraders, err := tbm.db.GetTgTraders(telegramID)
+	if err != nil || len(tgTraders) == 0 {
+		tbm.sendMessage(chatID, "❌ 未找到交易员配置，请先创建交易员")
+		return
+	}
+	var runningTrader *config.TgTraderRecord
+	for _, trader := range tgTraders {
+		if trader.IsRunning {
+			runningTrader = &trader
+			break
+		}
+	}
+	if runningTrader == nil {
+		tbm.sendMessage(chatID, "❌ 交易员未运行，请先启动交易员")
+		return
+	}
+
+	autoTrader, err := tbm.tgTraderMgr.GetTgTrader(runningTrader.ID)
+	if err != nil || autoTrader == nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 获取交易员失败: %v", err))
+		return
+	}
+
+	tbm.sendMessage(chatID, fmt.Sprintf("🔄 正在执行 %s %s...", map[string]string{"long": "做多", "short": "做空"}[side], symbol))
+	_, tradeErr := autoTrader.ExecuteNaturalLanguageTrade(side, symbol, amount, 0, lev, "crypto")
+	if tradeErr != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 执行失败: %v", tradeErr))
+		return
+	}
+	tbm.sendMessage(chatID, "✅ 指令已提交")
 }
 
 func (tbm *TelegramBotManager) handleAcknowledgePrivateKey(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
