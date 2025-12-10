@@ -2311,6 +2311,8 @@ func (t *HyperliquidTrader) executeOrderWithRetry(order *hyperliquid.CreateOrder
 		// 📋 [错误分析] 详细的错误分析
 		log.Printf("❌ [重试失败] 第 %d 次重试失败", attempt+1)
 		log.Printf("❌ [重试失败] 失败原因: %v", err)
+		log.Printf("❌ [重试失败] 完整错误: %+v", err)
+		log.Printf("❌ [重试失败] 错误类型: %T", err)
 		log.Printf("❌ [重试失败] 失败时间: %s", time.Now().Format("2006-01-02 15:04:05.000"))
 
 		// 检查是否是价格相关错误且是股票资产

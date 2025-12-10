@@ -2258,11 +2258,13 @@ func (tbm *TelegramBotManager) handleForwardPickCallback(callback *tgbotapi.Call
 
 	// 构造回调数据 fwd_exec|user|side|symbol|mode|value
 	var rows [][]tgbotapi.InlineKeyboardButton
+	amtRow := []tgbotapi.InlineKeyboardButton{}
 	for _, amt := range fixed {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%.0fU", amt),
-				fmt.Sprintf("fwd_exec|%d|%s|%s|amt|%.0f", telegramID, side, symbol, amt)),
-		))
+		amtRow = append(amtRow, tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%.0fU", amt),
+			fmt.Sprintf("fwd_exec|%d|%s|%s|amt|%.0f", telegramID, side, symbol, amt)))
+	}
+	if len(amtRow) > 0 {
+		rows = append(rows, amtRow)
 	}
 	pctRow := []tgbotapi.InlineKeyboardButton{}
 	for _, p := range percent {
@@ -2366,13 +2368,13 @@ func (tbm *TelegramBotManager) handleForwardExecCallback(callback *tgbotapi.Call
 		adjustNote = fmt.Sprintf("（已按可用余额上限 %.2f U 执行）", maxNominal)
 	}
 
-	tbm.sendMessage(chatID, fmt.Sprintf("🔄 正在执行 %s %s，名义金额约 %.2f U，杠杆 %dx%s...", map[string]string{"long": "做多", "short": "做空"}[side], symbol, amount, leverage, adjustNote))
+	tbm.sendMessage(chatID, fmt.Sprintf("🔄 提交下单: %s %s | 名义约 %.2f U | 杠杆 %dx%s", map[string]string{"long": "做多", "short": "做空"}[side], symbol, amount, leverage, adjustNote))
 	_, tradeErr := autoTrader.ExecuteNaturalLanguageTrade(side, symbol, amount, 0, leverage, "crypto")
 	if tradeErr != nil {
-		tbm.sendMessage(chatID, fmt.Sprintf("❌ 执行失败: %v", tradeErr))
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 下单失败: %v", tradeErr))
 		return
 	}
-	tbm.sendMessage(chatID, "✅ 指令已提交")
+	tbm.sendMessage(chatID, fmt.Sprintf("✅ 已提交: %s %s | 名义约 %.2f U | 杠杆 %dx", map[string]string{"long": "做多", "short": "做空"}[side], symbol, amount, leverage))
 }
 
 func (tbm *TelegramBotManager) handleAcknowledgePrivateKey(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
