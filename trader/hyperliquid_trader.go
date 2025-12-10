@@ -2103,6 +2103,11 @@ func (t *HyperliquidTrader) logPriceDetails(symbol, coin string, price float64, 
 
 // getPriceDecimals 根据 Hyperliquid 规则推导价格小数位 (max(0, 6 - szDecimals))
 func (t *HyperliquidTrader) getPriceDecimals(coin string) int {
+	// 临时写死：HIP-3 股票价格使用 1 位小数（与官网下单示例一致）
+	if t.isStockAsset(coin) {
+		return 1
+	}
+
 	szDecimals := t.getSzDecimals(coin)
 	priceDecimals := 6 - szDecimals
 	if priceDecimals < 0 {
