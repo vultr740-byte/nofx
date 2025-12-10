@@ -293,9 +293,13 @@ func (p *NLParser) parseWithRegex(message string) (*ParsedCommand, error) {
 		cmd.Action = "long"
 	} else if strings.Contains(message, "做空") || strings.Contains(message, "short") || strings.Contains(message, "卖出") {
 		cmd.Action = "short"
-	} else if strings.Contains(message, "平仓") || strings.Contains(message, "close") {
-		// “全部平仓/清仓” 识别为 close_all
-		if strings.Contains(message, "全部") || strings.Contains(message, "全仓") || strings.Contains(message, "清仓") {
+	} else if strings.Contains(message, "平仓") || strings.Contains(message, "close") || strings.Contains(message, "清仓") {
+		// “全部平仓/全仓/平仓所有/close all” 识别为 close_all
+		lower := strings.ToLower(message)
+		if strings.Contains(message, "全部") ||
+			strings.Contains(message, "全仓") ||
+			strings.Contains(message, "所有") ||
+			strings.Contains(lower, "all") {
 			cmd.Action = "close_all"
 		} else {
 			cmd.Action = "close"
