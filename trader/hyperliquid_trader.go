@@ -2669,23 +2669,72 @@ func (t *HyperliquidTrader) ensureAssetMap() error {
 		return fmt.Errorf("exchange 未初始化")
 	}
 
-	if len(t.assetMap) > 0 {
-		// 已构建过，确保映射同步到 SDK
-		return t.applyAssetMapToSDK()
+	if len(t.assetMap) == 0 {
+		// 使用 allPerpMetas 获取全量资产列表（包含 HIP-3 股票），并按官方规则推导 assetId
+		payload := []byte(`{"type":"allPerpMetas"}`)
+		req, err := http.NewRequest("POST", infoAPIURL(t.testnet), bytes.NewBuffer(payload))
+		if err != nil {
+			return fmt.Errorf("创建 InfoAPI 请求失败: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "NOFX-Hyperliquid-AssetMap")
+
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("调用 InfoAPI 失败: %w", err)
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("读取 InfoAPI 响应失败: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("InfoAPI 返回错误状态码 %d: %s", resp.StatusCode, string(body))
+		}
+
+		var metas []PerpMetaLite
+		if err := json.Unmarshal(body, &metas); err != nil {
+			return fmt.Errorf("解析 InfoAPI 响应失败: %w", err)
+		}
+
+		// 展平所有资产
+		var assets []PerpMetaAssetLite
+		for _, meta := range metas {
+			assets = append(assets, meta.Universe...)
+		}
+
+		// 找到 HIP-3 起始位置
+		firstHip3 := -1
+		for i, a := range assets {
+			if strings.Contains(a.Name, ":") {
+				firstHip3 = i
+				break
+			}
+		}
+		if firstHip3 == -1 {
+			return fmt.Errorf("allPerpMetas 未返回任何 HIP-3 资产")
+		}
+
+		const hip3Base = 110000 // 官方前端使用的 HIP-3 资产基准ID
+
+		for idx, asset := range assets {
+			name := normalizeHip3Symbol(asset.Name)
+			if strings.Contains(name, ":") {
+				assetId := hip3Base + (idx - firstHip3)
+				t.assetMap[name] = assetId
+			} else {
+				// 常规 perp 按索引映射
+				t.assetMap[name] = idx
+			}
+		}
+
+		log.Printf("✅ 构建资产映射完成: 总计 %d 个资产，HIP-3 起始索引 %d", len(t.assetMap), firstHip3)
 	}
 
-	// 使用 MetaAndAssetCtxs 获取最新的 Universe，并按顺序构建 assetId
-	metaAndCtx, err := t.exchange.Info().MetaAndAssetCtxs(t.ctx)
-	if err != nil {
-		return fmt.Errorf("获取 MetaAndAssetCtxs 失败: %w", err)
-	}
-
-	for idx, asset := range metaAndCtx.Meta.Universe {
-		name := normalizeHip3Symbol(asset.Name)
-		t.assetMap[name] = idx
-	}
-
-	log.Printf("✅ 构建 HIP-3 资产映射完成，共 %d 个资产", len(t.assetMap))
+	// 已构建过，确保映射同步到 SDK
 	return t.applyAssetMapToSDK()
 }
 
@@ -2700,19 +2749,28 @@ func (t *HyperliquidTrader) applyAssetMapToSDK() error {
 
 	nameToCoinField := v.FieldByName("nameToCoin")
 	coinToAssetField := v.FieldByName("coinToAsset")
+	assetToDecimalField := v.FieldByName("assetToDecimal")
 
-	if !nameToCoinField.IsValid() || !coinToAssetField.IsValid() {
+	if !nameToCoinField.IsValid() || !coinToAssetField.IsValid() || !assetToDecimalField.IsValid() {
 		return fmt.Errorf("无法访问 SDK 内部映射")
 	}
 
 	nameToCoin := reflect.NewAt(nameToCoinField.Type(), unsafe.Pointer(nameToCoinField.UnsafeAddr())).Elem()
 	coinToAsset := reflect.NewAt(coinToAssetField.Type(), unsafe.Pointer(coinToAssetField.UnsafeAddr())).Elem()
+	assetToDecimal := reflect.NewAt(assetToDecimalField.Type(), unsafe.Pointer(assetToDecimalField.UnsafeAddr())).Elem()
 
 	for name, assetId := range t.assetMap {
 		nameVal := reflect.ValueOf(name)
 		assetVal := reflect.ValueOf(assetId)
 		nameToCoin.SetMapIndex(nameVal, nameVal)
 		coinToAsset.SetMapIndex(nameVal, assetVal)
+
+		// 补充数量精度，默认为 3（稳妥值）；如果从 hip3Meta 已知则使用其 SzDecimals
+		szDec := 3
+		if asset, ok := t.hip3Meta[name]; ok {
+			szDec = asset.SzDecimals
+		}
+		assetToDecimal.SetMapIndex(assetVal, reflect.ValueOf(szDec))
 	}
 
 	return nil
