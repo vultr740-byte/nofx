@@ -2338,6 +2338,10 @@ func (tbm *TelegramBotManager) handleForwardExecCallback(callback *tgbotapi.Call
 	const leverage = 3
 	const minNominal = 15.0
 	maxNominal := avail * 0.9
+	if maxNominal < minNominal {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 可用余额不足，最小名义下单需 %.0f U，可用 %.2f U", minNominal, avail))
+		return
+	}
 
 	var amount float64
 	switch mode {
@@ -2352,15 +2356,17 @@ func (tbm *TelegramBotManager) handleForwardExecCallback(callback *tgbotapi.Call
 		return
 	}
 
+	adjustNote := ""
 	if amount < minNominal {
-		tbm.sendMessage(chatID, fmt.Sprintf("❌ 名义金额低于最小单 %.0f U", minNominal))
-		return
+		amount = minNominal
+		adjustNote = fmt.Sprintf("（已按最小单 %.0f U 执行）", minNominal)
 	}
 	if amount > maxNominal {
 		amount = maxNominal
+		adjustNote = fmt.Sprintf("（已按可用余额上限 %.2f U 执行）", maxNominal)
 	}
 
-	tbm.sendMessage(chatID, fmt.Sprintf("🔄 正在执行 %s %s，名义金额约 %.2f U，杠杆 %dx...", map[string]string{"long": "做多", "short": "做空"}[side], symbol, amount, leverage))
+	tbm.sendMessage(chatID, fmt.Sprintf("🔄 正在执行 %s %s，名义金额约 %.2f U，杠杆 %dx%s...", map[string]string{"long": "做多", "short": "做空"}[side], symbol, amount, leverage, adjustNote))
 	_, tradeErr := autoTrader.ExecuteNaturalLanguageTrade(side, symbol, amount, 0, leverage, "crypto")
 	if tradeErr != nil {
 		tbm.sendMessage(chatID, fmt.Sprintf("❌ 执行失败: %v", tradeErr))
