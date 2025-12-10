@@ -2323,7 +2323,7 @@ func (t *HyperliquidTrader) executeOrderWithRetry(order *hyperliquid.CreateOrder
 			log.Printf("🔧 [价格调整] 调整前价格: %.8f", oldPrice)
 
 			// 调整价格（增加更保守的偏差）
-			newPrice := t.adjustPriceForRetry(order.Price, attempt+1, order.IsBuy)
+			newPrice := t.adjustPriceForRetry(order.Coin, order.Price, attempt+1, order.IsBuy)
 
 			log.Printf("🔧 [价格调整] 价格调整详情:")
 			log.Printf("🔧 [价格调整] oldPrice: %.8f", oldPrice)
@@ -2360,7 +2360,7 @@ func (t *HyperliquidTrader) executeOrderWithRetry(order *hyperliquid.CreateOrder
 }
 
 // adjustPriceForRetry 为重试调整价格（逐步增加偏差）
-func (t *HyperliquidTrader) adjustPriceForRetry(currentPrice float64, attempt int, isBuy bool) float64 {
+func (t *HyperliquidTrader) adjustPriceForRetry(coin string, currentPrice float64, attempt int, isBuy bool) float64 {
 	// 基础偏差，每次重试增加
 	var additionalDeviation float64
 	switch attempt {
@@ -2385,10 +2385,10 @@ func (t *HyperliquidTrader) adjustPriceForRetry(currentPrice float64, attempt in
 		log.Printf("🔧 [HIP-3] 卖单价格调整: %.8f * %.3f -> %.8f", currentPrice, 1.0-additionalDeviation, adjustedPrice)
 	}
 
-	// 使用 5 位有效数字规则（与 crypto 和初始订单处理一致）
-	result := t.roundPriceToSigfigs(adjustedPrice, false)
+	// 使用 roundPriceForCoin 统一处理（HIP-3 股票用 SzDecimals，加密货币用 5 位有效数字）
+	result := t.roundPriceForCoin(coin, adjustedPrice, false)
 
-	log.Printf("📐 [HIP-3] 重试价格舍入 (5位有效数字): %.8f -> %.8f", adjustedPrice, result)
+	log.Printf("📐 [HIP-3] 重试价格舍入: %.8f -> %.8f", adjustedPrice, result)
 	return result
 }
 
