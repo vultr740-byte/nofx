@@ -2089,13 +2089,26 @@ func (t *HyperliquidTrader) logPriceDetails(symbol, coin string, price float64, 
 	}
 
 	sigfigPrice := t.roundPriceToSigfigs(price, false)
+	tickDecimals := t.getPriceDecimals(coin)
 	if t.isStockAsset(coin) {
 		log.Printf("   • 5位有效数字舍入价格: %.8f", sigfigPrice)
+		log.Printf("   • tick: %d 位小数 (6 - szDecimals)", tickDecimals)
 		log.Printf("   • 资产类型: HIP-3 股票 (使用5位有效数字)")
 	} else {
 		log.Printf("   • 有效数字舍入价格: %.8f", sigfigPrice)
+		log.Printf("   • tick: %d 位小数 (6 - szDecimals)", tickDecimals)
 		log.Printf("   • 资产类型: 加密货币")
 	}
+}
+
+// getPriceDecimals 根据 Hyperliquid 规则推导价格小数位 (max(0, 6 - szDecimals))
+func (t *HyperliquidTrader) getPriceDecimals(coin string) int {
+	szDecimals := t.getSzDecimals(coin)
+	priceDecimals := 6 - szDecimals
+	if priceDecimals < 0 {
+		priceDecimals = 0
+	}
+	return priceDecimals
 }
 
 // roundPriceForCoin 根据精度（pxDecimals 或5位有效数字）处理价格；truncate=true 时截断到步长
@@ -2119,13 +2132,26 @@ func (t *HyperliquidTrader) roundPriceForCoin(coin string, price float64, trunca
 
 	// 当 PxDecimals=nil 时，无论是股票还是加密货币，都使用 5 位有效数字规则
 	// Hyperliquid HIP-3 股票和加密货币在 PxDecimals 未指定时使用相同的精度规则
-	result := t.roundPriceToSigfigs(price, truncate)
-	if t.isStockAsset(coin) {
-		log.Printf("📊 [HIP-3] 股票价格使用 5 位有效数字: %.8f -> %.8f", price, result)
+	sigPrice := t.roundPriceToSigfigs(price, truncate)
+
+	// 进一步按照 Hyperliquid 官方规则应用 tick：priceDecimals = max(0, 6 - szDecimals)
+	priceDecimals := t.getPriceDecimals(coin)
+	var finalPrice float64
+	multiplier := math.Pow10(priceDecimals)
+	if truncate {
+		finalPrice = math.Floor(sigPrice*multiplier) / multiplier
 	} else {
-		log.Printf("📈 [HIP-3] 加密货币价格舍入: %.8f -> %.8f", price, result)
+		finalPrice = math.Round(sigPrice*multiplier) / multiplier
 	}
-	return result
+
+	if t.isStockAsset(coin) {
+		log.Printf("📊 [HIP-3] 股票价格 5 位有效数字 + tick(%d 位): %.8f -> %.8f -> %.8f",
+			priceDecimals, price, sigPrice, finalPrice)
+	} else {
+		log.Printf("📈 [HIP-3] 加密货价格 5 位有效数字 + tick(%d 位): %.8f -> %.8f -> %.8f",
+			priceDecimals, price, sigPrice, finalPrice)
+	}
+	return finalPrice
 }
 
 // roundPriceToSigfigs 将价格四舍五入到5位有效数字
