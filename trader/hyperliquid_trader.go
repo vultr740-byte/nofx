@@ -2049,9 +2049,10 @@ func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
 				log.Printf("✅ [HIP-3] %s 使用 API PxDecimals: %d 位小数", normalizedCoin, *asset.PxDecimals)
 				return *asset.PxDecimals, true
 			} else {
-				// PxDecimals 为 nil，使用 SzDecimals 作为后备
-				log.Printf("🔄 [HIP-3] %s PxDecimals 为 nil，使用 SzDecimals: %d 位小数", normalizedCoin, asset.SzDecimals)
-				return asset.SzDecimals, true
+				// PxDecimals 为 nil，返回 false 让调用方使用股票专用的 2 位小数精度逻辑
+				// 注意：SzDecimals 是数量精度，不应用于价格精度
+				log.Printf("🔄 [HIP-3] %s PxDecimals 为 nil，将使用股票默认精度 (2位小数)", normalizedCoin)
+				return 0, false
 			}
 		}
 	}
@@ -2063,9 +2064,10 @@ func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
 				log.Printf("✅ [HIP-3] %s 刷新后使用 PxDecimals: %d 位小数", norm, *asset.PxDecimals)
 				return *asset.PxDecimals, true
 			} else {
-				// PxDecimals 为 nil，使用 SzDecimals 作为后备
-				log.Printf("🔄 [HIP-3] %s 刷新后 PxDecimals 为 nil，使用 SzDecimals: %d 位小数", norm, asset.SzDecimals)
-				return asset.SzDecimals, true
+				// PxDecimals 为 nil，返回 false 让调用方使用股票专用的 2 位小数精度逻辑
+				// 注意：SzDecimals 是数量精度，不应用于价格精度
+				log.Printf("🔄 [HIP-3] %s 刷新后 PxDecimals 为 nil，将使用股票默认精度 (2位小数)", norm)
+				return 0, false
 			}
 		}
 	} else if err != nil {
