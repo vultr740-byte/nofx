@@ -12,10 +12,12 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/sonirico/go-hyperliquid"
@@ -268,6 +270,7 @@ type HyperliquidTrader struct {
 	ctx              context.Context
 	walletAddr       string
 	meta             *hyperliquid.Meta // 缓存meta信息（包含精度等）
+	assetMap         map[string]int    // HIP-3 名称 -> assetId (补充SDK缺失的股票映射)
 	testnet          bool              // 当前是否为测试网
 	hip3Meta         map[string]PerpMetaAssetLite
 	isCrossMargin    bool // 是否为全仓模式
@@ -472,11 +475,17 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 		ctx:              ctx,
 		walletAddr:       walletAddr,
 		meta:             meta,
+		assetMap:         make(map[string]int),
 		hip3Meta:         make(map[string]PerpMetaAssetLite),
 		testnet:          testnet,
 		isCrossMargin:    true, // 默认使用全仓模式
 		stopLossOrders:   make(map[string]orderRef),
 		takeProfitOrders: make(map[string]orderRef),
+	}
+
+	// 构建 asset 映射并同步到 SDK，防止 HIP-3 股票被映射到资产 0 (BTC)
+	if err := trader.ensureAssetMap(); err != nil {
+		log.Printf("⚠️ 构建资产映射失败: %v", err)
 	}
 
 	// 🔐 自动检查并授权 Builder（一次性）- 暂时禁用调试
@@ -500,7 +509,7 @@ func safeNewHyperliquidExchange(ctx context.Context, privateKey *ecdsa.PrivateKe
 		ctx,
 		privateKey,
 		apiURL,
-		nil,        // Meta will be fetched automatically
+		nil,        // Meta will be fetched automatically (后续补充HIP-3映射)
 		"",         // vault address (empty for personal account)
 		walletAddr, // wallet address
 		nil,        // SpotMeta will be fetched automatically
@@ -2535,6 +2544,12 @@ func (t *HyperliquidTrader) resolveCoin(symbol string, assetType string) (string
 	// 先处理显式符号
 	coin := convertSymbolToHyperliquid(symbol)
 	if strings.Contains(coin, ":") {
+		// 预先构建 assetId 映射，防止 SDK 将未知资产映射到 0(BTC)
+		if _, ok := t.assetMap[normalizeHip3Symbol(coin)]; !ok {
+			if err := t.ensureAssetMap(); err != nil {
+				log.Printf("⚠️ 无法更新资产映射: %v", err)
+			}
+		}
 		return coin, nil
 	}
 
@@ -2648,6 +2663,61 @@ func (t *HyperliquidTrader) resolveCoin(symbol string, assetType string) (string
 	return "", fmt.Errorf("未找到交易对: %s", symbol)
 }
 
+// ensureAssetMap 构建 HIP-3 股票的 assetId 映射，避免 SDK 将未知资产映射到 0 (BTC)
+func (t *HyperliquidTrader) ensureAssetMap() error {
+	if t.exchange == nil {
+		return fmt.Errorf("exchange 未初始化")
+	}
+
+	if len(t.assetMap) > 0 {
+		// 已构建过，确保映射同步到 SDK
+		return t.applyAssetMapToSDK()
+	}
+
+	// 使用 MetaAndAssetCtxs 获取最新的 Universe，并按顺序构建 assetId
+	metaAndCtx, err := t.exchange.Info().MetaAndAssetCtxs(t.ctx)
+	if err != nil {
+		return fmt.Errorf("获取 MetaAndAssetCtxs 失败: %w", err)
+	}
+
+	for idx, asset := range metaAndCtx.Meta.Universe {
+		name := normalizeHip3Symbol(asset.Name)
+		t.assetMap[name] = idx
+	}
+
+	log.Printf("✅ 构建 HIP-3 资产映射完成，共 %d 个资产", len(t.assetMap))
+	return t.applyAssetMapToSDK()
+}
+
+// applyAssetMapToSDK 将本地 assetMap 同步到 SDK Info 内部的 nameToCoin / coinToAsset 映射
+func (t *HyperliquidTrader) applyAssetMapToSDK() error {
+	info := t.exchange.Info()
+	if info == nil {
+		return fmt.Errorf("info 未初始化")
+	}
+
+	v := reflect.ValueOf(info).Elem()
+
+	nameToCoinField := v.FieldByName("nameToCoin")
+	coinToAssetField := v.FieldByName("coinToAsset")
+
+	if !nameToCoinField.IsValid() || !coinToAssetField.IsValid() {
+		return fmt.Errorf("无法访问 SDK 内部映射")
+	}
+
+	nameToCoin := reflect.NewAt(nameToCoinField.Type(), unsafe.Pointer(nameToCoinField.UnsafeAddr())).Elem()
+	coinToAsset := reflect.NewAt(coinToAssetField.Type(), unsafe.Pointer(coinToAssetField.UnsafeAddr())).Elem()
+
+	for name, assetId := range t.assetMap {
+		nameVal := reflect.ValueOf(name)
+		assetVal := reflect.ValueOf(assetId)
+		nameToCoin.SetMapIndex(nameVal, nameVal)
+		coinToAsset.SetMapIndex(nameVal, assetVal)
+	}
+
+	return nil
+}
+
 // parsePositionSzi 解析持仓数量字符串，增强错误处理
 func (t *HyperliquidTrader) parsePositionSzi(szi string) (float64, error) {
 	// 去除空格和特殊字符
@@ -2719,4 +2789,9 @@ func (t *HyperliquidTrader) classifyOrderByPriceHeuristic(ord hyperliquid.Fronte
 	// 价格等于当前价格，无法判断
 	log.Printf("⚠️ 启发式判断失败: 触发价(%.4f) == 当前价(%.4f)，无法区分止盈止损", triggerPx, currentPx)
 	return ""
+}
+
+// hijackNameToAsset 覆盖 SDK 的 NameToAsset，优先使用本地 assetMap 解决 HIP-3 映射缺失问题
+func (t *HyperliquidTrader) hijackNameToAsset() {
+	// 已通过 applyAssetMapToSDK 写入 SDK 内部 map，不再需要显式覆盖方法
 }
