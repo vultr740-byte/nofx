@@ -951,8 +951,8 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 
 	// 根据资产类型调整激进定价策略
 	if t.isStockAsset(coin) {
-		priceMultiplier = 1.08 // 股票使用8%溢价（放宽价格缓冲以提高成功率）
-		log.Printf("🎯 [HIP-3] 股票资产使用宽松定价策略: 1.08倍 (8%溢价)")
+		priceMultiplier = 1.01 // 与加密资产保持一致，避免偏差过大
+		log.Printf("🎯 [HIP-3] 股票资产使用标准定价策略: 1.01倍")
 	} else {
 		priceMultiplier = 1.01 // 加密货币使用原策略
 		log.Printf("📈 [HIP-3] 加密货币使用标准定价策略: 1.01倍")
@@ -1126,8 +1126,8 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 
 	// 根据资产类型调整激进定价策略
 	if t.isStockAsset(coin) {
-		priceMultiplier = 0.92 // 股票使用8%折扣（放宽价格缓冲以提高成功率）
-		log.Printf("🎯 [HIP-3] 股票资产使用宽松定价策略: 0.92倍 (8%折扣)")
+		priceMultiplier = 0.99 // 与加密资产保持一致
+		log.Printf("🎯 [HIP-3] 股票资产使用标准定价策略: 0.99倍")
 	} else {
 		priceMultiplier = 0.99 // 加密货币使用原策略
 		log.Printf("📈 [HIP-3] 加密货币使用标准定价策略: 0.99倍")
