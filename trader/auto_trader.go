@@ -3103,6 +3103,23 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 	// 将金额转换为下单数量（amount 视为 USD 名义价值，仅用于开仓）
 	var qty float64
 	var err error
+
+	// 杠杆兜底：若未解析到杠杆或传入小于1，使用配置默认；同时记录最终杠杆
+	effectiveLeverage := leverage
+	if effectiveLeverage < 1 {
+		// Hyperliquid + 非crypto资产，使用 AltcoinLeverage 作为默认（股票/HIP-3）
+		if at.config.Exchange == "hyperliquid" && strings.ToLower(strings.TrimSpace(assetType)) != "crypto" {
+			effectiveLeverage = at.config.AltcoinLeverage
+			if effectiveLeverage < 1 {
+				effectiveLeverage = 1
+			}
+			log.Printf("⚙️ [HL] 使用默认杠杆: %dx (asset_type=%s)", effectiveLeverage, assetType)
+		}
+	}
+	if effectiveLeverage < 1 {
+		effectiveLeverage = 1
+	}
+
 	if action == "long" || action == "short" {
 		if amount <= 0 {
 			return nil, fmt.Errorf("开仓金额必须大于0")
@@ -3131,10 +3148,10 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 	switch action {
 	case "long":
 		formattedSymbol := at.formatSymbolForExchange(resolvedSymbol)
-		return at.trader.OpenLong(formattedSymbol, qty, leverage)
+		return at.trader.OpenLong(formattedSymbol, qty, effectiveLeverage)
 	case "short":
 		formattedSymbol := at.formatSymbolForExchange(resolvedSymbol)
-		return at.trader.OpenShort(formattedSymbol, qty, leverage)
+		return at.trader.OpenShort(formattedSymbol, qty, effectiveLeverage)
 	case "close":
 		// 对于平仓，我们需要先确定持仓方向，然后调用相应的方法
 		positions, err := at.trader.GetPositions()
