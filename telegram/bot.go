@@ -959,18 +959,11 @@ func (tbm *TelegramBotManager) handleForwardedSentiment(update tgbotapi.Update) 
 	pretty, _ := json.MarshalIndent(decision, "", "  ")
 	reply := fmt.Sprintf("📥 已解析转发文本（来源: %s）\n🤖 AI决策 JSON:\n```json\n%s\n```", source, string(pretty))
 
-	var keyboard tgbotapi.InlineKeyboardMarkup
-	if decision.Action == "open_long" {
-		btn1 := tgbotapi.NewInlineKeyboardButtonData("3x做多BTC", fmt.Sprintf("fwd_trade|%d|long|BTCUSDT|3|20", telegramID))
-		btn2 := tgbotapi.NewInlineKeyboardButtonData("3x做多ETH", fmt.Sprintf("fwd_trade|%d|long|ETHUSDT|3|20", telegramID))
-		keyboard = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(btn1, btn2))
-	} else if decision.Action == "open_short" {
-		btn1 := tgbotapi.NewInlineKeyboardButtonData("3x做空BTC", fmt.Sprintf("fwd_trade|%d|short|BTCUSDT|3|20", telegramID))
-		btn2 := tgbotapi.NewInlineKeyboardButtonData("3x做空ETH", fmt.Sprintf("fwd_trade|%d|short|ETHUSDT|3|20", telegramID))
-		keyboard = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(btn1, btn2))
-	}
-
-	if len(keyboard.InlineKeyboard) > 0 {
+	if decision.Action == "open_long" || decision.Action == "open_short" {
+		sideText := map[string]string{"open_long": "做多", "open_short": "做空"}[decision.Action]
+		btn1 := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%s BTC", sideText), fmt.Sprintf("fwd_pick|%d|%s|BTCUSDT", telegramID, map[string]string{"open_long": "long", "open_short": "short"}[decision.Action]))
+		btn2 := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%s ETH", sideText), fmt.Sprintf("fwd_pick|%d|%s|ETHUSDT", telegramID, map[string]string{"open_long": "long", "open_short": "short"}[decision.Action]))
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(btn1, btn2))
 		msg := tgbotapi.NewMessage(chatID, reply)
 		msg.ReplyMarkup = keyboard
 		tbm.bot.Send(msg)
@@ -2154,8 +2147,10 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleMenuCustomPrompt(callback, chatID, telegramID)
 	case "clear_custom_prompt":
 		tbm.handleClearCustomPrompt(callback, chatID, telegramID)
-	case "fwd_trade":
-		tbm.handleForwardTradeCallback(callback, chatID, telegramID, parts)
+	case "fwd_pick":
+		tbm.handleForwardPickCallback(callback, chatID, telegramID, parts)
+	case "fwd_exec":
+		tbm.handleForwardExecCallback(callback, chatID, telegramID, parts)
 	default:
 		log.Printf("❌ 未知动作: %s", action)
 		tbm.answerCallbackQuery(callback.ID, "未知操作")
@@ -2246,20 +2241,60 @@ Agent 私钥:
 }
 
 // handleForwardTradeCallback 处理转发消息快捷多空按钮
-func (tbm *TelegramBotManager) handleForwardTradeCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
-	// fwd_trade|user|side|symbol|leverage|amount
+// handleForwardPickCallback 首层方向+标的选择，弹出金额/比例菜单
+func (tbm *TelegramBotManager) handleForwardPickCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
+	// fwd_pick|user|side|symbol
+	if len(parts) != 4 {
+		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
+		return
+	}
+	side := parts[2]
+	symbol := parts[3]
+	tbm.answerCallbackQuery(callback.ID, "请选择金额/比例")
+
+	// 预设档位
+	fixed := []float64{15, 30, 50}
+	percent := []int{5, 10, 20}
+
+	// 构造回调数据 fwd_exec|user|side|symbol|mode|value
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, amt := range fixed {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%.0fU", amt),
+				fmt.Sprintf("fwd_exec|%d|%s|%s|amt|%.0f", telegramID, side, symbol, amt)),
+		))
+	}
+	pctRow := []tgbotapi.InlineKeyboardButton{}
+	for _, p := range percent {
+		pctRow = append(pctRow, tgbotapi.NewInlineKeyboardButtonData(
+			fmt.Sprintf("%d%%资金", p),
+			fmt.Sprintf("fwd_exec|%d|%s|%s|pct|%d", telegramID, side, symbol, p),
+		))
+	}
+	if len(pctRow) > 0 {
+		rows = append(rows, pctRow)
+	}
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	prompt := fmt.Sprintf("选择下单金额/比例（杠杆固定3x）\n标的: %s\n方向: %s", symbol, map[string]string{"long": "做多", "short": "做空"}[side])
+	msg := tgbotapi.NewMessage(chatID, prompt)
+	msg.ReplyMarkup = keyboard
+	tbm.bot.Send(msg)
+}
+
+// handleForwardExecCallback 第二层金额/比例选择，执行下单
+func (tbm *TelegramBotManager) handleForwardExecCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
+	// fwd_exec|user|side|symbol|mode|value
 	if len(parts) != 6 {
 		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
 		return
 	}
 	side := parts[2]
 	symbol := parts[3]
-	lev, _ := strconv.Atoi(parts[4])
-	amount, _ := strconv.ParseFloat(parts[5], 64)
-
+	mode := parts[4]
+	value := parts[5]
 	tbm.answerCallbackQuery(callback.ID, "⏳ 正在执行...")
 
-	// 找到运行中的交易员
+	// 获取运行中的交易员
 	tgTraders, err := tbm.db.GetTgTraders(telegramID)
 	if err != nil || len(tgTraders) == 0 {
 		tbm.sendMessage(chatID, "❌ 未找到交易员配置，请先创建交易员")
@@ -2283,8 +2318,50 @@ func (tbm *TelegramBotManager) handleForwardTradeCallback(callback *tgbotapi.Cal
 		return
 	}
 
-	tbm.sendMessage(chatID, fmt.Sprintf("🔄 正在执行 %s %s...", map[string]string{"long": "做多", "short": "做空"}[side], symbol))
-	_, tradeErr := autoTrader.ExecuteNaturalLanguageTrade(side, symbol, amount, 0, lev, "crypto")
+	// 获取可用余额用于百分比换算
+	agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 获取账户信息失败: %v", err))
+		return
+	}
+	balance, err := tbm.hlService.FetchBalance(agentKey, walletAddr, tbm.testnet)
+	if err != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 获取余额失败: %v", err))
+		return
+	}
+	avail, _ := balance["availableBalance"].(float64)
+	if avail <= 0 {
+		tbm.sendMessage(chatID, "❌ 可用余额不足，无法下单")
+		return
+	}
+
+	const leverage = 3
+	const minNominal = 15.0
+	maxNominal := avail * 0.9
+
+	var amount float64
+	switch mode {
+	case "amt":
+		amt, _ := strconv.ParseFloat(value, 64)
+		amount = amt
+	case "pct":
+		pct, _ := strconv.Atoi(value)
+		amount = avail * float64(pct) / 100.0
+	default:
+		tbm.sendMessage(chatID, "❌ 请求格式错误")
+		return
+	}
+
+	if amount < minNominal {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 名义金额低于最小单 %.0f U", minNominal))
+		return
+	}
+	if amount > maxNominal {
+		amount = maxNominal
+	}
+
+	tbm.sendMessage(chatID, fmt.Sprintf("🔄 正在执行 %s %s，名义金额约 %.2f U，杠杆 %dx...", map[string]string{"long": "做多", "short": "做空"}[side], symbol, amount, leverage))
+	_, tradeErr := autoTrader.ExecuteNaturalLanguageTrade(side, symbol, amount, 0, leverage, "crypto")
 	if tradeErr != nil {
 		tbm.sendMessage(chatID, fmt.Sprintf("❌ 执行失败: %v", tradeErr))
 		return
