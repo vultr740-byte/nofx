@@ -143,8 +143,11 @@ func (p *NLParser) isTradingCommand(message string) bool {
 		}
 	}
 
-	// 必须同时包含：(动作词) AND (标的词 OR 金额词)
-	return hasAction && (hasSymbol || hasAmount)
+	// 只要包含动作关键词即可交给 AI 解析，其他情况需要标的/金额提示
+	if hasAction {
+		return true
+	}
+	return hasSymbol || hasAmount
 }
 
 // parseWithAI 使用 AI 模型解析命令
