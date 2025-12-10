@@ -3138,7 +3138,7 @@ func (tbm *TelegramBotManager) handleNaturalLanguageCommand(update tgbotapi.Upda
 	// 防止误触全平：仅当用户显式提到“全部/全平/all”才允许 close_all
 	if strings.EqualFold(cmd.Action, "close_all") {
 		lower := strings.ToLower(message)
-		explicitAll := strings.Contains(lower, "全") || strings.Contains(lower, "all")
+		explicitAll := strings.Contains(lower, "全") || strings.Contains(lower, "all") || strings.Contains(lower, "所有")
 		if !explicitAll {
 			if cmd.Symbol != "" {
 				cmd.Action = "close"
