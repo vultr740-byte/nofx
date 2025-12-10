@@ -2042,17 +2042,17 @@ func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
 		return 0, false
 	}
 
-	// Check HIP-3 cache first - 优先使用 PxDecimals
+	// Check HIP-3 cache first - 优先使用 PxDecimals，否则使用 SzDecimals
 	if t.hip3Meta != nil {
 		if asset, ok := t.hip3Meta[normalizedCoin]; ok {
 			if asset.PxDecimals != nil {
 				log.Printf("✅ [HIP-3] %s 使用 API PxDecimals: %d 位小数", normalizedCoin, *asset.PxDecimals)
 				return *asset.PxDecimals, true
-		} else {
-			// PxDecimals 为 nil，返回 false 让调用方使用 5 位有效数字规则（与 crypto 一致）
-			log.Printf("🔄 [HIP-3] %s PxDecimals 为 nil，将使用 5 位有效数字规则", normalizedCoin)
-			return 0, false
-		}
+			} else {
+				// PxDecimals 为 nil，HIP-3 资产使用 SzDecimals 作为价格精度
+				log.Printf("🔄 [HIP-3] %s PxDecimals 为 nil，使用 SzDecimals=%d 作为价格精度", normalizedCoin, asset.SzDecimals)
+				return asset.SzDecimals, true
+			}
 		}
 	}
 
@@ -2062,11 +2062,11 @@ func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
 			if asset.PxDecimals != nil {
 				log.Printf("✅ [HIP-3] %s 刷新后使用 PxDecimals: %d 位小数", norm, *asset.PxDecimals)
 				return *asset.PxDecimals, true
-		} else {
-			// PxDecimals 为 nil，返回 false 让调用方使用 5 位有效数字规则（与 crypto 一致）
-			log.Printf("🔄 [HIP-3] %s 刷新后 PxDecimals 为 nil，将使用 5 位有效数字规则", norm)
-			return 0, false
-		}
+			} else {
+				// PxDecimals 为 nil，HIP-3 资产使用 SzDecimals 作为价格精度
+				log.Printf("🔄 [HIP-3] %s 刷新后 PxDecimals 为 nil，使用 SzDecimals=%d 作为价格精度", norm, asset.SzDecimals)
+				return asset.SzDecimals, true
+			}
 		}
 	} else if err != nil {
 		log.Printf("❌ [HIP-3] 获取 %s 价格精度失败: %v", coin, err)
