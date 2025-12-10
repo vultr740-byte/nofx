@@ -65,13 +65,14 @@ func (p *NLParser) ParseCommand(message string) (*ParsedCommand, error) {
 		return nil, nil // 不是交易命令，返回 nil
 	}
 
-	// 仅使用 MCP AI 解析，失败直接返回错误
+	// 先用 AI 解析，失败则回退正则兜底（保证“全部平仓”等指令可用）
 	cmd, err := p.parseWithAI(message)
-	if err != nil {
-		return nil, err
+	if err == nil {
+		return cmd, nil
 	}
 
-	return cmd, nil
+	log.Printf("⚠️ AI解析失败，回退正则解析: %v", err)
+	return p.parseWithRegex(message)
 }
 
 // isTradingCommand 快速检测是否是交易相关的消息
@@ -293,7 +294,12 @@ func (p *NLParser) parseWithRegex(message string) (*ParsedCommand, error) {
 	} else if strings.Contains(message, "做空") || strings.Contains(message, "short") || strings.Contains(message, "卖出") {
 		cmd.Action = "short"
 	} else if strings.Contains(message, "平仓") || strings.Contains(message, "close") {
-		cmd.Action = "close"
+		// “全部平仓/清仓” 识别为 close_all
+		if strings.Contains(message, "全部") || strings.Contains(message, "全仓") || strings.Contains(message, "清仓") {
+			cmd.Action = "close_all"
+		} else {
+			cmd.Action = "close"
+		}
 	}
 
 	// 提取杠杆
