@@ -335,6 +335,12 @@ func (p *NLParser) parseWithRegex(message string) (*ParsedCommand, error) {
 		break
 	}
 
+	// 如果是全平/清仓，允许无标的（交由上层执行 close_all）
+	if cmd.Action == "close_all" && cmd.Symbol == "" {
+		cmd.Confidence = 0.7
+		return cmd, nil
+	}
+
 	// 如果没有提取到必要信息，降低置信度
 	if cmd.Action == "" || cmd.Symbol == "" {
 		cmd.Confidence = 0.3
