@@ -61,8 +61,10 @@ func (p *NLParser) ParseCommand(message string) (*ParsedCommand, error) {
 	}
 
 	// 首先尝试快速检测是否可能是交易命令
+	// 快速筛选：仅过滤掉明显的闲聊/规则描述，其他消息仍交给 AI + 正则兜底
 	if !p.isTradingCommand(message) {
-		return nil, nil // 不是交易命令，返回 nil
+		// isTradingCommand 现在只拒绝超长/含显式规则讨论的文本，不依赖硬编码标的
+		return nil, nil
 	}
 
 	// 先用 AI 解析，失败则回退正则兜底（保证“全部平仓”等指令可用）
@@ -95,19 +97,18 @@ func (p *NLParser) isTradingCommand(message string) bool {
 		}
 	}
 
-	// 3. 检查是否包含交易动作关键词
+	// 3. 检查是否包含交易动作关键词（轻量过滤，其他交给 AI）
 	actionKeywords := []string{
 		"做多", "做空", "开多", "开空", "买入", "卖出",
 		"long", "short", "buy", "sell",
-		"平仓", "close", "全平",
+		"平仓", "close", "全平", "清仓",
 		"止损", "止盈", "stop", "take",
 	}
 
-	// 4. 检查是否包含交易标的关键词
+	// 4. 检查是否包含交易标的关键词（留少量示例，主要依赖 AI 判断）
 	symbolKeywords := []string{
-		"BTC", "ETH", "SOL", "BNB", "DOGE", "ADA", "DOT", "LINK", "MATIC",
-		"比特币", "以太坊", "特斯拉", "苹果", "黄金", "谷歌",
-		"TSLA", "AAPL", "NVDA", "GOLD", "GOOGL", "GOOG", "GOOGLE",
+		"btc", "eth", "tsla", "aapl", "nvda", "goog", "googl", "gold",
+		"特斯拉", "苹果", "谷歌", "比特币", "以太坊",
 	}
 
 	// 5. 检查是否包含金额/杠杆关键词
