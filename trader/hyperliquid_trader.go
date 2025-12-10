@@ -35,9 +35,11 @@ type PerpMetaLite struct {
 }
 
 type PerpMetaAssetLite struct {
-	Name       string `json:"name"`
-	SzDecimals int    `json:"szDecimals"`
-	PxDecimals *int   `json:"pxDecimals"`
+	Name         string `json:"name"`
+	SzDecimals   int    `json:"szDecimals"`
+	PxDecimals   *int   `json:"pxDecimals"`
+	MarginMode   string `json:"marginMode,omitempty"`
+	OnlyIsolated bool   `json:"onlyIsolated,omitempty"`
 }
 
 // normalizeHip3Symbol 确保HIP-3符号前缀小写、后缀大写（如 xyz:TSLA）
@@ -940,14 +942,20 @@ func (t *HyperliquidTrader) SetLeverage(symbol string, leverage int) error {
 		return err
 	}
 
+	isCross := t.isCrossMargin
+	if t.isStockAsset(coin) && t.requiresIsolated(coin) {
+		isCross = false
+		log.Printf("⚙️ %s 要求逐仓模式，自动切换为逐仓", coin)
+	}
+
 	// 调用UpdateLeverage (leverage int, name string, isCross bool)
 	// 第三个参数: true=全仓模式, false=逐仓模式
-	_, err = t.exchange.UpdateLeverage(t.ctx, leverage, coin, t.isCrossMargin)
+	_, err = t.exchange.UpdateLeverage(t.ctx, leverage, coin, isCross)
 	if err != nil {
 		return fmt.Errorf("设置杠杆失败: %w", err)
 	}
 
-	log.Printf("  ✓ %s 杠杆已切换为 %dx", symbol, leverage)
+	log.Printf("  ✓ %s 杠杆已切换为 %dx (isCross=%t)", symbol, leverage, isCross)
 	return nil
 }
 
@@ -2154,6 +2162,27 @@ func (t *HyperliquidTrader) isStockAsset(coin string) bool {
 	return isStock
 }
 
+// requiresIsolated 检测资产是否需要逐仓（部分 HIP-3 资产 marginMode=strictIsolated）
+func (t *HyperliquidTrader) requiresIsolated(coin string) bool {
+	norm := normalizeHip3Symbol(coin)
+
+	if asset, ok := t.hip3Meta[norm]; ok {
+		if asset.OnlyIsolated || strings.EqualFold(asset.MarginMode, "strictIsolated") {
+			return true
+		}
+	}
+
+	// 未缓存时尝试拉取并更新
+	if _, asset, err := t.fetchPerpMetaAsset(norm, true); err == nil && asset != nil {
+		t.hip3Meta[norm] = *asset
+		if asset.OnlyIsolated || strings.EqualFold(asset.MarginMode, "strictIsolated") {
+			return true
+		}
+	}
+
+	return false
+}
+
 // logPriceDetails 详细记录价格处理信息用于调试
 func (t *HyperliquidTrader) logPriceDetails(symbol, coin string, price float64, context string) {
 	log.Printf("🔍 [%s] 价格详情 for %s/%s:", context, symbol, coin)
@@ -2777,9 +2806,15 @@ func (t *HyperliquidTrader) ensureAssetMap() error {
 			if strings.Contains(name, ":") {
 				assetId := hip3Base + (idx - firstHip3)
 				t.assetMap[name] = assetId
+				if _, ok := t.hip3Meta[name]; !ok {
+					t.hip3Meta[name] = asset
+				}
 			} else {
 				// 常规 perp 按索引映射
 				t.assetMap[name] = idx
+				if _, ok := t.hip3Meta[name]; !ok {
+					t.hip3Meta[name] = asset
+				}
 			}
 		}
 
