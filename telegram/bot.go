@@ -3135,6 +3135,20 @@ func (tbm *TelegramBotManager) handleNaturalLanguageCommand(update tgbotapi.Upda
 		return false
 	}
 
+	// 防止误触全平：仅当用户显式提到“全部/全平/all”才允许 close_all
+	if strings.EqualFold(cmd.Action, "close_all") {
+		lower := strings.ToLower(message)
+		explicitAll := strings.Contains(lower, "全") || strings.Contains(lower, "all")
+		if !explicitAll {
+			if cmd.Symbol != "" {
+				cmd.Action = "close"
+			} else {
+				tbm.sendMessage(chatID, "⚠️ 检测到平仓指令，但未明确写明“全部平仓”。请指定币种，如“平仓 ETH”。")
+				return true
+			}
+		}
+	}
+
 	// 记录解析结果
 	tbm.nlParser.LogCommand(telegramID, message, cmd)
 
