@@ -2284,6 +2284,14 @@ func (t *HyperliquidTrader) executeOrderWithRetry(order *hyperliquid.CreateOrder
 		log.Printf("🚀 [重试API] 第 %d 次API调用开始...", attempt+1)
 		log.Printf("🚀 [重试API] 调用时间: %s", apiCallStart.Format("2006-01-02 15:04:05.000"))
 
+		// 📊 [关键价格对比] 获取当前市场价格并与订单价格对比
+		if refPrice, refErr := t.GetMarketPrice(convertSymbolFromHyperliquid(order.Coin)); refErr == nil {
+			deviation := (order.Price - refPrice) / refPrice * 100
+			log.Printf("📊 [价格对比] 市场参考价: %.4f, 订单价格: %.4f, 偏差: %.2f%%", refPrice, order.Price, deviation)
+		} else {
+			log.Printf("⚠️ [价格对比] 无法获取市场参考价: %v", refErr)
+		}
+
 		// 执行订单
 		_, err := t.exchange.Order(t.ctx, *order, nil) // hyenaBuilderInfo() 暂时禁用
 
