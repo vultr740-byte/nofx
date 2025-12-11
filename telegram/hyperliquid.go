@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -301,7 +302,7 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 标记价格: <code>$%.4f</code>
 止损价格: <code>%s</code>
 止盈价格: <code>%s</code>
-未实现盈亏: <code>%.2f USDC (%.2f%%)</code> %s
+未实现盈亏: <code>%s USDC (%.2f%%)</code> %s
 `,
 			sideEmoji, symbol, sideText, leverageText,
 			positionAmt, entryPrice, markPrice,
@@ -317,7 +318,7 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 				}
 				return "未设置"
 			}(),
-			unRealizedProfit, profitPercent, pnlEmoji,
+			formatUSDCFloat(unRealizedProfit), profitPercent, pnlEmoji,
 		))
 
 		// 如果不是最后一个持仓，添加分隔线
@@ -355,8 +356,8 @@ func (s *HyperliquidService) formatPositionsMessage(positions []map[string]inter
 📋 <b>持仓汇总</b>
 总资产: <code>%.2f USDC</code>
 活跃持仓: <code>%d 个</code>
-总未实现盈亏: <code>%.2f USDC (%.2f%%)</code>`,
-		totalAssets, positionCount, totalUnrealized, totalProfitPercent,
+总未实现盈亏: <code>%s USDC (%.2f%%)</code>`,
+		totalAssets, positionCount, formatUSDCFloat(totalUnrealized), totalProfitPercent,
 	))
 
 	return message.String()
@@ -629,6 +630,21 @@ func formatSigned(v float64) string {
 		return fmt.Sprintf("+%.2f", v)
 	}
 	return fmt.Sprintf("%.2f", v)
+}
+
+// formatUSDCFloat 动态保留小数，避免小额被四舍五入为 0
+func formatUSDCFloat(v float64) string {
+	abs := math.Abs(v)
+	switch {
+	case abs >= 1:
+		return fmt.Sprintf("%.2f", v)
+	case abs >= 0.01:
+		return fmt.Sprintf("%.4f", v)
+	case abs >= 0.0001:
+		return fmt.Sprintf("%.6f", v)
+	default:
+		return fmt.Sprintf("%.8f", v)
+	}
 }
 
 // formatMaybePrice 将价格格式化为 4 位小数，空值返回破折号
