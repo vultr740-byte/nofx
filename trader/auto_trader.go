@@ -531,7 +531,7 @@ func (at *AutoTrader) pushTradeExecutionToTelegram(action *logger.DecisionAction
 		builder.WriteString(fmt.Sprintf("• 杠杆: %dx\n", action.Leverage))
 	}
 	if action.Price > 0 {
-		builder.WriteString(fmt.Sprintf("• 价格: %.4f\n", action.Price))
+		builder.WriteString(fmt.Sprintf("• 入场: %.4f\n", action.Price))
 	}
 	if action.Profit != 0 {
 		builder.WriteString(fmt.Sprintf("• 盈亏: %.2f USDT\n", action.Profit))
@@ -879,6 +879,7 @@ func (at *AutoTrader) validateMessageIntegrity(msg string, originalRecord *logge
 //   - 数据源是否包含不可见字符
 //   - 字符串拼接是否正确处理了转义
 //   - 是否有直接从外部源复制的内容
+//
 // formatDecisionMessagesForTelegram 将决策拆分为三段：周期+决策JSON(+执行结果) / 思维链 / 账户信息
 func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionRecord) []string {
 	// 1. 统一编码处理 - 在最开始就处理所有编码问题
@@ -909,15 +910,15 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 			// 动作名称映射（用于显示中文名称）
 			getActionName := func(action string) string {
 				nameMap := map[string]string{
-					"hold":              "持有",
-					"wait":              "等待",
-					"open_long":         "做多开仓",
-					"open_short":        "做空开仓",
-					"close_long":        "做多平仓",
-					"close_short":       "做空平仓",
-					"update_stop_loss":  "调整止损",
+					"hold":               "持有",
+					"wait":               "等待",
+					"open_long":          "做多开仓",
+					"open_short":         "做空开仓",
+					"close_long":         "做多平仓",
+					"close_short":        "做空平仓",
+					"update_stop_loss":   "调整止损",
 					"update_take_profit": "调整止盈",
-					"partial_close":     "部分平仓",
+					"partial_close":      "部分平仓",
 				}
 				if name, ok := nameMap[strings.ToLower(action)]; ok {
 					return name
@@ -934,22 +935,22 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 					fmt.Fprintf(&b, "<b>%s → %s</b>\n", html.EscapeString(d.Symbol), html.EscapeString(actionName))
 				}
 
-			// 交易参数（如果有）- 参考执行成功消息的格式，每个参数单独一行
-			if d.Quantity > 0 {
-				fmt.Fprintf(&b, "• 数量: %.4f\n", d.Quantity)
-			}
-			if d.Price > 0 {
-				fmt.Fprintf(&b, "• 价格: %.4f\n", d.Price)
-			}
-			if d.Profit != 0 {
-				fmt.Fprintf(&b, "• 盈亏: %.2f USDT\n", d.Profit)
-			}
-			if d.StopLoss != nil {
-				fmt.Fprintf(&b, "• 止损: %.4f\n", *d.StopLoss)
-			}
-			if d.TakeProfit != nil {
-				fmt.Fprintf(&b, "• 止盈: %.4f\n", *d.TakeProfit)
-			}
+				// 交易参数（如果有）- 参考执行成功消息的格式，每个参数单独一行
+				if d.Quantity > 0 {
+					fmt.Fprintf(&b, "• 数量: %.4f\n", d.Quantity)
+				}
+				if d.Price > 0 {
+					fmt.Fprintf(&b, "• 价格: %.4f\n", d.Price)
+				}
+				if d.Profit != 0 {
+					fmt.Fprintf(&b, "• 盈亏: %.2f USDT\n", d.Profit)
+				}
+				if d.StopLoss != nil {
+					fmt.Fprintf(&b, "• 止损: %.4f\n", *d.StopLoss)
+				}
+				if d.TakeProfit != nil {
+					fmt.Fprintf(&b, "• 止盈: %.4f\n", *d.TakeProfit)
+				}
 
 				// 理由（如果有）
 				if record.DecisionJSON != "" {
