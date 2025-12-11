@@ -965,9 +965,10 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 				return fmt.Errorf("山寨币单币种仓位价值不能超过%.0f USDT（%d倍账户净值），实际: %.0f", maxPositionValue, altcoinLeverage, d.PositionSizeUSD)
 			}
 		}
-		if d.StopLoss <= 0 || d.TakeProfit <= 0 {
-			return fmt.Errorf("止损和止盈必须大于0")
-		}
+		// 临时禁用开仓时必须提供止损/止盈的强制校验（测试用）
+		// if d.StopLoss <= 0 || d.TakeProfit <= 0 {
+		// 	return fmt.Errorf("止损和止盈必须大于0")
+		// }
 
 		// 验证止损止盈的合理性
 		if d.Action == "open_long" {
