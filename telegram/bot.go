@@ -1050,14 +1050,18 @@ func (tbm *TelegramBotManager) setupCommands() {
 			Command:     "balance",
 			Description: "💰 账户余额",
 		},
-		{
-			Command:     "positions",
-			Description: "💹 当前持仓",
-		},
-		{
-			Command:     "stocks",
-			Description: "🏛️ 股票资产",
-		},
+	{
+		Command:     "positions",
+		Description: "💹 当前持仓",
+	},
+	{
+		Command:     "orders",
+		Description: "📜 历史订单",
+	},
+	{
+		Command:     "stocks",
+		Description: "🏛️ 股票资产",
+	},
 		{
 			Command:     "create_trader",
 			Description: "🤖 创建 Agent",
