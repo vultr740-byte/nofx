@@ -517,8 +517,8 @@ func (tbm *TelegramBotManager) handleOrders(update tgbotapi.Update) {
 	msg := "📜 请选择历史成交查询范围"
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("最近20条 (近7天)", fmt.Sprintf("orders_recent|%d|20", telegramID)),
-			tgbotapi.NewInlineKeyboardButtonData("最近100条 (近30天)", fmt.Sprintf("orders_recent|%d|100", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("最近20条 (近1天)", fmt.Sprintf("orders_recent|%d|20|24", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("最近100条 (近7天)", fmt.Sprintf("orders_recent|%d|100|168", telegramID)),
 		),
 	)
 	tbm.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
@@ -1050,18 +1050,18 @@ func (tbm *TelegramBotManager) setupCommands() {
 			Command:     "balance",
 			Description: "💰 账户余额",
 		},
-	{
-		Command:     "positions",
-		Description: "💹 当前持仓",
-	},
-	{
-		Command:     "orders",
-		Description: "📜 历史订单",
-	},
-	{
-		Command:     "stocks",
-		Description: "🏛️ 股票资产",
-	},
+		{
+			Command:     "positions",
+			Description: "💹 当前持仓",
+		},
+		{
+			Command:     "orders",
+			Description: "📜 历史订单",
+		},
+		{
+			Command:     "stocks",
+			Description: "🏛️ 股票资产",
+		},
 		{
 			Command:     "create_trader",
 			Description: "🤖 创建 Agent",
@@ -2565,8 +2565,8 @@ func (tbm *TelegramBotManager) handleStocksCategoryCallback(callback *tgbotapi.C
 
 // handleOrdersRecentCallback 处理历史成交范围选择
 func (tbm *TelegramBotManager) handleOrdersRecentCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
-	// orders_recent|user|limit
-	if len(parts) != 3 {
+	// orders_recent|user|limit|hours
+	if len(parts) < 3 || len(parts) > 4 {
 		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
 		return
 	}
@@ -2575,17 +2575,21 @@ func (tbm *TelegramBotManager) handleOrdersRecentCallback(callback *tgbotapi.Cal
 		tbm.answerCallbackQuery(callback.ID, "参数错误")
 		return
 	}
+	lookback := 7 * 24 * time.Hour
+	if len(parts) == 4 {
+		hours, convErr := strconv.Atoi(parts[3])
+		if convErr != nil || hours <= 0 {
+			tbm.answerCallbackQuery(callback.ID, "时间窗口错误")
+			return
+		}
+		lookback = time.Duration(hours) * time.Hour
+	}
 
 	// 提取账号
 	agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID)
 	if err != nil {
 		tbm.answerCallbackQuery(callback.ID, "账号信息获取失败")
 		return
-	}
-
-	lookback := 7 * 24 * time.Hour
-	if limit > 50 {
-		lookback = 30 * 24 * time.Hour
 	}
 
 	tbm.answerCallbackQuery(callback.ID, "⏳ 正在查询...")

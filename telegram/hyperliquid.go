@@ -545,7 +545,7 @@ func categorizeStocks(assets []PerpMetaAsset) []StockCategory {
 // formatOrderHistory 格式化历史成交
 func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration) string {
 	if len(items) == 0 {
-		return fmt.Sprintf("📜 <b>历史成交</b>\n最近 %.0f 小时内无成交记录。", lookback.Hours())
+		return fmt.Sprintf("📜 <b>历史成交</b>\n%s内无成交记录。", formatLookback(lookback))
 	}
 
 	// 统计
@@ -563,8 +563,12 @@ func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration) string
 
 	var b strings.Builder
 	b.WriteString("📜 <b>历史成交</b>\n")
-	b.WriteString(fmt.Sprintf("统计窗口: 近 %.0f 小时 | 笔数: %d | 胜率: %.1f%%\n", lookback.Hours(), len(items), float64(win)/float64(len(items))*100))
-	b.WriteString(fmt.Sprintf("累计盈亏: %.2f USDC | 手续费: %.2f USDC\n\n", totalPnl, totalFee))
+	winRate := 0.0
+	if len(items) > 0 {
+		winRate = float64(win) / float64(len(items)) * 100
+	}
+	b.WriteString(fmt.Sprintf("统计窗口: %s | 笔数: %d | 胜率: %.1f%%\n", formatLookback(lookback), len(items), winRate))
+	b.WriteString(fmt.Sprintf("累计盈亏: %s USDC | 手续费: %.2f USDC\n\n", formatSigned(totalPnl), totalFee))
 
 	maxDisplay := len(items)
 	if maxDisplay > 20 {
@@ -576,14 +580,41 @@ func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration) string
 		if strings.EqualFold(it.Side, "sell") || strings.Contains(strings.ToLower(it.Dir), "short") {
 			sideEmoji = "📉"
 		}
-		b.WriteString(fmt.Sprintf("%s %s | %.4f @ %.4f\n", sideEmoji, it.Symbol, it.Size, it.Price))
-		b.WriteString(fmt.Sprintf("方向: %s | 成交时间: %s\n", it.Dir, it.Timestamp.Format("2006-01-02 15:04:05")))
-		b.WriteString(fmt.Sprintf("盈亏: %.2f | 费: %.4f\n\n", it.ClosedPnl, it.Fee))
+		pnlEmoji := "⚪️"
+		switch {
+		case it.ClosedPnl > 0:
+			pnlEmoji = "🟢"
+		case it.ClosedPnl < 0:
+			pnlEmoji = "🔴"
+		}
+
+		b.WriteString(fmt.Sprintf("#%d %s %s  %.4f @ %.4f\n", i+1, sideEmoji, it.Symbol, it.Size, it.Price))
+		b.WriteString(fmt.Sprintf("• 方向: %s\n", it.Dir))
+		b.WriteString(fmt.Sprintf("• 时间: %s\n", it.Timestamp.Format("2006-01-02 15:04:05")))
+		b.WriteString(fmt.Sprintf("• 盈亏: %s %s USDC | 费: %.4f\n\n", pnlEmoji, formatSigned(it.ClosedPnl), it.Fee))
 	}
 	if len(items) > maxDisplay {
 		b.WriteString(fmt.Sprintf("… 还有 %d 条未展示，可调整范围查看更多。", len(items)-maxDisplay))
 	}
 	return b.String()
+}
+
+// formatLookback 将时间窗口转为可读文本
+func formatLookback(d time.Duration) string {
+	hours := int(d.Hours() + 0.5)
+	if hours >= 24 && hours%24 == 0 {
+		days := hours / 24
+		return fmt.Sprintf("近 %d 天", days)
+	}
+	return fmt.Sprintf("近 %d 小时", hours)
+}
+
+// formatSigned 为数值添加符号
+func formatSigned(v float64) string {
+	if v > 0 {
+		return fmt.Sprintf("+%.2f", v)
+	}
+	return fmt.Sprintf("%.2f", v)
 }
 
 func parseFloatSafe(s string) float64 {
