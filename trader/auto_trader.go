@@ -2000,13 +2000,13 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, act
 	posKey := decision.Symbol + "_long"
 	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
-	// 设置止损止盈
-	if err := at.trader.SetStopLoss(formattedSymbol, "LONG", quantity, decision.StopLoss); err != nil {
-		log.Printf("  ⚠ 设置止损失败: %v", err)
-	}
-	if err := at.trader.SetTakeProfit(formattedSymbol, "LONG", quantity, decision.TakeProfit); err != nil {
-		log.Printf("  ⚠ 设置止盈失败: %v", err)
-	}
+	// 暂时禁用开仓后自动设置止损/止盈（用于测试）
+	// if err := at.trader.SetStopLoss(formattedSymbol, "LONG", quantity, decision.StopLoss); err != nil {
+	// 	log.Printf("  ⚠ 设置止损失败: %v", err)
+	// }
+	// if err := at.trader.SetTakeProfit(formattedSymbol, "LONG", quantity, decision.TakeProfit); err != nil {
+	// 	log.Printf("  ⚠ 设置止盈失败: %v", err)
+	// }
 
 	return nil
 }
@@ -2089,13 +2089,13 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, ac
 	posKey := decision.Symbol + "_short"
 	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
-	// 设置止损止盈
-	if err := at.trader.SetStopLoss(formattedSymbol, "SHORT", quantity, decision.StopLoss); err != nil {
-		log.Printf("  ⚠ 设置止损失败: %v", err)
-	}
-	if err := at.trader.SetTakeProfit(formattedSymbol, "SHORT", quantity, decision.TakeProfit); err != nil {
-		log.Printf("  ⚠ 设置止盈失败: %v", err)
-	}
+	// 暂时禁用开仓后自动设置止损/止盈（用于测试）
+	// if err := at.trader.SetStopLoss(formattedSymbol, "SHORT", quantity, decision.StopLoss); err != nil {
+	// 	log.Printf("  ⚠ 设置止损失败: %v", err)
+	// }
+	// if err := at.trader.SetTakeProfit(formattedSymbol, "SHORT", quantity, decision.TakeProfit); err != nil {
+	// 	log.Printf("  ⚠ 设置止盈失败: %v", err)
+	// }
 
 	return nil
 }
