@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -33,6 +34,26 @@ type PerpMetaResponse struct {
 
 // HyperliquidService Hyperliquid 服务
 type HyperliquidService struct{}
+
+// StockCategory 股票资产分类统计
+type StockCategory struct {
+	Name string
+	List []PerpMetaAsset
+}
+
+// GetStockCategories 获取股票资产分类
+func (s *HyperliquidService) GetStockCategories(agentKey, walletAddr string, testnet bool) ([]StockCategory, error) {
+	trader, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
+	if err != nil {
+		return nil, fmt.Errorf("创建 Hyperliquid 交易器失败: %w", err)
+	}
+
+	assets, err := s.GetAllPerpMetas(trader)
+	if err != nil {
+		return nil, fmt.Errorf("获取资产信息失败: %w", err)
+	}
+	return categorizeStocks(assets), nil
+}
 
 // NewHyperliquidService 创建 Hyperliquid 服务
 func NewHyperliquidService() *HyperliquidService {
@@ -307,11 +328,11 @@ func (s *HyperliquidService) GetStockAssets(agentKey, walletAddr string, testnet
 		return "", fmt.Errorf("获取资产信息失败: %w", err)
 	}
 
-	// 筛选股票资产
-	stocks := s.extractStockAssets(assets)
+	// 按市场分类股票资产
+	categories := categorizeStocks(assets)
 
 	// 格式化股票信息
-	return s.formatStocksMessage(stocks), nil
+	return s.formatStocksMessage(categories), nil
 }
 
 // GetAllPerpMetas 获取所有永续合约元数据（使用直接API调用）
@@ -409,29 +430,9 @@ func (s *HyperliquidService) callAllPerpMetasAPI() ([]PerpMetaAsset, error) {
 	return allAssets, nil
 }
 
-// extractStockAssets 从所有资产中筛选HIP-3股票资产
-func (s *HyperliquidService) extractStockAssets(assets []PerpMetaAsset) []PerpMetaAsset {
-	var stocks []PerpMetaAsset
-
-	for _, asset := range assets {
-		name := asset.Name
-
-		// HIP-3 股票资产使用带冒号的前缀（如 xyz:NVDA、flx:TSLA 等）
-		if !strings.Contains(name, ":") {
-			continue
-		}
-
-		stocks = append(stocks, asset)
-	}
-
-	log.Printf("📊 HIP-3股票筛选完成: %d个总资产中找到 %d个HIP-3股票", len(assets), len(stocks))
-
-	return stocks
-}
-
 // formatStocksMessage 格式化股票资产信息消息
-func (s *HyperliquidService) formatStocksMessage(stocks []PerpMetaAsset) string {
-	if len(stocks) == 0 {
+func (s *HyperliquidService) formatStocksMessage(categories []StockCategory) string {
+	if len(categories) == 0 {
 		return `📊 <b>HIP-3 股票资产</b>
 
 暂无可用的HIP-3股票资产
@@ -440,63 +441,53 @@ func (s *HyperliquidService) formatStocksMessage(stocks []PerpMetaAsset) string 
 	}
 
 	var message strings.Builder
-	message.WriteString("📊 <b>HIP-3 股票资产列表</b>\n\n")
+	message.WriteString("📊 <b>HIP-3 股票资产</b>\n\n")
+	message.WriteString("请选择市场查看股票列表。\n\n")
 
-	// 按前缀分组统计
-	prefixCount := make(map[string]int)
-	for _, stock := range stocks {
-		prefix := strings.SplitN(stock.Name, ":", 2)[0]
-		prefixCount[prefix]++
+	// 显示市场统计信息，使用按钮标题同款格式
+	message.WriteString("📈 <b>市场列表</b>\n")
+	totalAssets := 0
+	for _, cat := range categories {
+		totalAssets += len(cat.List)
+		message.WriteString(fmt.Sprintf("• %s（%d）\n", cat.Name, len(cat.List)))
 	}
 
-	// 显示统计信息
-	message.WriteString("📈 <b>资产统计</b>\n")
-	for prefix, count := range prefixCount {
-		message.WriteString(fmt.Sprintf("• %s: %d 个资产\n", prefix, count))
-	}
-
-	message.WriteString(fmt.Sprintf("\n📋 <b>详细信息</b> (共 %d 个资产)\n\n", len(stocks)))
-
-	// 显示前20个资产的详细信息
-	maxDisplay := 20
-	if len(stocks) < maxDisplay {
-		maxDisplay = len(stocks)
-	}
-
-	for i := 0; i < maxDisplay; i++ {
-		stock := stocks[i]
-		name := stock.Name
-		parts := strings.SplitN(name, ":", 2)
-		prefix := parts[0]
-		symbol := ""
-		if len(parts) == 2 {
-			symbol = parts[1]
-		}
-
-		pxDecimals := "未提供"
-		if stock.PxDecimals != nil {
-			pxDecimals = fmt.Sprintf("%d 位小数", *stock.PxDecimals)
-		}
-
-		message.WriteString(fmt.Sprintf("<b>%d. %s</b>\n", i+1, name))
-		message.WriteString(fmt.Sprintf("   • 前缀: <code>%s</code>\n", prefix))
-		message.WriteString(fmt.Sprintf("   • 股票代码: <code>%s</code>\n", symbol))
-		message.WriteString(fmt.Sprintf("   • 数量精度: %d 位小数\n", stock.SzDecimals))
-		message.WriteString(fmt.Sprintf("   • 价格精度: %s\n", pxDecimals))
-		message.WriteString("   • 类型: 股票合约\n\n")
-	}
-
-	// 如果资产数量超过显示限制，添加提示
-	if len(stocks) > maxDisplay {
-		message.WriteString(fmt.Sprintf("📝 还有 %d 个资产未显示...\n\n", len(stocks)-maxDisplay))
-	}
-
-	message.WriteString("💡 <b>提示</b>\n")
-	message.WriteString("• HIP-3股票资产支持多空交易\n")
-	message.WriteString("• 使用 /start 初始化后可进行股票交易\n")
-	message.WriteString("• 股票交易时间遵循美股交易时间")
+	message.WriteString(fmt.Sprintf("\n共 %d 个市场，%d 个股票资产。\n", len(categories), totalAssets))
+	message.WriteString("点击下方按钮选择市场。")
 
 	return message.String()
+}
+
+// categorizeStocks 将HIP-3资产按前缀分组
+func categorizeStocks(assets []PerpMetaAsset) []StockCategory {
+	groups := make(map[string][]PerpMetaAsset)
+	for _, asset := range assets {
+		if !strings.Contains(asset.Name, ":") {
+			continue
+		}
+		parts := strings.SplitN(asset.Name, ":", 2)
+		prefix := parts[0]
+		groups[prefix] = append(groups[prefix], asset)
+	}
+
+	var categories []StockCategory
+	for name, list := range groups {
+		// 按符号排序，方便阅读
+		sort.Slice(list, func(i, j int) bool {
+			return list[i].Name < list[j].Name
+		})
+		categories = append(categories, StockCategory{
+			Name: name,
+			List: list,
+		})
+	}
+
+	// 按市场名称排序
+	sort.Slice(categories, func(i, j int) bool {
+		return categories[i].Name < categories[j].Name
+	})
+
+	return categories
 }
 
 // absFloat 返回浮点数的绝对值

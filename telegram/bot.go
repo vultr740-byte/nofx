@@ -32,6 +32,7 @@ type TelegramBotManager struct {
 	nlParser      *NLParser
 	cmdValidator  *CommandValidator
 	debugMu       sync.Mutex
+	stockCatCache map[int64][]StockCategory
 	gasSponsorKey string
 	gasSponsorWei *big.Int
 	gasProcMu     sync.Mutex
@@ -113,6 +114,7 @@ func NewTelegramBotManager(cfg *config.TelegramBotConfig, db config.DatabaseInte
 		configWizard:  configWizard,
 		nlParser:      nlParser,
 		cmdValidator:  cmdValidator,
+		stockCatCache: make(map[int64][]StockCategory),
 		gasSponsorKey: cfg.GasPayerPrivateKey,
 		gasProcessing: make(map[string]struct{}),
 	}
@@ -462,16 +464,35 @@ func (tbm *TelegramBotManager) handleStocks(update tgbotapi.Update) {
 		return
 	}
 
-	// 获取股票资产信息
-	stocksMsg, err := tbm.hlService.GetStockAssets(agentKey, walletAddr, tbm.testnet)
+	// 获取股票资产信息（分类）
+	categories, err := tbm.hlService.GetStockCategories(agentKey, walletAddr, tbm.testnet)
 	if err != nil {
 		log.Printf("获取股票资产失败: %v", err)
 		tbm.sendMessage(chatID, "❌ 获取股票资产失败，请稍后重试")
 		return
 	}
 
-	// 发送股票资产信息
-	tbm.sendMessage(chatID, stocksMsg)
+	// 构造分类按钮
+	if len(categories) == 0 {
+		tbm.sendMessage(chatID, "📊 HIP-3 股票资产\n暂无可用股票资产。")
+		return
+	}
+
+	// 缓存分类列表，便于点击按钮后返回资产列表
+	tbm.stockCatCache[telegramID] = categories
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, cat := range categories {
+		label := fmt.Sprintf("%s（%d）", cat.Name, len(cat.List))
+		data := fmt.Sprintf("stocks_cat|%d|%s", telegramID, cat.Name)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label, data),
+		))
+	}
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	msg := tgbotapi.NewMessage(chatID, "📊 选择市场查看股票列表")
+	msg.ReplyMarkup = keyboard
+	tbm.bot.Send(msg)
 }
 
 // handleLeaderboard 处理 /leaderboard 命令
@@ -2151,6 +2172,8 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleForwardPickCallback(callback, chatID, telegramID, parts)
 	case "fwd_exec":
 		tbm.handleForwardExecCallback(callback, chatID, telegramID, parts)
+	case "stocks_cat":
+		tbm.handleStocksCategoryCallback(callback, chatID, telegramID, parts)
 	default:
 		log.Printf("❌ 未知动作: %s", action)
 		tbm.answerCallbackQuery(callback.ID, "未知操作")
@@ -2455,6 +2478,54 @@ func (tbm *TelegramBotManager) handleMenuCustomPrompt(callback *tgbotapi.Callbac
 	} else {
 		tbm.sendMessage(chatID, message)
 	}
+}
+
+// handleStocksCategoryCallback 处理股票市场分类回调
+func (tbm *TelegramBotManager) handleStocksCategoryCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
+	// stocks_cat|user|CAT
+	if len(parts) != 3 {
+		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
+		return
+	}
+	catName := parts[2]
+
+	// 获取分类列表缓存
+	categories := tbm.stockCatCache[telegramID]
+	if len(categories) == 0 {
+		tbm.answerCallbackQuery(callback.ID, "缓存已失效，请重新 /stocks")
+		return
+	}
+
+	var target *StockCategory
+	for i := range categories {
+		if categories[i].Name == catName {
+			target = &categories[i]
+			break
+		}
+	}
+	if target == nil {
+		tbm.answerCallbackQuery(callback.ID, "未找到该市场")
+		return
+	}
+
+	// 构造资产列表
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("📈 %s 市场资产（%d）\n", catName, len(target.List)))
+
+	for _, asset := range target.List {
+		parts := strings.SplitN(asset.Name, ":", 2)
+		symbol := asset.Name
+		prefix := ""
+		if len(parts) == 2 {
+			prefix = parts[0]
+			symbol = parts[1]
+		}
+		b.WriteString(fmt.Sprintf("• %s:%s | 杠杆上限: %dx\n", prefix, symbol, asset.MaxLeverage))
+	}
+
+	msg := tgbotapi.NewMessage(chatID, b.String())
+	tbm.bot.Send(msg)
+	tbm.answerCallbackQuery(callback.ID, "✅ 已加载")
 }
 
 // handleClearCustomPrompt 处理清除自定义 Prompt
