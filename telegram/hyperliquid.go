@@ -52,6 +52,8 @@ type OrderHistoryItem struct {
 	Fee       float64
 	ClosedPnl float64
 	Timestamp time.Time
+	MarkPrice float64  // 当前标记价格
+	StopPrice *float64 // 若有止损价格则填充
 }
 
 // GetOrderHistory 获取历史成交并格式化
@@ -90,7 +92,20 @@ func (s *HyperliquidService) GetOrderHistory(agentKey, walletAddr string, testne
 		items = items[:limit]
 	}
 
-	return formatOrderHistory(items, lookback), nil
+	// 查询当前标记价格，方便展示
+	marks := make(map[string]float64)
+	seen := make(map[string]struct{})
+	for _, it := range items {
+		if _, ok := seen[it.Symbol]; ok {
+			continue
+		}
+		seen[it.Symbol] = struct{}{}
+		if px, err := traderObj.GetMarketPrice(it.Symbol); err == nil && px > 0 {
+			marks[it.Symbol] = px
+		}
+	}
+
+	return formatOrderHistory(items, lookback, marks), nil
 }
 
 // GetStockCategories 获取股票资产分类
@@ -543,7 +558,7 @@ func categorizeStocks(assets []PerpMetaAsset) []StockCategory {
 }
 
 // formatOrderHistory 格式化历史成交
-func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration) string {
+func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration, marks map[string]float64) string {
 	if len(items) == 0 {
 		return fmt.Sprintf("📜 <b>历史成交</b>\n%s内无成交记录。", formatLookback(lookback))
 	}
@@ -588,9 +603,26 @@ func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration) string
 			pnlEmoji = "🔴"
 		}
 
+		// 标记价格
+		mark := it.MarkPrice
+		if mark == 0 {
+			if v, ok := marks[it.Symbol]; ok {
+				mark = v
+			}
+		}
+
+		// 止损价格（当前历史数据没有提供，保持兼容）
+		stopText := "—"
+		if it.StopPrice != nil {
+			stopText = fmt.Sprintf("%.4f", *it.StopPrice)
+		}
+
 		b.WriteString(fmt.Sprintf("#%d %s %s  %.4f @ %.4f\n", i+1, sideEmoji, it.Symbol, it.Size, it.Price))
 		b.WriteString(fmt.Sprintf("• 方向: %s\n", it.Dir))
 		b.WriteString(fmt.Sprintf("• 时间: %s\n", it.Timestamp.Format("2006-01-02 15:04:05")))
+		b.WriteString(fmt.Sprintf("• 入场: %.4f\n", it.Price))
+		b.WriteString(fmt.Sprintf("• 止损: %s\n", stopText))
+		b.WriteString(fmt.Sprintf("• 标记: %s\n", formatMaybePrice(mark)))
 		b.WriteString(fmt.Sprintf("• 盈亏: %s %s USDC | 费: %.4f\n\n", pnlEmoji, formatSigned(it.ClosedPnl), it.Fee))
 	}
 	if len(items) > maxDisplay {
@@ -615,6 +647,14 @@ func formatSigned(v float64) string {
 		return fmt.Sprintf("+%.2f", v)
 	}
 	return fmt.Sprintf("%.2f", v)
+}
+
+// formatMaybePrice 将价格格式化为 4 位小数，空值返回破折号
+func formatMaybePrice(v float64) string {
+	if v <= 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%.4f", v)
 }
 
 func parseFloatSafe(s string) float64 {
