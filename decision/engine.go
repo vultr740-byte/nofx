@@ -970,14 +970,16 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 		// 	return fmt.Errorf("止损和止盈必须大于0")
 		// }
 
-		// 验证止损止盈的合理性
-		if d.Action == "open_long" {
-			if d.StopLoss >= d.TakeProfit {
-				return fmt.Errorf("做多时止损价必须小于止盈价")
-			}
-		} else {
-			if d.StopLoss <= d.TakeProfit {
-				return fmt.Errorf("做空时止损价必须大于止盈价")
+		// 验证止损止盈的合理性（仅当两者都提供时校验）
+		if d.StopLoss > 0 && d.TakeProfit > 0 {
+			if d.Action == "open_long" {
+				if d.StopLoss >= d.TakeProfit {
+					return fmt.Errorf("做多时止损价必须小于止盈价")
+				}
+			} else {
+				if d.StopLoss <= d.TakeProfit {
+					return fmt.Errorf("做空时止损价必须大于止盈价")
+				}
 			}
 		}
 
