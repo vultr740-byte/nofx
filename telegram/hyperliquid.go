@@ -52,7 +52,6 @@ type OrderHistoryItem struct {
 	Fee       float64
 	ClosedPnl float64
 	Timestamp time.Time
-	MarkPrice float64  // 当前标记价格
 	StopPrice *float64 // 若有止损价格则填充
 }
 
@@ -92,20 +91,7 @@ func (s *HyperliquidService) GetOrderHistory(agentKey, walletAddr string, testne
 		items = items[:limit]
 	}
 
-	// 查询当前标记价格，方便展示
-	marks := make(map[string]float64)
-	seen := make(map[string]struct{})
-	for _, it := range items {
-		if _, ok := seen[it.Symbol]; ok {
-			continue
-		}
-		seen[it.Symbol] = struct{}{}
-		if px, err := traderObj.GetMarketPrice(it.Symbol); err == nil && px > 0 {
-			marks[it.Symbol] = px
-		}
-	}
-
-	return formatOrderHistory(items, lookback, marks), nil
+	return formatOrderHistory(items, lookback), nil
 }
 
 // GetStockCategories 获取股票资产分类
@@ -558,7 +544,7 @@ func categorizeStocks(assets []PerpMetaAsset) []StockCategory {
 }
 
 // formatOrderHistory 格式化历史成交
-func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration, marks map[string]float64) string {
+func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration) string {
 	if len(items) == 0 {
 		return fmt.Sprintf("📜 <b>历史成交</b>\n%s内无成交记录。", formatLookback(lookback))
 	}
@@ -603,26 +589,15 @@ func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration, marks 
 			pnlEmoji = "🔴"
 		}
 
-		// 标记价格
-		mark := it.MarkPrice
-		if mark == 0 {
-			if v, ok := marks[it.Symbol]; ok {
-				mark = v
-			}
-		}
-
 		lines := []string{
 			fmt.Sprintf("#%d %s %s", i+1, sideEmoji, it.Symbol),
-			fmt.Sprintf("• 数量/价格: %.4f @ %.4f", it.Size, it.Price),
+			fmt.Sprintf("• 数量/价格: %.4f × %.4f", it.Size, it.Price),
 			fmt.Sprintf("• 方向: %s", it.Dir),
 			fmt.Sprintf("• 时间: %s", it.Timestamp.Format("2006-01-02 15:04:05")),
 			fmt.Sprintf("• 入场: %.4f", it.Price),
 		}
 		if it.StopPrice != nil {
 			lines = append(lines, fmt.Sprintf("• 止损: %.4f", *it.StopPrice))
-		}
-		if mark > 0 {
-			lines = append(lines, fmt.Sprintf("• 标记: %.4f", mark))
 		}
 		lines = append(lines, fmt.Sprintf("• 盈亏: %s %s USDC | 费: %.4f", pnlEmoji, formatSigned(it.ClosedPnl), it.Fee))
 
