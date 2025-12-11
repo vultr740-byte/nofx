@@ -527,20 +527,20 @@ func (at *AutoTrader) pushTradeExecutionToTelegram(action *logger.DecisionAction
 	if quantity > 0 {
 		builder.WriteString(fmt.Sprintf("• 数量: %.4f\n", quantity))
 	}
-	if action.Leverage > 0 {
-		builder.WriteString(fmt.Sprintf("• 杠杆: %dx\n", action.Leverage))
-	}
-	if action.Price > 0 {
-		builder.WriteString(fmt.Sprintf("• 价格: %.4f\n", action.Price))
-	}
 	if action.EntryPrice != nil {
 		builder.WriteString(fmt.Sprintf("• 入场: %.4f\n", *action.EntryPrice))
 	}
 	if action.StopLoss != nil {
 		builder.WriteString(fmt.Sprintf("• 止损: %.4f\n", *action.StopLoss))
 	}
+	if action.Price > 0 {
+		builder.WriteString(fmt.Sprintf("• 标记: %.4f\n", action.Price))
+	}
 	if action.TakeProfit != nil {
 		builder.WriteString(fmt.Sprintf("• 止盈: %.4f\n", *action.TakeProfit))
+	}
+	if action.Leverage > 0 {
+		builder.WriteString(fmt.Sprintf("• 杠杆: %dx\n", action.Leverage))
 	}
 	if action.Profit != 0 {
 		builder.WriteString(fmt.Sprintf("• 盈亏: %.2f USDT\n", action.Profit))
@@ -942,17 +942,20 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 				if d.Quantity > 0 {
 					fmt.Fprintf(&b, "• 数量: %.4f\n", d.Quantity)
 				}
-				if d.Price > 0 {
-					fmt.Fprintf(&b, "• 价格: %.4f\n", d.Price)
-				}
-				if d.Profit != 0 {
-					fmt.Fprintf(&b, "• 盈亏: %.2f USDT\n", d.Profit)
+				if d.EntryPrice != nil {
+					fmt.Fprintf(&b, "• 入场: %.4f\n", *d.EntryPrice)
 				}
 				if d.StopLoss != nil {
 					fmt.Fprintf(&b, "• 止损: %.4f\n", *d.StopLoss)
 				}
+				if d.Price > 0 {
+					fmt.Fprintf(&b, "• 标记: %.4f\n", d.Price)
+				}
 				if d.TakeProfit != nil {
 					fmt.Fprintf(&b, "• 止盈: %.4f\n", *d.TakeProfit)
+				}
+				if d.Profit != 0 {
+					fmt.Fprintf(&b, "• 盈亏: %.2f USDT\n", d.Profit)
 				}
 
 				// 理由（如果有）
