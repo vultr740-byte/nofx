@@ -266,6 +266,17 @@ func (t *HyperliquidTrader) GetRecentTradePrice(coin string) (float64, error) {
 	return t.fetchPriceFromRecentTrades(coin)
 }
 
+// GetUserFillsByTime 获取指定时间范围内的成交记录
+func (t *HyperliquidTrader) GetUserFillsByTime(start time.Time, end *time.Time) ([]hyperliquid.Fill, error) {
+	startMs := start.UnixMilli()
+	var endMs *int64
+	if end != nil {
+		v := end.UnixMilli()
+		endMs = &v
+	}
+	return t.exchange.Info().UserFillsByTime(t.ctx, t.walletAddr, startMs, endMs, nil)
+}
+
 // HyperliquidTrader Hyperliquid交易器
 type HyperliquidTrader struct {
 	exchange         *hyperliquid.Exchange
@@ -1093,7 +1104,7 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 	log.Printf("🚀 [API调用] 调用时间: %s", apiCallStart.Format("2006-01-02 15:04:05.000"))
 
 	// ✅ 单次执行下单，失败直接返回，便于定位问题
-		_, err = t.exchange.Order(t.ctx, order, nil) // builder 暂停
+	_, err = t.exchange.Order(t.ctx, order, nil) // builder 暂停
 
 	// 📋 [API调用] 记录API调用结束时间和结果
 	apiCallEnd := time.Now()
@@ -1276,7 +1287,7 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 	log.Printf("🚀 [API调用] 调用时间: %s", apiCallStart.Format("2006-01-02 15:04:05.000"))
 
 	// ✅ 单次执行下单，失败直接返回，便于定位问题
-		_, err = t.exchange.Order(t.ctx, order, nil) // builder 暂停
+	_, err = t.exchange.Order(t.ctx, order, nil) // builder 暂停
 
 	// 📋 [API调用] 记录API调用结束时间和结果
 	apiCallEnd := time.Now()
@@ -1375,7 +1386,7 @@ func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (map[stri
 		ReduceOnly: true, // 只平仓，不开新仓
 	}
 
-		_, err = t.exchange.Order(t.ctx, order, nil) // builder 暂停
+	_, err = t.exchange.Order(t.ctx, order, nil) // builder 暂停
 	if err != nil {
 		return nil, fmt.Errorf("平多仓失败: %w", err)
 	}
@@ -1450,7 +1461,7 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (map[str
 		ReduceOnly: true,
 	}
 
-		_, err = t.exchange.Order(t.ctx, order, nil) // builder 暂停
+	_, err = t.exchange.Order(t.ctx, order, nil) // builder 暂停
 	if err != nil {
 		return nil, fmt.Errorf("平空仓失败: %w", err)
 	}

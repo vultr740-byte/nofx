@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +40,57 @@ type HyperliquidService struct{}
 type StockCategory struct {
 	Name string
 	List []PerpMetaAsset
+}
+
+// OrderHistoryItem 订单/成交摘要
+type OrderHistoryItem struct {
+	Symbol    string
+	Side      string
+	Dir       string
+	Price     float64
+	Size      float64
+	Fee       float64
+	ClosedPnl float64
+	Timestamp time.Time
+}
+
+// GetOrderHistory 获取历史成交并格式化
+func (s *HyperliquidService) GetOrderHistory(agentKey, walletAddr string, testnet bool, lookback time.Duration, limit int) (string, error) {
+	traderObj, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
+	if err != nil {
+		return "", fmt.Errorf("创建 Hyperliquid 交易器失败: %w", err)
+	}
+
+	start := time.Now().Add(-lookback)
+	fills, err := traderObj.GetUserFillsByTime(start, nil)
+	if err != nil {
+		return "", fmt.Errorf("获取历史成交失败: %w", err)
+	}
+
+	items := make([]OrderHistoryItem, 0, len(fills))
+	for _, f := range fills {
+		items = append(items, OrderHistoryItem{
+			Symbol:    f.Coin,
+			Side:      f.Side,
+			Dir:       f.Dir,
+			Price:     parseFloatSafe(f.Price),
+			Size:      parseFloatSafe(f.Size),
+			Fee:       parseFloatSafe(f.Fee),
+			ClosedPnl: parseFloatSafe(f.ClosedPnl),
+			Timestamp: time.UnixMilli(f.Time),
+		})
+	}
+
+	// 按时间倒序
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Timestamp.After(items[j].Timestamp)
+	})
+
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+
+	return formatOrderHistory(items, lookback), nil
 }
 
 // GetStockCategories 获取股票资产分类
@@ -488,6 +540,58 @@ func categorizeStocks(assets []PerpMetaAsset) []StockCategory {
 	})
 
 	return categories
+}
+
+// formatOrderHistory 格式化历史成交
+func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration) string {
+	if len(items) == 0 {
+		return fmt.Sprintf("📜 <b>历史成交</b>\n最近 %.0f 小时内无成交记录。", lookback.Hours())
+	}
+
+	// 统计
+	var totalPnl, totalFee float64
+	var win, lose int
+	for _, it := range items {
+		totalPnl += it.ClosedPnl
+		totalFee += it.Fee
+		if it.ClosedPnl > 0 {
+			win++
+		} else if it.ClosedPnl < 0 {
+			lose++
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString("📜 <b>历史成交</b>\n")
+	b.WriteString(fmt.Sprintf("统计窗口: 近 %.0f 小时 | 笔数: %d | 胜率: %.1f%%\n", lookback.Hours(), len(items), float64(win)/float64(len(items))*100))
+	b.WriteString(fmt.Sprintf("累计盈亏: %.2f USDC | 手续费: %.2f USDC\n\n", totalPnl, totalFee))
+
+	maxDisplay := len(items)
+	if maxDisplay > 20 {
+		maxDisplay = 20
+	}
+	for i := 0; i < maxDisplay; i++ {
+		it := items[i]
+		sideEmoji := "📈"
+		if strings.EqualFold(it.Side, "sell") || strings.Contains(strings.ToLower(it.Dir), "short") {
+			sideEmoji = "📉"
+		}
+		b.WriteString(fmt.Sprintf("%s %s | %.4f @ %.4f\n", sideEmoji, it.Symbol, it.Size, it.Price))
+		b.WriteString(fmt.Sprintf("方向: %s | 成交时间: %s\n", it.Dir, it.Timestamp.Format("2006-01-02 15:04:05")))
+		b.WriteString(fmt.Sprintf("盈亏: %.2f | 费: %.4f\n\n", it.ClosedPnl, it.Fee))
+	}
+	if len(items) > maxDisplay {
+		b.WriteString(fmt.Sprintf("… 还有 %d 条未展示，可调整范围查看更多。", len(items)-maxDisplay))
+	}
+	return b.String()
+}
+
+func parseFloatSafe(s string) float64 {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return f
 }
 
 // absFloat 返回浮点数的绝对值

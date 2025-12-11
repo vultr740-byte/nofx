@@ -33,6 +33,7 @@ type TelegramBotManager struct {
 	cmdValidator  *CommandValidator
 	debugMu       sync.Mutex
 	stockCatCache map[int64][]StockCategory
+	ordersCache   map[int64][]OrderHistoryItem
 	gasSponsorKey string
 	gasSponsorWei *big.Int
 	gasProcMu     sync.Mutex
@@ -115,6 +116,7 @@ func NewTelegramBotManager(cfg *config.TelegramBotConfig, db config.DatabaseInte
 		nlParser:      nlParser,
 		cmdValidator:  cmdValidator,
 		stockCatCache: make(map[int64][]StockCategory),
+		ordersCache:   make(map[int64][]OrderHistoryItem),
 		gasSponsorKey: cfg.GasPayerPrivateKey,
 		gasProcessing: make(map[string]struct{}),
 	}
@@ -205,6 +207,8 @@ func (tbm *TelegramBotManager) handleCommand(update tgbotapi.Update) {
 		tbm.handlePositions(update)
 	case "stocks":
 		tbm.handleStocks(update)
+	case "orders":
+		tbm.handleOrders(update)
 	case "deposit":
 		tbm.handleDeposit(update)
 	case "create_trader":
@@ -493,6 +497,31 @@ func (tbm *TelegramBotManager) handleStocks(update tgbotapi.Update) {
 	msg := tgbotapi.NewMessage(chatID, "📊 选择市场查看股票列表")
 	msg.ReplyMarkup = keyboard
 	tbm.bot.Send(msg)
+}
+
+// handleOrders 处理 /orders 命令
+func (tbm *TelegramBotManager) handleOrders(update tgbotapi.Update) {
+	chatID := update.Message.Chat.ID
+	telegramID := update.Message.From.ID
+
+	// 确认用户
+	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
+		return
+	}
+	if !tbm.hasHyperliquidAccount(telegramID) {
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 完成账号初始化")
+		return
+	}
+
+	msg := "📜 请选择历史成交查询范围"
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("最近20条 (近7天)", fmt.Sprintf("orders_recent|%d|20", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("最近100条 (近30天)", fmt.Sprintf("orders_recent|%d|100", telegramID)),
+		),
+	)
+	tbm.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
 }
 
 // handleLeaderboard 处理 /leaderboard 命令
@@ -2174,6 +2203,8 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleForwardExecCallback(callback, chatID, telegramID, parts)
 	case "stocks_cat":
 		tbm.handleStocksCategoryCallback(callback, chatID, telegramID, parts)
+	case "orders_recent":
+		tbm.handleOrdersRecentCallback(callback, chatID, telegramID, parts)
 	default:
 		log.Printf("❌ 未知动作: %s", action)
 		tbm.answerCallbackQuery(callback.ID, "未知操作")
@@ -2526,6 +2557,43 @@ func (tbm *TelegramBotManager) handleStocksCategoryCallback(callback *tgbotapi.C
 	msg := tgbotapi.NewMessage(chatID, b.String())
 	tbm.bot.Send(msg)
 	tbm.answerCallbackQuery(callback.ID, "✅ 已加载")
+}
+
+// handleOrdersRecentCallback 处理历史成交范围选择
+func (tbm *TelegramBotManager) handleOrdersRecentCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
+	// orders_recent|user|limit
+	if len(parts) != 3 {
+		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
+		return
+	}
+	limit, err := strconv.Atoi(parts[2])
+	if err != nil || limit <= 0 {
+		tbm.answerCallbackQuery(callback.ID, "参数错误")
+		return
+	}
+
+	// 提取账号
+	agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID)
+	if err != nil {
+		tbm.answerCallbackQuery(callback.ID, "账号信息获取失败")
+		return
+	}
+
+	lookback := 7 * 24 * time.Hour
+	if limit > 50 {
+		lookback = 30 * 24 * time.Hour
+	}
+
+	tbm.answerCallbackQuery(callback.ID, "⏳ 正在查询...")
+
+	go func() {
+		text, err := tbm.hlService.GetOrderHistory(agentKey, walletAddr, tbm.testnet, lookback, limit)
+		if err != nil {
+			tbm.sendMessage(chatID, fmt.Sprintf("❌ 查询失败: %s", esc(err)))
+			return
+		}
+		tbm.sendMessage(chatID, text)
+	}()
 }
 
 // handleClearCustomPrompt 处理清除自定义 Prompt
