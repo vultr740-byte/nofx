@@ -65,6 +65,7 @@ type DecisionAction struct {
 	Error      string    `json:"error"`     // 错误信息
 	StopLoss   *float64  `json:"stop_loss,omitempty"`
 	TakeProfit *float64  `json:"take_profit,omitempty"`
+	EntryPrice *float64  `json:"entry_price,omitempty"`
 }
 
 // DecisionLogger 决策日志记录器

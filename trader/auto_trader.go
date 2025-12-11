@@ -531,16 +531,19 @@ func (at *AutoTrader) pushTradeExecutionToTelegram(action *logger.DecisionAction
 		builder.WriteString(fmt.Sprintf("• 杠杆: %dx\n", action.Leverage))
 	}
 	if action.Price > 0 {
-		builder.WriteString(fmt.Sprintf("• 入场: %.4f\n", action.Price))
+		builder.WriteString(fmt.Sprintf("• 价格: %.4f\n", action.Price))
 	}
-	if action.Profit != 0 {
-		builder.WriteString(fmt.Sprintf("• 盈亏: %.2f USDT\n", action.Profit))
+	if action.EntryPrice != nil {
+		builder.WriteString(fmt.Sprintf("• 入场: %.4f\n", *action.EntryPrice))
 	}
 	if action.StopLoss != nil {
 		builder.WriteString(fmt.Sprintf("• 止损: %.4f\n", *action.StopLoss))
 	}
 	if action.TakeProfit != nil {
 		builder.WriteString(fmt.Sprintf("• 止盈: %.4f\n", *action.TakeProfit))
+	}
+	if action.Profit != 0 {
+		builder.WriteString(fmt.Sprintf("• 盈亏: %.2f USDT\n", action.Profit))
 	}
 	if action.Error != "" {
 		builder.WriteString(fmt.Sprintf("⚠️ %s\n", action.Error))
@@ -2241,6 +2244,9 @@ func (at *AutoTrader) executeUpdateStopLossWithRecord(decision *decision.Decisio
 
 	if targetPosition == nil {
 		return fmt.Errorf("持仓不存在: %s", decision.Symbol)
+	}
+	if entry, ok := targetPosition["entryPrice"].(float64); ok && entry > 0 {
+		actionRecord.EntryPrice = &entry
 	}
 
 	// 获取持仓方向和数量
