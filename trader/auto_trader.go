@@ -1881,9 +1881,11 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, act
 			return at.executeOpenLongWithRecord(decision, actionRecord)
 		// close操作保持不变，不进行反向
 		case "close_long":
-			return at.executeCloseLongWithRecord(decision, actionRecord)
+			log.Printf("[SKIP] 收到 close_long，但当前测试阶段关闭该动作执行")
+			return nil
 		case "close_short":
-			return at.executeCloseShortWithRecord(decision, actionRecord)
+			log.Printf("[SKIP] 收到 close_short，但当前测试阶段关闭该动作执行")
+			return nil
 		case "update_stop_loss":
 			return at.executeUpdateStopLossWithRecord(decision, actionRecord)
 		case "update_take_profit":
@@ -1905,9 +1907,11 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, act
 	case "open_short":
 		return at.executeOpenShortWithRecord(decision, actionRecord)
 	case "close_long":
-		return at.executeCloseLongWithRecord(decision, actionRecord)
+		log.Printf("[SKIP] 收到 close_long，但当前测试阶段关闭该动作执行")
+		return nil
 	case "close_short":
-		return at.executeCloseShortWithRecord(decision, actionRecord)
+		log.Printf("[SKIP] 收到 close_short，但当前测试阶段关闭该动作执行")
+		return nil
 	case "update_stop_loss":
 		return at.executeUpdateStopLossWithRecord(decision, actionRecord)
 	case "update_take_profit":
