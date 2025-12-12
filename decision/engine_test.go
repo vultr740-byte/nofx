@@ -24,12 +24,12 @@ func TestValidateDecisionUsesMarketPriceForRiskReward(t *testing.T) {
 		Action:          "open_long",
 		Leverage:        3,
 		PositionSizeUSD: 120,
-		StopLoss:        3400,
-		TakeProfit:      3600,
+		StopLoss:        0,    // 缺少止损
+		TakeProfit:      3600, // 仅有止盈
 	}
 
-	err := validateDecision(&decision, ctx)
-	if err == nil || !strings.Contains(err.Error(), "风险回报比过低") {
-		t.Fatalf("expected risk ratio validation error, got %v", err)
+	err := validateDecision(&decision, ctx.Account.TotalEquity, ctx.BTCETHLeverage, ctx.AltcoinLeverage, false)
+	if err == nil || !strings.Contains(err.Error(), "止损和止盈必须大于0") {
+		t.Fatalf("expected missing tp/sl validation error, got %v", err)
 	}
 }

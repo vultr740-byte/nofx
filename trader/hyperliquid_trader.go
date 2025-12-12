@@ -1832,15 +1832,28 @@ func checkTriggerCondition(ord hyperliquid.FrontendOpenOrder, positionSide strin
 }
 
 func normalizeTriggerCond(cond string) string {
+	// Hyperliquid 返回的 trigger 条件常见格式：
+	// "mark price <= trigger px", "last price >= trigger px" 等
+	// 这里做包含匹配，避免因为前缀文本导致解析失败。
 	c := strings.TrimSpace(strings.ToLower(cond))
-	switch c {
-	case "<", "<=", "lte":
+
+	// 先做语义包含匹配
+	if strings.Contains(c, "<=") || strings.Contains(c, "lte") || strings.Contains(c, "below") {
 		return "<="
-	case ">", ">=", "gte":
-		return ">="
-	default:
-		return c
 	}
+	if strings.Contains(c, ">=") || strings.Contains(c, "gte") || strings.Contains(c, "above") {
+		return ">="
+	}
+
+	// 再做单字符匹配
+	if strings.Contains(c, "<") {
+		return "<"
+	}
+	if strings.Contains(c, ">") {
+		return ">"
+	}
+
+	return ""
 }
 
 func classifyByCond(side, cond string, isTrigger bool) string {
