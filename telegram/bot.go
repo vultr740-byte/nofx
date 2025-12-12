@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -1341,14 +1342,14 @@ func (tbm *TelegramBotManager) ensureTraderHasFunds(telegramID int64) error {
 			"1. 使用 /deposit 获取专属充值地址\n" +
 			"2. 充值并等待链上确认\n" +
 			"3. 使用 /balance 确认到账后，再执行 /start_trader"
-		return fmt.Errorf(msg)
+		return errors.New(msg)
 	}
 
 	if availableBalance <= 0 {
 		if spotBalance > 0 {
 			msg := fmt.Sprintf("⚠️ 账户 Spot 余额 %.2f USDC，但合约账户可用余额为 0。\n\n"+
 				"请在 Hyperliquid 中将现货资金转入 Perpetuals 账户后再启动交易员。", spotBalance)
-			return fmt.Errorf(msg)
+			return errors.New(msg)
 		} else {
 			return fmt.Errorf("❌ 当前合约账户可用余额为 0，无法启动交易员。请充值或释放保证金后重试。")
 		}

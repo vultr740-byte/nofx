@@ -30,8 +30,8 @@ type ArbitrumService struct {
 	callTimeout  time.Duration
 	transferWait time.Duration
 	// 可配置的gas费用设置
-	gasTipCap    *big.Int // Priority fee (Gwei)
-	gasFeeCap    *big.Int // Max fee (Gwei)
+	gasTipCap *big.Int // Priority fee (Gwei)
+	gasFeeCap *big.Int // Max fee (Gwei)
 }
 
 func NewArbitrumService(rpcURL string, chainID int64, usdcAddress string, bridgeAddress string) (*ArbitrumService, error) {
@@ -51,8 +51,8 @@ func NewArbitrumService(rpcURL string, chainID int64, usdcAddress string, bridge
 
 	// 初始化gas费用设置
 	// 默认值：Priority 0 ETH, Base 0.01 Gwei
-	gasTipCap := big.NewInt(0)               // 0 ETH priority fee
-	gasFeeCap := big.NewInt(10_000_000)       // 0.01 Gwei base fee (默认值)
+	gasTipCap := big.NewInt(0)          // 0 ETH priority fee
+	gasFeeCap := big.NewInt(10_000_000) // 0.01 Gwei base fee (默认值)
 
 	return &ArbitrumService{
 		client:       client,
@@ -143,15 +143,15 @@ func (s *ArbitrumService) SendGas(privateKeyHex, toAddress string, amountWei *bi
 
 	// 添加 5% 安全缓冲
 	if err != nil || gasLimit == 0 {
-		gasLimit = 22000  // 提高默认值
+		gasLimit = 22000 // 提高默认值
 		log.Printf("⚠️ ETH 转账 Gas 估算失败，使用默认值: %v", err)
 	} else {
-		buffer := gasLimit / 20  // 5% = gasLimit / 20
+		buffer := gasLimit / 20 // 5% = gasLimit / 20
 		gasLimit += buffer
 		log.Printf("🔧 ETH 转账 Gas 估算: 基础=%d, 缓冲=%d, 最终=%d", gasLimit-buffer, buffer, gasLimit)
 	}
 
-	log.Printf("💰 发送ETH转账: 金额=%s ETH, Gas=%d, Gas费用(Base=Max=%.3f Gwei, Priority=0 Gwei)",
+	log.Printf("💰 发送ETH转账: 金额=%s ETH, Gas=%d, Gas费用(Base=Max=%s Gwei, Priority=0 Gwei)",
 		new(big.Float).Quo(new(big.Float).SetInt(amountWei), big.NewFloat(1e18)).String(),
 		gasLimit,
 		new(big.Float).Quo(new(big.Float).SetInt(feeCap), big.NewFloat(1e9)).String())
@@ -257,18 +257,18 @@ func (s *ArbitrumService) getGasCaps(ctx context.Context) (*big.Int, *big.Int) {
 	if err != nil || header == nil || header.BaseFee == nil || header.BaseFee.Sign() <= 0 {
 		// 获取失败时使用默认值：0.01 Gwei = 10,000,000 Wei
 		log.Printf("⚠️ 获取区块Base Fee失败，使用默认值: %v", err)
-		baseFee = big.NewInt(10_000_000)  // 0.01 Gwei
+		baseFee = big.NewInt(10_000_000) // 0.01 Gwei
 	} else {
 		baseFee = header.BaseFee
 	}
 
-	tipCap := big.NewInt(0)        // Priority Fee = 0 (不给矿工小费)
+	tipCap := big.NewInt(0) // Priority Fee = 0 (不给矿工小费)
 
 	// 在 baseFee 基础上添加 2% 缓冲
-	buffer := new(big.Int).Div(baseFee, big.NewInt(50))  // 2% = baseFee / 50
-	feeCap := new(big.Int).Add(baseFee, buffer)  // Max Fee = Base Fee + 2% 缓冲
+	buffer := new(big.Int).Div(baseFee, big.NewInt(50)) // 2% = baseFee / 50
+	feeCap := new(big.Int).Add(baseFee, buffer)         // Max Fee = Base Fee + 2% 缓冲
 
-	log.Printf("🔧 Gas费用设置: Priority=0 Gwei, Max=%.3f Gwei (Base Fee %.3f Gwei + 2%% 缓冲)",
+	log.Printf("🔧 Gas费用设置: Priority=0 Gwei, Max=%s Gwei (Base Fee %s Gwei + 2%% 缓冲)",
 		new(big.Float).Quo(new(big.Float).SetInt(feeCap), big.NewFloat(1e9)).String(),
 		new(big.Float).Quo(new(big.Float).SetInt(baseFee), big.NewFloat(1e9)).String())
 
