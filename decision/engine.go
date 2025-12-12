@@ -184,11 +184,11 @@ type FullDecision struct {
 
 // GetFullDecision 获取AI的完整交易决策（批量分析所有币种和持仓）
 func GetFullDecision(ctx *Context, mcpClient *mcp.Client) (*FullDecision, error) {
-	return GetFullDecisionWithCustomPrompt(ctx, mcpClient, "", false, "")
+	return GetFullDecisionWithCustomPrompt(ctx, mcpClient, "", false, "", false)
 }
 
 // GetFullDecisionWithCustomPrompt 获取AI的完整交易决策（支持自定义prompt和模板选择）
-func GetFullDecisionWithCustomPrompt(ctx *Context, mcpClient *mcp.Client, customPrompt string, overrideBase bool, templateName string) (*FullDecision, error) {
+func GetFullDecisionWithCustomPrompt(ctx *Context, mcpClient *mcp.Client, customPrompt string, overrideBase bool, templateName string, allowOpenWithoutTpSl bool) (*FullDecision, error) {
 	// 1. 为所有币种获取市场数据
 	if err := fetchMarketDataForContext(ctx); err != nil {
 		return nil, fmt.Errorf("获取市场数据失败: %w", err)
@@ -211,7 +211,7 @@ func GetFullDecisionWithCustomPrompt(ctx *Context, mcpClient *mcp.Client, custom
 	logAIResponseToFile(aiResponse)
 
 	// 6. 解析处理后的响应
-	decision, err := parseFullDecisionResponse(processedResponse, ctx.Account.TotalEquity, ctx.BTCETHLeverage, ctx.AltcoinLeverage)
+	decision, err := parseFullDecisionResponse(processedResponse, ctx.Account.TotalEquity, ctx.BTCETHLeverage, ctx.AltcoinLeverage, allowOpenWithoutTpSl)
 	if decision == nil {
 		decision = &FullDecision{}
 	}
@@ -548,7 +548,7 @@ func buildUserPrompt(ctx *Context) string {
 }
 
 // parseFullDecisionResponse 解析AI的完整决策响应
-func parseFullDecisionResponse(aiResponse string, accountEquity float64, btcEthLeverage, altcoinLeverage int) (*FullDecision, error) {
+func parseFullDecisionResponse(aiResponse string, accountEquity float64, btcEthLeverage, altcoinLeverage int, allowOpenWithoutTpSl bool) (*FullDecision, error) {
 	// 1. 提取思维链
 	cotTrace := extractCoTTrace(aiResponse)
 
@@ -588,7 +588,7 @@ func parseFullDecisionResponse(aiResponse string, accountEquity float64, btcEthL
 	log.Printf("=== 决策结束 ===")
 
 	// 3. 验证决策
-	if err := validateDecisions(decisions, accountEquity, btcEthLeverage, altcoinLeverage); err != nil {
+	if err := validateDecisions(decisions, accountEquity, btcEthLeverage, altcoinLeverage, allowOpenWithoutTpSl); err != nil {
 		return &FullDecision{
 			CoTTrace:  cotTrace,
 			Decisions: decisions,
@@ -867,9 +867,9 @@ func stripThousandSeparators(s string) string {
 }
 
 // validateDecisions 验证所有决策（需要账户信息和杠杆配置）
-func validateDecisions(decisions []Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int) error {
+func validateDecisions(decisions []Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, allowOpenWithoutTpSl bool) error {
 	for i, decision := range decisions {
-		if err := validateDecision(&decision, accountEquity, btcEthLeverage, altcoinLeverage); err != nil {
+		if err := validateDecision(&decision, accountEquity, btcEthLeverage, altcoinLeverage, allowOpenWithoutTpSl); err != nil {
 			return fmt.Errorf("决策 #%d 验证失败: %w", i+1, err)
 		}
 	}
@@ -899,7 +899,7 @@ func findMatchingBracket(s string, start int) int {
 }
 
 // validateDecision 验证单个决策的有效性
-func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int) error {
+func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, allowOpenWithoutTpSl bool) error {
 	// 验证action，并兼容部分别名
 	if d.Action == "modify_stop_loss" {
 		d.Action = "update_stop_loss"
@@ -965,10 +965,11 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 				return fmt.Errorf("山寨币单币种仓位价值不能超过%.0f USDT（%d倍账户净值），实际: %.0f", maxPositionValue, altcoinLeverage, d.PositionSizeUSD)
 			}
 		}
-		// 临时禁用开仓时必须提供止损/止盈的强制校验（测试用）
-		// if d.StopLoss <= 0 || d.TakeProfit <= 0 {
-		// 	return fmt.Errorf("止损和止盈必须大于0")
-		// }
+		if !allowOpenWithoutTpSl {
+			if d.StopLoss <= 0 || d.TakeProfit <= 0 {
+				return fmt.Errorf("止损和止盈必须大于0")
+			}
+		}
 
 		// 验证止损止盈的合理性（仅当两者都提供时校验）
 		if d.StopLoss > 0 && d.TakeProfit > 0 {

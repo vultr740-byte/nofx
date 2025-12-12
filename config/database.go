@@ -387,6 +387,7 @@ func (d *Database) createPostgreSQLTables() error {
 		`ALTER TABLE tg_traders ADD COLUMN IF NOT EXISTS private_key TEXT DEFAULT ''`,
 		`ALTER TABLE tg_traders ADD COLUMN IF NOT EXISTS wallet_address TEXT DEFAULT ''`,
 		`ALTER TABLE tg_traders ADD COLUMN IF NOT EXISTS is_configured BOOLEAN DEFAULT FALSE`,
+		`ALTER TABLE tg_traders ADD COLUMN IF NOT EXISTS disable_risk_controls BOOLEAN DEFAULT FALSE`,
 	}
 
 	for _, query := range alterQueries {
@@ -625,6 +626,7 @@ func (d *Database) createSQLiteTables() error {
 		`ALTER TABLE tg_traders ADD COLUMN private_key TEXT DEFAULT ''`,
 		`ALTER TABLE tg_traders ADD COLUMN wallet_address TEXT DEFAULT ''`,
 		`ALTER TABLE tg_traders ADD COLUMN is_configured BOOLEAN DEFAULT 0`,
+		`ALTER TABLE tg_traders ADD COLUMN disable_risk_controls BOOLEAN DEFAULT 0`,
 	}
 
 	for _, query := range alterQueries {
@@ -775,6 +777,7 @@ func (d *Database) createTgTradersTable() error {
 				use_default_coins BOOLEAN DEFAULT TRUE,
 				custom_coins TEXT DEFAULT '',
 				reverse_trading BOOLEAN DEFAULT FALSE,
+				disable_risk_controls BOOLEAN DEFAULT FALSE,
 				system_prompt_template TEXT DEFAULT 'default',
 				ai_model_api_key TEXT DEFAULT '',
 				ai_model_api_url TEXT DEFAULT '',
@@ -810,6 +813,7 @@ func (d *Database) createTgTradersTable() error {
 				use_default_coins BOOLEAN DEFAULT 1,
 				custom_coins TEXT DEFAULT '',
 				reverse_trading BOOLEAN DEFAULT 0,
+				disable_risk_controls BOOLEAN DEFAULT 0,
 				system_prompt_template TEXT DEFAULT 'default',
 				ai_model_api_key TEXT DEFAULT '',
 				ai_model_api_url TEXT DEFAULT '',
@@ -1150,6 +1154,7 @@ type TgTraderRecord struct {
 	AIModelAPIURL        string    `json:"ai_model_api_url"`
 	PrivateKey           string    `json:"private_key"`
 	WalletAddress        string    `json:"wallet_address"`
+	DisableRiskControls  bool      `json:"disable_risk_controls"` // 测试开关：关闭自动TP/SL与close_long/close_short执行
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
 }
@@ -2922,11 +2927,11 @@ func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) 
 				initial_balance, scan_interval_minutes, is_running, is_configured,
 				btc_eth_leverage, altcoin_leverage, trading_symbols,
 				use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
-				is_cross_margin, use_default_coins, custom_coins, reverse_trading,
+				is_cross_margin, use_default_coins, custom_coins, reverse_trading, disable_risk_controls,
 				system_prompt_template, ai_model_api_key, ai_model_api_url,
 				private_key, wallet_address, created_at, updated_at
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, NOW(), NOW()
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, NOW(), NOW()
 			)`
 		_, err := d.db.Exec(query,
 			traderRecord.ID, traderRecord.TgUserID, traderRecord.Name, traderRecord.AIModelID, traderRecord.AIModelName,
@@ -2934,7 +2939,7 @@ func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) 
 			traderRecord.IsRunning, traderRecord.IsConfigured, traderRecord.BTCETHLeverage, traderRecord.AltcoinLeverage,
 			traderRecord.TradingSymbols, traderRecord.UseCoinPool, traderRecord.UseOITop,
 			traderRecord.CustomPrompt, traderRecord.OverrideBasePrompt, traderRecord.IsCrossMargin,
-			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.ReverseTrading, traderRecord.SystemPromptTemplate,
+			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.ReverseTrading, traderRecord.DisableRiskControls, traderRecord.SystemPromptTemplate,
 			encryptedAPIKey, traderRecord.AIModelAPIURL,
 			encryptedPrivateKey, traderRecord.WalletAddress,
 		)
@@ -2946,11 +2951,11 @@ func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) 
 				initial_balance, scan_interval_minutes, is_running, is_configured,
 				btc_eth_leverage, altcoin_leverage, trading_symbols,
 				use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
-				is_cross_margin, use_default_coins, custom_coins, reverse_trading,
+				is_cross_margin, use_default_coins, custom_coins, reverse_trading, disable_risk_controls,
 				system_prompt_template, ai_model_api_key, ai_model_api_url,
 				private_key, wallet_address, created_at, updated_at
 			) VALUES (
-				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 			)`
 		_, err := d.db.Exec(query,
 			traderRecord.ID, traderRecord.TgUserID, traderRecord.Name, traderRecord.AIModelID, traderRecord.AIModelName,
@@ -2958,7 +2963,7 @@ func (d *Database) CreateTgTrader(tgUserID int64, traderRecord *TgTraderRecord) 
 			traderRecord.IsRunning, traderRecord.IsConfigured, traderRecord.BTCETHLeverage, traderRecord.AltcoinLeverage,
 			traderRecord.TradingSymbols, traderRecord.UseCoinPool, traderRecord.UseOITop,
 			traderRecord.CustomPrompt, traderRecord.OverrideBasePrompt, traderRecord.IsCrossMargin,
-			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.ReverseTrading, traderRecord.SystemPromptTemplate,
+			traderRecord.UseDefaultCoins, traderRecord.CustomCoins, traderRecord.ReverseTrading, traderRecord.DisableRiskControls, traderRecord.SystemPromptTemplate,
 			encryptedAPIKey, traderRecord.AIModelAPIURL,
 			encryptedPrivateKey, traderRecord.WalletAddress,
 		)
@@ -2977,6 +2982,7 @@ func (d *Database) GetTgTraders(tgUserID int64) ([]TgTraderRecord, error) {
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
 				   COALESCE(reverse_trading, 0::BOOLEAN) as reverse_trading,
+				   COALESCE(disable_risk_controls, 0::BOOLEAN) as disable_risk_controls,
 				   system_prompt_template,
 				   COALESCE(ai_model_api_key, '') AS ai_model_api_key,
 				   COALESCE(ai_model_api_url, '') AS ai_model_api_url,
@@ -2995,6 +3001,7 @@ func (d *Database) GetTgTraders(tgUserID int64) ([]TgTraderRecord, error) {
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
 				   COALESCE(reverse_trading, 0) as reverse_trading,
+				   COALESCE(disable_risk_controls, 0) as disable_risk_controls,
 				   system_prompt_template,
 				   COALESCE(ai_model_api_key, '') AS ai_model_api_key,
 				   COALESCE(ai_model_api_url, '') AS ai_model_api_url,
@@ -3022,7 +3029,7 @@ func (d *Database) GetTgTraders(tgUserID int64) ([]TgTraderRecord, error) {
 			&trader.IsRunning, &trader.IsConfigured, &trader.BTCETHLeverage, &trader.AltcoinLeverage,
 			&trader.TradingSymbols, &trader.UseCoinPool, &trader.UseOITop,
 			&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.IsCrossMargin,
-			&trader.UseDefaultCoins, &trader.CustomCoins, &trader.ReverseTrading, &trader.SystemPromptTemplate,
+			&trader.UseDefaultCoins, &trader.CustomCoins, &trader.ReverseTrading, &trader.DisableRiskControls, &trader.SystemPromptTemplate,
 			&trader.AIModelAPIKey, &trader.AIModelAPIURL, &trader.PrivateKey, &trader.WalletAddress, &trader.CreatedAt, &trader.UpdatedAt,
 		)
 		if err != nil {
@@ -3415,12 +3422,14 @@ func (d *Database) UpdateTgTraderConfig(tgUserID int64, traderID string, traderR
 				is_cross_margin = $14,
 				use_default_coins = $15,
 				custom_coins = $16,
-				system_prompt_template = $17,
-				ai_model_api_key = $18,
-				ai_model_api_url = $19,
-				is_configured = $20,
+				reverse_trading = $17,
+				disable_risk_controls = $18,
+				system_prompt_template = $19,
+				ai_model_api_key = $20,
+				ai_model_api_url = $21,
+				is_configured = $22,
 				updated_at = NOW()
-			WHERE tg_user_id = $21 AND id = $22
+			WHERE tg_user_id = $23 AND id = $24
 		`
 		args = []interface{}{
 			traderRecord.Name,
@@ -3439,6 +3448,8 @@ func (d *Database) UpdateTgTraderConfig(tgUserID int64, traderID string, traderR
 			traderRecord.IsCrossMargin,
 			traderRecord.UseDefaultCoins,
 			traderRecord.CustomCoins,
+			traderRecord.ReverseTrading,
+			traderRecord.DisableRiskControls,
 			traderRecord.SystemPromptTemplate,
 			encryptedAPIKey,
 			traderRecord.AIModelAPIURL,
@@ -3465,6 +3476,8 @@ func (d *Database) UpdateTgTraderConfig(tgUserID int64, traderID string, traderR
 				is_cross_margin = ?,
 				use_default_coins = ?,
 				custom_coins = ?,
+				reverse_trading = ?,
+				disable_risk_controls = ?,
 				system_prompt_template = ?,
 				ai_model_api_key = ?,
 				ai_model_api_url = ?,
@@ -3489,6 +3502,8 @@ func (d *Database) UpdateTgTraderConfig(tgUserID int64, traderID string, traderR
 			traderRecord.IsCrossMargin,
 			traderRecord.UseDefaultCoins,
 			traderRecord.CustomCoins,
+			traderRecord.ReverseTrading,
+			traderRecord.DisableRiskControls,
 			traderRecord.SystemPromptTemplate,
 			encryptedAPIKey,
 			traderRecord.AIModelAPIURL,
@@ -3580,6 +3595,7 @@ func (d *Database) GetTgTraderConfig(tgUserID int64, traderID string) (*TgTrader
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
 				   COALESCE(reverse_trading, 0::BOOLEAN) as reverse_trading,
+				   COALESCE(disable_risk_controls, 0::BOOLEAN) as disable_risk_controls,
 				   system_prompt_template,
 				   COALESCE(ai_model_api_key, '') AS ai_model_api_key,
 				   COALESCE(ai_model_api_url, '') AS ai_model_api_url,
@@ -3597,6 +3613,7 @@ func (d *Database) GetTgTraderConfig(tgUserID int64, traderID string) (*TgTrader
 				   use_coin_pool, use_oi_top, custom_prompt, override_base_prompt,
 				   is_cross_margin, use_default_coins, custom_coins,
 				   COALESCE(reverse_trading, 0) as reverse_trading,
+				   COALESCE(disable_risk_controls, 0) as disable_risk_controls,
 				   system_prompt_template,
 				   COALESCE(ai_model_api_key, '') AS ai_model_api_key,
 				   COALESCE(ai_model_api_url, '') AS ai_model_api_url,
@@ -3615,7 +3632,7 @@ func (d *Database) GetTgTraderConfig(tgUserID int64, traderID string) (*TgTrader
 		&trader.IsRunning, &trader.BTCETHLeverage, &trader.AltcoinLeverage,
 		&trader.TradingSymbols, &trader.UseCoinPool, &trader.UseOITop,
 		&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.IsCrossMargin,
-		&trader.UseDefaultCoins, &trader.CustomCoins, &trader.ReverseTrading, &trader.SystemPromptTemplate,
+		&trader.UseDefaultCoins, &trader.CustomCoins, &trader.ReverseTrading, &trader.DisableRiskControls, &trader.SystemPromptTemplate,
 		&trader.AIModelAPIKey, &trader.AIModelAPIURL, &trader.PrivateKey, &trader.WalletAddress, &trader.CreatedAt, &trader.UpdatedAt,
 	)
 

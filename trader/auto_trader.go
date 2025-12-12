@@ -239,6 +239,9 @@ type AutoTraderConfig struct {
 	// 反向交易配置
 	ReverseTrading bool // 是否启用反向交易（true=开多时做空，开空时做多）
 
+	// 风控测试开关：关闭开仓自动TP/SL和close_long/close_short执行
+	DisableRiskControls bool
+
 	// 币种配置
 	DefaultCoins []string // 默认币种列表（从数据库获取）
 	TradingCoins []string // 实际交易币种列表
@@ -1505,7 +1508,7 @@ func (at *AutoTrader) runCycle() error {
 
 	// 5. 调用AI获取完整决策
 	log.Printf("🤖 正在请求AI分析并决策... [模板: %s]", at.systemPromptTemplate)
-	decision, err := decision.GetFullDecisionWithCustomPrompt(ctx, at.mcpClient, at.customPrompt, at.overrideBasePrompt, at.systemPromptTemplate)
+	decision, err := decision.GetFullDecisionWithCustomPrompt(ctx, at.mcpClient, at.customPrompt, at.overrideBasePrompt, at.systemPromptTemplate, at.config.DisableRiskControls)
 
 	// 即使有错误，也保存思维链、决策和输入prompt（用于debug）
 	if decision != nil {
@@ -1879,13 +1882,19 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, act
 			decision.StopLoss = originalTakeProfit // 止损变为止盈
 			decision.TakeProfit = originalStopLoss // 止盈变为止损
 			return at.executeOpenLongWithRecord(decision, actionRecord)
-		// close操作保持不变，不进行反向
+		// close操作在测试开关下可选择跳过
 		case "close_long":
-			log.Printf("[SKIP] 收到 close_long，但当前测试阶段关闭该动作执行")
-			return nil
+			if at.config.DisableRiskControls {
+				log.Printf("[SKIP] 收到 close_long，但当前测试阶段关闭该动作执行")
+				return nil
+			}
+			return at.executeCloseLongWithRecord(decision, actionRecord)
 		case "close_short":
-			log.Printf("[SKIP] 收到 close_short，但当前测试阶段关闭该动作执行")
-			return nil
+			if at.config.DisableRiskControls {
+				log.Printf("[SKIP] 收到 close_short，但当前测试阶段关闭该动作执行")
+				return nil
+			}
+			return at.executeCloseShortWithRecord(decision, actionRecord)
 		case "update_stop_loss":
 			return at.executeUpdateStopLossWithRecord(decision, actionRecord)
 		case "update_take_profit":
@@ -1907,11 +1916,17 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, act
 	case "open_short":
 		return at.executeOpenShortWithRecord(decision, actionRecord)
 	case "close_long":
-		log.Printf("[SKIP] 收到 close_long，但当前测试阶段关闭该动作执行")
-		return nil
+		if at.config.DisableRiskControls {
+			log.Printf("[SKIP] 收到 close_long，但当前测试阶段关闭该动作执行")
+			return nil
+		}
+		return at.executeCloseLongWithRecord(decision, actionRecord)
 	case "close_short":
-		log.Printf("[SKIP] 收到 close_short，但当前测试阶段关闭该动作执行")
-		return nil
+		if at.config.DisableRiskControls {
+			log.Printf("[SKIP] 收到 close_short，但当前测试阶段关闭该动作执行")
+			return nil
+		}
+		return at.executeCloseShortWithRecord(decision, actionRecord)
 	case "update_stop_loss":
 		return at.executeUpdateStopLossWithRecord(decision, actionRecord)
 	case "update_take_profit":
@@ -2004,13 +2019,20 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, act
 	posKey := decision.Symbol + "_long"
 	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
-	// 暂时禁用开仓后自动设置止损/止盈（用于测试）
-	// if err := at.trader.SetStopLoss(formattedSymbol, "LONG", quantity, decision.StopLoss); err != nil {
-	// 	log.Printf("  ⚠ 设置止损失败: %v", err)
-	// }
-	// if err := at.trader.SetTakeProfit(formattedSymbol, "LONG", quantity, decision.TakeProfit); err != nil {
-	// 	log.Printf("  ⚠ 设置止盈失败: %v", err)
-	// }
+	if !at.config.DisableRiskControls {
+		if decision.StopLoss > 0 {
+			if err := at.trader.SetStopLoss(formattedSymbol, "LONG", quantity, decision.StopLoss); err != nil {
+				log.Printf("  ⚠ 设置止损失败: %v", err)
+			}
+		}
+		if decision.TakeProfit > 0 {
+			if err := at.trader.SetTakeProfit(formattedSymbol, "LONG", quantity, decision.TakeProfit); err != nil {
+				log.Printf("  ⚠ 设置止盈失败: %v", err)
+			}
+		}
+	} else {
+		log.Printf("  ⏸ 跳过自动设置止盈/止损（测试开关开启）")
+	}
 
 	return nil
 }
@@ -2093,13 +2115,20 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, ac
 	posKey := decision.Symbol + "_short"
 	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
-	// 暂时禁用开仓后自动设置止损/止盈（用于测试）
-	// if err := at.trader.SetStopLoss(formattedSymbol, "SHORT", quantity, decision.StopLoss); err != nil {
-	// 	log.Printf("  ⚠ 设置止损失败: %v", err)
-	// }
-	// if err := at.trader.SetTakeProfit(formattedSymbol, "SHORT", quantity, decision.TakeProfit); err != nil {
-	// 	log.Printf("  ⚠ 设置止盈失败: %v", err)
-	// }
+	if !at.config.DisableRiskControls {
+		if decision.StopLoss > 0 {
+			if err := at.trader.SetStopLoss(formattedSymbol, "SHORT", quantity, decision.StopLoss); err != nil {
+				log.Printf("  ⚠ 设置止损失败: %v", err)
+			}
+		}
+		if decision.TakeProfit > 0 {
+			if err := at.trader.SetTakeProfit(formattedSymbol, "SHORT", quantity, decision.TakeProfit); err != nil {
+				log.Printf("  ⚠ 设置止盈失败: %v", err)
+			}
+		}
+	} else {
+		log.Printf("  ⏸ 跳过自动设置止盈/止损（测试开关开启）")
+	}
 
 	return nil
 }

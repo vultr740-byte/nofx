@@ -1021,6 +1021,7 @@ func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord,
 			SystemPromptTemplate: tgTrader.SystemPromptTemplate, // 关键修复：Prompt模板配置
 			IsCrossMargin:        tgTrader.IsCrossMargin,
 			ReverseTrading:       tgTrader.ReverseTrading, // 反向交易配置
+			DisableRiskControls:  tgTrader.DisableRiskControls,
 			DefaultCoins:         tgDefaultCoins,
 			TradingCoins:         tgTradingCoins,
 		},
