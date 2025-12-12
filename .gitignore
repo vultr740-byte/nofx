@@ -64,3 +64,5 @@ DATA_ENCRYPTION_KEY=*
 SECRET_ENCRYPTION_KEY=*
 *.enc
 .vercel
+
+.mcp.json
