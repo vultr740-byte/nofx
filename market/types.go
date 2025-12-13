@@ -39,10 +39,10 @@ type LongerTermData struct {
 	// 注释掉技术指标字段，default.txt 策略只使用结构分析
 	// EMA20         float64
 	// EMA50         float64
-	ATR3          float64
 	ATR14         float64
 	CurrentVolume float64
 	AverageVolume float64
+	ClosePrices   []float64
 	// MACDValues    []float64
 	// RSI14Values   []float64
 }

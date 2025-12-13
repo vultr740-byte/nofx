@@ -254,12 +254,16 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 		// RSI14Values: make([]float64, 0, 10),
 	}
 
+	// 收集4h收盘价序列
+	for _, k := range klines {
+		data.ClosePrices = append(data.ClosePrices, k.Close)
+	}
+
 	// 注释掉EMA计算，default.txt 策略只使用结构分析
 	// data.EMA20 = calculateEMA(klines, 20)
 	// data.EMA50 = calculateEMA(klines, 50)
 
 	// 计算ATR
-	data.ATR3 = calculateATR(klines, 3)
 	data.ATR14 = calculateATR(klines, 14)
 
 	// 计算成交量
@@ -407,10 +411,10 @@ func Format(data *Data) string {
 	sb.WriteString(fmt.Sprintf("Funding Rate: %.2e\n\n", data.FundingRate))
 
 	if data.IntradaySeries != nil {
-		sb.WriteString("Intraday series (15‑minute intervals, oldest → latest):\n\n")
+		sb.WriteString("Close prices (15m, oldest → latest):\n\n")
 
 		if len(data.IntradaySeries.MidPrices) > 0 {
-			sb.WriteString(fmt.Sprintf("Mid prices: %s\n\n", formatFloatSlice(data.IntradaySeries.MidPrices)))
+			sb.WriteString(fmt.Sprintf("%s\n\n", formatFloatSlice(data.IntradaySeries.MidPrices)))
 		}
 
 		// 注释掉技术指标显示，default.txt 策略只使用结构分析
@@ -439,11 +443,16 @@ func Format(data *Data) string {
 		// 	data.LongerTermContext.EMA20, data.LongerTermContext.EMA50))
 
 		// 保留ATR和成交量数据，这些对结构分析和风险管理很重要
-		sb.WriteString(fmt.Sprintf("3‑Period ATR: %.3f vs. 14‑Period ATR: %.3f\n\n",
-			data.LongerTermContext.ATR3, data.LongerTermContext.ATR14))
+		sb.WriteString(fmt.Sprintf("14‑Period ATR: %.3f\n\n",
+			data.LongerTermContext.ATR14))
 
 		sb.WriteString(fmt.Sprintf("Current Volume: %.3f vs. Average Volume: %.3f\n\n",
 			data.LongerTermContext.CurrentVolume, data.LongerTermContext.AverageVolume))
+
+		if len(data.LongerTermContext.ClosePrices) > 0 {
+			sb.WriteString("Close prices (4h, oldest → latest):\n\n")
+			sb.WriteString(fmt.Sprintf("%s\n\n", formatFloatSlice(data.LongerTermContext.ClosePrices)))
+		}
 
 		// 注释掉技术指标显示，default.txt 策略只使用结构分析
 		// if len(data.LongerTermContext.MACDValues) > 0 {
