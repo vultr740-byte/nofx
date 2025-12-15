@@ -32,10 +32,7 @@ func Get(symbol string) (*Data, error) {
 
 	// 计算当前价格 (基于15分钟最新数据)
 	currentPrice := klines15m[len(klines15m)-1].Close
-	// 注释掉技术指标计算，default.txt 策略只使用结构分析
-	// currentEMA20 := calculateEMA(klines15m, 20)
-	// currentMACD := calculateMACD(klines15m)
-	// currentRSI7 := calculateRSI(klines15m, 7)
+	currentRSI7 := calculateRSI(klines15m, 7)
 
 	// 计算价格变化百分比
 	// 1小时价格变化 = 4个15分钟K线前的价格 (4 * 15 = 60分钟)
@@ -73,14 +70,11 @@ func Get(symbol string) (*Data, error) {
 	longerTermData := calculateLongerTermData(klines4h)
 
 	return &Data{
-		Symbol:        symbol,
-		CurrentPrice:  currentPrice,
-		PriceChange1h: priceChange1h,
-		PriceChange4h: priceChange4h,
-		// 注释掉技术指标字段，default.txt 策略只使用结构分析
-		// CurrentEMA20:      currentEMA20,
-		// CurrentMACD:       currentMACD,
-		// CurrentRSI7:       currentRSI7,
+		Symbol:            symbol,
+		CurrentPrice:      currentPrice,
+		PriceChange1h:     priceChange1h,
+		PriceChange4h:     priceChange4h,
+		CurrentRSI7:       currentRSI7,
 		OpenInterest:      oiData,
 		FundingRate:       fundingRate,
 		IntradaySeries:    intradayData,
@@ -266,6 +260,9 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 	// 计算ATR
 	data.ATR14 = calculateATR(klines, 14)
 
+	// 计算RSI14（4h）
+	data.RSI14 = calculateRSI(klines, 14)
+
 	// 计算成交量
 	if len(klines) > 0 {
 		data.CurrentVolume = klines[len(klines)-1].Volume
@@ -417,6 +414,8 @@ func Format(data *Data) string {
 			sb.WriteString(fmt.Sprintf("%s\n\n", formatFloatSlice(data.IntradaySeries.MidPrices)))
 		}
 
+		sb.WriteString(fmt.Sprintf("RSI(7, 15m): %.2f\n\n", data.CurrentRSI7))
+
 		// 注释掉技术指标显示，default.txt 策略只使用结构分析
 		// if len(data.IntradaySeries.EMA20Values) > 0 {
 		// 	sb.WriteString(fmt.Sprintf("EMA indicators (20‑period): %s\n\n", formatFloatSlice(data.IntradaySeries.EMA20Values)))
@@ -448,6 +447,8 @@ func Format(data *Data) string {
 
 		sb.WriteString(fmt.Sprintf("Current Volume: %.3f vs. Average Volume: %.3f\n\n",
 			data.LongerTermContext.CurrentVolume, data.LongerTermContext.AverageVolume))
+
+		sb.WriteString(fmt.Sprintf("RSI(14, 4h): %.2f\n\n", data.LongerTermContext.RSI14))
 
 		if len(data.LongerTermContext.ClosePrices) > 0 {
 			sb.WriteString("Close prices (4h, oldest → latest):\n\n")
