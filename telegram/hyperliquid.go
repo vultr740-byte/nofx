@@ -95,6 +95,21 @@ func (s *HyperliquidService) GetOrderHistory(agentKey, walletAddr string, testne
 	return formatOrderHistory(items, lookback, loc), nil
 }
 
+// CountFills 获取指定时间窗口内的成交条数
+func (s *HyperliquidService) CountFills(agentKey, walletAddr string, testnet bool, lookback time.Duration) (int, error) {
+	traderObj, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
+	if err != nil {
+		return 0, fmt.Errorf("创建 Hyperliquid 交易器失败: %w", err)
+	}
+
+	start := time.Now().Add(-lookback)
+	fills, err := traderObj.GetUserFillsByTime(start, nil)
+	if err != nil {
+		return 0, fmt.Errorf("获取历史成交失败: %w", err)
+	}
+	return len(fills), nil
+}
+
 // GetStockCategories 获取股票资产分类
 func (s *HyperliquidService) GetStockCategories(agentKey, walletAddr string, testnet bool) ([]StockCategory, error) {
 	trader, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)

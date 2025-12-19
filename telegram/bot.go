@@ -515,11 +515,54 @@ func (tbm *TelegramBotManager) handleOrders(update tgbotapi.Update) {
 		return
 	}
 
+	// 需要交易信息才能估算可用笔数
+	agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, "❌ 获取账户信息失败，请稍后重试")
+		return
+	}
+
+	// 预设查询配置
+	type orderOption struct {
+		labelHours int
+		lookback   time.Duration
+		limit      int
+		count      int
+	}
+	options := []orderOption{
+		{labelHours: 24, lookback: 24 * time.Hour, limit: 20},
+		{labelHours: 168, lookback: 168 * time.Hour, limit: 100},
+	}
+
+	for i := range options {
+		cnt, err := tbm.hlService.CountFills(agentKey, walletAddr, tbm.testnet, options[i].lookback)
+		if err != nil {
+			log.Printf("统计成交数失败 (uid=%d, hours=%d): %v", telegramID, options[i].labelHours, err)
+			options[i].count = -1 // 标记失败，使用默认文案
+			continue
+		}
+		options[i].count = cnt
+	}
+
+	buildLabel := func(opt orderOption) string {
+		if opt.count < 0 {
+			return fmt.Sprintf("最近%d条 (近%d天)", opt.limit, opt.labelHours/24)
+		}
+		display := opt.count
+		if display > opt.limit {
+			display = opt.limit
+		}
+		if opt.labelHours%24 == 0 {
+			return fmt.Sprintf("最近%d条 (近%d天, 共%d)", display, opt.labelHours/24, opt.count)
+		}
+		return fmt.Sprintf("最近%d条 (近%d小时, 共%d)", display, opt.labelHours, opt.count)
+	}
+
 	msg := "📜 请选择历史成交查询范围"
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("最近20条 (近1天)", fmt.Sprintf("orders_recent|%d|20|24", telegramID)),
-			tgbotapi.NewInlineKeyboardButtonData("最近100条 (近7天)", fmt.Sprintf("orders_recent|%d|100|168", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData(buildLabel(options[0]), fmt.Sprintf("orders_recent|%d|%d|%d", telegramID, options[0].limit, options[0].labelHours)),
+			tgbotapi.NewInlineKeyboardButtonData(buildLabel(options[1]), fmt.Sprintf("orders_recent|%d|%d|%d", telegramID, options[1].limit, options[1].labelHours)),
 		),
 	)
 	tbm.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
