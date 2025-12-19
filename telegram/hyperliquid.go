@@ -57,7 +57,7 @@ type OrderHistoryItem struct {
 }
 
 // GetOrderHistory 获取历史成交并格式化
-func (s *HyperliquidService) GetOrderHistory(agentKey, walletAddr string, testnet bool, lookback time.Duration, limit int) (string, error) {
+func (s *HyperliquidService) GetOrderHistory(agentKey, walletAddr string, testnet bool, lookback time.Duration, limit int, loc *time.Location) (string, error) {
 	traderObj, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
 	if err != nil {
 		return "", fmt.Errorf("创建 Hyperliquid 交易器失败: %w", err)
@@ -92,7 +92,7 @@ func (s *HyperliquidService) GetOrderHistory(agentKey, walletAddr string, testne
 		items = items[:limit]
 	}
 
-	return formatOrderHistory(items, lookback), nil
+	return formatOrderHistory(items, lookback, loc), nil
 }
 
 // GetStockCategories 获取股票资产分类
@@ -545,7 +545,10 @@ func categorizeStocks(assets []PerpMetaAsset) []StockCategory {
 }
 
 // formatOrderHistory 格式化历史成交
-func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration) string {
+func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration, loc *time.Location) string {
+	if loc == nil {
+		loc = time.UTC
+	}
 	if len(items) == 0 {
 		return fmt.Sprintf("📜 <b>历史成交</b>\n%s内无成交记录。", formatLookback(lookback))
 	}
@@ -590,11 +593,12 @@ func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration) string
 			pnlEmoji = "🔴"
 		}
 
+		ts := it.Timestamp.In(loc)
 		lines := []string{
 			fmt.Sprintf("#%d %s %s", i+1, sideEmoji, it.Symbol),
 			fmt.Sprintf("• 数量/价格: %.4f × %.4f", it.Size, it.Price),
 			fmt.Sprintf("• 方向: %s", it.Dir),
-			fmt.Sprintf("• 时间: %s", it.Timestamp.Format("2006-01-02 15:04:05")),
+			fmt.Sprintf("• 时间: %s", ts.Format("2006-01-02 15:04:05")),
 			fmt.Sprintf("• 入场: %.4f", it.Price),
 		}
 		if it.StopPrice != nil {

@@ -2593,10 +2593,25 @@ func (tbm *TelegramBotManager) handleOrdersRecentCallback(callback *tgbotapi.Cal
 		return
 	}
 
+	// 推断用户时区（优先使用 DB 存储的 language_code，再尝试 Telegram 回调里的语言，最终回退 UTC）
+	lang := ""
+	if userAny, err := tbm.db.GetTGUserByTelegramID(telegramID); err == nil {
+		if userMap, ok := userAny.(map[string]interface{}); ok {
+			if lc, ok := userMap["language_code"].(string); ok {
+				lang = lc
+			}
+		}
+	}
+	// 如果数据库没有记录，再尝试使用回调里的语言码
+	if lang == "" && callback != nil && callback.From != nil {
+		lang = callback.From.LanguageCode
+	}
+	loc := inferLocationFromLanguage(lang)
+
 	tbm.answerCallbackQuery(callback.ID, "⏳ 正在查询...")
 
 	go func() {
-		text, err := tbm.hlService.GetOrderHistory(agentKey, walletAddr, tbm.testnet, lookback, limit)
+		text, err := tbm.hlService.GetOrderHistory(agentKey, walletAddr, tbm.testnet, lookback, limit, loc)
 		if err != nil {
 			tbm.sendMessage(chatID, fmt.Sprintf("❌ 查询失败: %s", esc(err)))
 			return
