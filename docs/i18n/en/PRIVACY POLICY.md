@@ -1,6 +1,6 @@
 NOFX Privacy Policy
 
-Last Updated: 2025.11.07
+Last Updated: 2025.12.19
 
 I. Introduction and Scope
 
@@ -22,22 +22,11 @@ II. Information We Collect (on the Website) and How We Use It
 A. Information We Collect (Website)
 
 Based on your user queries, we have limited our data collection practices to the bare minimum. We do not require you to create an account, fill out forms, or provide any personally identifiable information (PII) when visiting the "Website."
-The only category of data we collect is "automatically collected data," which is implemented through Google Analytics (GA4).
+We do **not** use any third-party analytics, pixels, or tracking scripts (including Google Analytics or Google Tag Manager), and we do not set any tracking cookies on the "Website."
 
-B. Google Analytics (GA4) Disclosure
+B. Cookies and Tracking Mechanisms
 
-Our "Website" uses the Google Analytics 4 (GA4) service. This is the only way we collect information. According to Google's Terms of Service, we must disclose this use to you.
-Types of Data Collected: GA4 automatically collects certain information about your visit, which is generally non-personally identifiable. This may include:
-Number of users
-Session statistics
-Approximate geographic location (non-precise)
-Browser and device information
-Data Usage: We use this aggregated data solely to better understand how users access and use our services, thereby improving the performance and user experience of our "Website."
-Your Choices and Opt-Out: We respect your privacy choices. If you do not want GA4 to collect your visit data, you can opt out by installing the Google Analytics Opt-out Browser Add-on. You can obtain this add-on by visiting this link: [Google Analytics Opt-out Add-on (by Google)](https://chromewebstore.google.com/detail/google-analytics-opt-out/fllaojicojecljbmefodhfapmkghcbnh?hl=en).
-
-C. Cookies and Tracking Mechanisms
-
-GA4's operation relies on first-party cookies. Specifically, it may use cookies such as _ga and _ga_<container-id> to distinguish unique users and sessions. We explicitly state that we do not use these cookies for advertising or user profiling purposes.
+Because we have removed analytics, we do not deploy tracking cookies or similar technologies. Standard browser-request logs produced by our hosting provider may exist for security and reliability purposes (e.g., detecting abuse), but we do not aggregate, profile, or monetize this information.
 
 III. Information We Do NOT Collect (Software)
 
@@ -67,22 +56,22 @@ IV. Data Sharing, Retention, and Security (Website Data)
 
 A. Third-Party Sharing
 
-Except as disclosed in this Policy (i.e., sharing GA4-collected analytics data with our service provider Google), we do not share, sell, rent, or trade any of your personal information with any third parties.
+We do not share, sell, rent, or trade any personal information with third parties, and we do not send data to analytics or advertising vendors.
 
 B. Data Retention
 
-We retain the aggregated analytics data collected by GA4 only for the period reasonably necessary to achieve the purposes described in this Policy (i.e., website analytics and improvement).
+Because we do not collect analytics or tracking data, there is nothing to retain for these purposes.
 
 C. Data Security
 
-We employ commercially reasonable security measures (e.g., using HTTPS) to protect the transmission of the "Website" and to safeguard the limited information we collect (through GA4).
+We employ commercially reasonable security measures (e.g., using HTTPS) to protect the transmission of the "Website."
 
 V. Your Data Protection Rights (GDPR & CCPA)
 
 
 A. Scope of Rights
 
-Under applicable data protection laws (such as GDPR or CCPA), you may have certain rights. We clarify here that these rights apply only to the limited GA4 analytics data we hold as the data controller, collected through the "Website." We cannot fulfill any requests regarding "Software" data, as we do not hold such data.
+Under applicable data protection laws (such as GDPR or CCPA), you may have certain rights. Because we do not collect personal data through the "Website," these rights are typically not triggered for web visits. They remain fully applicable to any data you might voluntarily provide if you contact us directly (e.g., by email).
 
 B. List of Rights
 
