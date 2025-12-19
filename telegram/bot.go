@@ -553,9 +553,9 @@ func (tbm *TelegramBotManager) handleOrders(update tgbotapi.Update) {
 			display = opt.limit
 		}
 		if opt.labelHours%24 == 0 {
-			return fmt.Sprintf("最近%d条 (近%d天, 共%d)", display, opt.labelHours/24, opt.count)
+			return fmt.Sprintf("最近%d条 (近%d天)", display, opt.labelHours/24)
 		}
-		return fmt.Sprintf("最近%d条 (近%d小时, 共%d)", display, opt.labelHours, opt.count)
+		return fmt.Sprintf("最近%d条 (近%d小时)", display, opt.labelHours)
 	}
 
 	msg := "📜 请选择历史成交查询范围"
