@@ -1,6 +1,6 @@
 module nofx
 
-go 1.25.0
+go 1.25.3
 
 require (
 	github.com/adshao/go-binance/v2 v2.8.7
@@ -14,7 +14,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/pquerna/otp v1.4.0
 	github.com/sirupsen/logrus v1.9.3
-	github.com/sonirico/go-hyperliquid v0.24.0
+	github.com/sonirico/go-hyperliquid v0.26.0
 	golang.org/x/crypto v0.42.0
 	modernc.org/sqlite v1.40.0
 )
@@ -72,14 +72,14 @@ require (
 	github.com/rs/zerolog v1.34.0 // indirect
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
-	github.com/sonirico/vago v0.9.0 // indirect
+	github.com/sonirico/vago v0.10.0 // indirect
 	github.com/sonirico/vago/lol v0.0.0-20250901170347-2d1d82c510bd // indirect
 	github.com/supranational/blst v0.3.16 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.0 // indirect
-	github.com/valyala/fastjson v1.6.4 // indirect
+	github.com/valyala/fastjson v1.6.7 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	go.elastic.co/apm/module/apmzerolog/v2 v2.7.1 // indirect
