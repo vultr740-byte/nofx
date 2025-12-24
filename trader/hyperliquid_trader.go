@@ -2745,38 +2745,28 @@ func (t *HyperliquidTrader) ensureAssetMap() error {
 			assets = append(assets, meta.Universe...)
 		}
 
-		// 找到 HIP-3 起始位置
-		firstHip3 := -1
-		for i, a := range assets {
-			if strings.Contains(a.Name, ":") {
-				firstHip3 = i
-				break
-			}
-		}
-		if firstHip3 == -1 {
-			return fmt.Errorf("allPerpMetas 未返回任何 HIP-3 资产")
-		}
-
-		const hip3Base = 110000 // 官方前端使用的 HIP-3 资产基准ID
-
-		for idx, asset := range assets {
-			name := normalizeHip3Symbol(asset.Name)
-			if strings.Contains(name, ":") {
-				assetId := hip3Base + (idx - firstHip3)
+		hipCount := 0
+		for dexIdx, meta := range metas {
+			base := 100000 + dexIdx*10000 // 官方规则：100000 + dexIndex*10000
+			for idx, asset := range meta.Universe {
+				name := normalizeHip3Symbol(asset.Name)
+				if !strings.Contains(name, ":") {
+					continue // 保留 SDK 原生映射，避免覆盖主 perp
+				}
+				assetId := base + idx
 				t.assetMap[name] = assetId
 				if _, ok := t.hip3Meta[name]; !ok {
 					t.hip3Meta[name] = asset
 				}
-			} else {
-				// 常规 perp 按索引映射
-				t.assetMap[name] = idx
-				if _, ok := t.hip3Meta[name]; !ok {
-					t.hip3Meta[name] = asset
-				}
+				hipCount++
 			}
 		}
 
-		log.Printf("✅ 构建资产映射完成: 总计 %d 个资产，HIP-3 起始索引 %d", len(t.assetMap), firstHip3)
+		if hipCount == 0 {
+			return fmt.Errorf("allPerpMetas 未返回任何 HIP-3 资产")
+		}
+
+		log.Printf("✅ 构建资产映射完成: HIP-3 资产 %d 个，使用公式 100000 + dexIndex*10000 + index", hipCount)
 	}
 
 	// 已构建过，确保映射同步到 SDK
