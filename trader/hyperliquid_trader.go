@@ -290,6 +290,10 @@ type HyperliquidTrader struct {
 	orderMu          sync.Mutex
 	stopLossOrders   map[string]orderRef // symbol -> 最近一次止损挂单
 	takeProfitOrders map[string]orderRef // symbol -> 最近一次止盈挂单
+
+	agentPrivateKey *ecdsa.PrivateKey // Agent 签名私钥，用于自定义 action
+	apiBaseURL      string            // Exchange 基础地址
+	abstractionOnce sync.Once         // 只尝试一次开启 DEX 抽象
 }
 
 const hyenaBuilderAddress = "0x1924b8561eeF20e70Ede628A296175D358BE80e5"
@@ -492,6 +496,8 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 		isCrossMargin:    true, // 默认使用全仓模式
 		stopLossOrders:   make(map[string]orderRef),
 		takeProfitOrders: make(map[string]orderRef),
+		agentPrivateKey:  privateKey,
+		apiBaseURL:       apiURL,
 	}
 
 	// 构建 asset 映射并同步到 SDK，防止 HIP-3 股票被映射到资产 0 (BTC)
@@ -948,6 +954,11 @@ func (t *HyperliquidTrader) SetLeverage(symbol string, leverage int) error {
 		return err
 	}
 
+	// 自动尝试开启 DEX 抽象（仅对 HIP-3 资产），失败不阻塞下单
+	if t.isStockAsset(coin) {
+		t.enableDexAbstractionOnce()
+	}
+
 	isCross := t.isCrossMargin
 	if t.isStockAsset(coin) && t.requiresIsolated(coin) {
 		isCross = false
@@ -963,6 +974,67 @@ func (t *HyperliquidTrader) SetLeverage(symbol string, leverage int) error {
 
 	log.Printf("  ✓ %s 杠杆已切换为 %dx (isCross=%t)", symbol, leverage, isCross)
 	return nil
+}
+
+// enableDexAbstractionOnce 尝试开启 HIP-3 DEX 抽象模式（agent 签名），失败不阻塞
+func (t *HyperliquidTrader) enableDexAbstractionOnce() {
+	t.abstractionOnce.Do(func() {
+		if t.agentPrivateKey == nil || t.apiBaseURL == "" {
+			log.Printf("⚠️ 跳过开启 DEX 抽象：缺少 agent 私钥或 API 地址")
+			return
+		}
+
+		action := struct {
+			Type string `json:"type" msgpack:"type"`
+		}{
+			Type: "agentEnableDexAbstraction",
+		}
+
+		var expiresAfterMs int64 = int64(10 * time.Minute / time.Millisecond)
+		nonce := time.Now().UnixMilli()
+		sig, err := hyperliquid.SignL1Action(
+			t.agentPrivateKey,
+			action,
+			"", // vault address 为空
+			nonce,
+			&expiresAfterMs, // expiresAfter
+			!t.testnet,      // isMainnet
+		)
+		if err != nil {
+			log.Printf("⚠️ 开启 DEX 抽象签名失败: %v", err)
+			return
+		}
+
+		body := map[string]interface{}{
+			"action":    action,
+			"signature": sig,
+			"nonce":     nonce,
+		}
+		payload, _ := json.Marshal(body)
+
+		req, err := http.NewRequest("POST", t.apiBaseURL+"/exchange", bytes.NewBuffer(payload))
+		if err != nil {
+			log.Printf("⚠️ 创建 DEX 抽象请求失败: %v", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("⚠️ DEX 抽象请求失败: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+
+		respBody, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			log.Printf("⚠️ DEX 抽象开启失败，状态码=%d，响应=%s", resp.StatusCode, string(respBody))
+			return
+		}
+
+		log.Printf("✅ 已尝试开启 DEX 抽象模式，响应: %s", strings.TrimSpace(string(respBody)))
+	})
 }
 
 // OpenLong 开多仓
