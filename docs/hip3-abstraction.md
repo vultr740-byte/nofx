@@ -12,7 +12,9 @@
 
 ## 自动开启 DEX 抽象模式
 - 背景：HIP-3 保证金与主 perp 分账，未开启抽象会报 “Insufficient margin”。
-- 机制：在 `SetLeverage` 检测到 HIP-3 时调用 `enableDexAbstractionOnce()`，用 agent 签名 action `agentEnableDexAbstraction` POST `/exchange`；失败仅日志，不阻塞下单。
+- 触发：仅当 `SetLeverage` 检测到 HIP-3（符号含冒号）时触发，且使用 `sync.Once` 只尝试一次。
+- 机制：构造 action `agentEnableDexAbstraction`，使用 agent 私钥（`hyperliquid_private_key`）签名 L1，POST 到 `apiBaseURL/exchange`；失败仅日志，不阻塞下单。
+- 依赖：需要 agent 私钥和 API 基地址；用户若显式 opt-out，动作可能被拒绝（目前未自动回查状态，只记录响应）。
 - 位置：`SetLeverage` & `enableDexAbstractionOnce` (`trader/hyperliquid_trader.go`).
 
 ## SDK 升级
