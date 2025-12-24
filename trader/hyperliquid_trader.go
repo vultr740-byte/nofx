@@ -1014,13 +1014,13 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 
 	// 获取API精度信息
 	szDecimals := t.getSzDecimals(coin)
-	maxPriceDecimals, hasPxDecimals := t.getPxDecimals(coin)
+	pxDecimals, hasPxDecimals := t.getPxDecimals(coin)
 
 	// ⚠️ 关键：根据币种精度要求，四舍五入数量
 	roundedQuantity := t.roundToSzDecimals(coin, quantity)
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, szDecimals)
 
-	// ⚠️ 关键：价格精度处理（5位有效数字 + maxDecimals = 6 - szDecimals）
+	// ⚠️ 关键：价格精度处理（优先使用pxDecimals，按要求截断到步长）
 	var aggressivePrice float64
 	var priceMultiplier float64
 
@@ -1064,8 +1064,8 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 	log.Printf("")
 	log.Printf("🔍 [完整订单参数] 精度信息:")
 	log.Printf("  szDecimals: %d", szDecimals)
-	log.Printf("  maxPriceDecimals: %d", maxPriceDecimals)
-	log.Printf("  hasPxDecimals(meta): %t", hasPxDecimals)
+	log.Printf("  pxDecimals: %d", pxDecimals)
+	log.Printf("  hasPxDecimals: %t", hasPxDecimals)
 	log.Printf("")
 	log.Printf("🔍 [完整订单参数] 资产信息:")
 	log.Printf("  isStockAsset: %t", t.isStockAsset(coin))
@@ -1197,13 +1197,13 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 
 	// 获取API精度信息
 	szDecimals := t.getSzDecimals(coin)
-	maxPriceDecimals, hasPxDecimals := t.getPxDecimals(coin)
+	pxDecimals, hasPxDecimals := t.getPxDecimals(coin)
 
 	// ⚠️ 关键：根据币种精度要求，四舍五入数量
 	roundedQuantity := t.roundToSzDecimals(coin, quantity)
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, szDecimals)
 
-	// ⚠️ 关键：价格精度处理（5位有效数字 + maxDecimals = 6 - szDecimals）
+	// ⚠️ 关键：价格精度处理
 	var aggressivePrice float64
 	var priceMultiplier float64
 
@@ -1247,8 +1247,8 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 	log.Printf("")
 	log.Printf("🔍 [完整订单参数] 精度信息:")
 	log.Printf("  szDecimals: %d", szDecimals)
-	log.Printf("  maxPriceDecimals: %d", maxPriceDecimals)
-	log.Printf("  hasPxDecimals(meta): %t", hasPxDecimals)
+	log.Printf("  pxDecimals: %d", pxDecimals)
+	log.Printf("  hasPxDecimals: %t", hasPxDecimals)
 	log.Printf("")
 	log.Printf("🔍 [完整订单参数] 资产信息:")
 	log.Printf("  isStockAsset: %t", t.isStockAsset(coin))
@@ -2126,21 +2126,47 @@ func (t *HyperliquidTrader) roundToSzDecimalsCeil(coin string, quantity float64)
 
 // getPxDecimals 获取价格小数精度（若缺失则回退到5位有效数字规则）
 func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
-	// 接口不返回 pxDecimals，按官方 Tick & Lot 规则计算：maxDecimals = max(0, 6 - szDecimals)（perp）
-	maxDecimals := t.getMaxPriceDecimals(coin)
-	return maxDecimals, false
-}
+	normalizedCoin := normalizeHip3Symbol(coin)
 
-// getMaxPriceDecimals 根据 Tick & Lot 规则计算允许的最大小数位
-// NOTE: perp 基数为 6；若未来支持现货，需要将 baseDecimals 调整为 8。
-func (t *HyperliquidTrader) getMaxPriceDecimals(coin string) int {
-	const baseDecimals = 6 // perp 市场，TODO(spot): 现货改为 8
-	szDecimals := t.getSzDecimals(coin)
-	maxDecimals := baseDecimals - szDecimals
-	if maxDecimals < 0 {
-		return 0
+	// 对常规加密资产（无冒号）直接使用 Meta.Universe 提供的 PxDecimals（如果有），否则走 sigfig 逻辑
+	if !strings.Contains(normalizedCoin, ":") {
+		// Hyperliquid 主流加密资产使用 5 位有效数字校验，这里直接退回 sigfig 流程
+		return 0, false
 	}
-	return maxDecimals
+
+	// Check HIP-3 cache first - 优先使用 PxDecimals，否则使用 SzDecimals
+	if t.hip3Meta != nil {
+		if asset, ok := t.hip3Meta[normalizedCoin]; ok {
+			if asset.PxDecimals != nil {
+				log.Printf("✅ [HIP-3] %s 使用 API PxDecimals: %d 位小数", normalizedCoin, *asset.PxDecimals)
+				return *asset.PxDecimals, true
+			} else {
+				// PxDecimals 缺失：官方要求价格使用最多 5 位有效数字，此处回退到 sigfig 处理
+				log.Printf("🔄 [HIP-3] %s PxDecimals 为 nil，回退到 5 位有效数字规则", normalizedCoin)
+				return 0, false
+			}
+		}
+	}
+
+	// 如果未缓存，尝试刷新获取
+	if norm, _, err := t.fetchPerpMetaAsset(coin, true); err == nil && norm != "" {
+		if asset, ok := t.hip3Meta[norm]; ok {
+			if asset.PxDecimals != nil {
+				log.Printf("✅ [HIP-3] %s 刷新后使用 PxDecimals: %d 位小数", norm, *asset.PxDecimals)
+				return *asset.PxDecimals, true
+			} else {
+				// PxDecimals 缺失：使用 sigfig 规则
+				log.Printf("🔄 [HIP-3] %s 刷新后 PxDecimals 为 nil，回退到 5 位有效数字规则", norm)
+				return 0, false
+			}
+		}
+	} else if err != nil {
+		log.Printf("❌ [HIP-3] 获取 %s 价格精度失败: %v", coin, err)
+		return 0, false
+	}
+
+	log.Printf("❌ [HIP-3] %s 未找到任何精度信息", coin)
+	return 0, false
 }
 
 // isStockAsset 检测是否为 HIP-3 股票资产
@@ -2181,45 +2207,80 @@ func (t *HyperliquidTrader) logPriceDetails(symbol, coin string, price float64, 
 	log.Printf("🔍 [%s] 价格详情 for %s/%s:", context, symbol, coin)
 	log.Printf("   • 原始价格: %.8f", price)
 
-	log.Printf("   • maxDecimals(6-sz): %d 位小数", t.getMaxPriceDecimals(coin))
+	if pxDec, ok := t.getPxDecimals(coin); ok {
+		log.Printf("   • PxDecimals: %d 位小数", pxDec)
+	} else {
+		log.Printf("   • PxDecimals: 未找到")
+	}
 
 	sigfigPrice := t.roundPriceToSigfigs(price, false)
 	tickDecimals := t.getPriceDecimals(coin)
-	log.Printf("   • 5位有效数字舍入价格: %.8f", sigfigPrice)
-	log.Printf("   • tick: %d 位小数 (6 - szDecimals)", tickDecimals)
+	if t.isStockAsset(coin) {
+		log.Printf("   • 5位有效数字舍入价格: %.8f", sigfigPrice)
+		log.Printf("   • tick: %d 位小数 (6 - szDecimals)", tickDecimals)
+		log.Printf("   • 资产类型: HIP-3 股票 (使用5位有效数字)")
+	} else {
+		log.Printf("   • 有效数字舍入价格: %.8f", sigfigPrice)
+		log.Printf("   • tick: %d 位小数 (6 - szDecimals)", tickDecimals)
+		log.Printf("   • 资产类型: 加密货币")
+	}
 }
 
 // getPriceDecimals 根据 Hyperliquid 规则推导价格小数位 (max(0, 6 - szDecimals))
 func (t *HyperliquidTrader) getPriceDecimals(coin string) int {
-	return t.getMaxPriceDecimals(coin)
+	// 临时写死：HIP-3 股票价格使用 1 位小数（与官网下单示例一致）
+	if t.isStockAsset(coin) {
+		return 1
+	}
+
+	szDecimals := t.getSzDecimals(coin)
+	priceDecimals := 6 - szDecimals
+	if priceDecimals < 0 {
+		priceDecimals = 0
+	}
+	return priceDecimals
 }
 
-// roundPriceForCoin 根据 Tick & Lot 规则处理价格；truncate=true 时截断到步长
+// roundPriceForCoin 根据精度（pxDecimals 或5位有效数字）处理价格；truncate=true 时截断到步长
 func (t *HyperliquidTrader) roundPriceForCoin(coin string, price float64, truncate bool) float64 {
 	if price == 0 {
 		return 0
 	}
 
-	// 整数价格允许无需有效数字限制
-	if price == math.Trunc(price) {
-		return price
+	// Use specific pxDecimals when available
+	if pxDec, ok := t.getPxDecimals(coin); ok {
+		multiplier := math.Pow10(pxDec)
+		var result float64
+		if truncate {
+			result = math.Floor(price*multiplier) / multiplier
+		} else {
+			result = math.Round(price*multiplier) / multiplier
+		}
+		log.Printf("🎯 [HIP-3] 使用 pxDecimals %d: %.8f -> %.8f", pxDec, price, result)
+		return result
 	}
 
-	// 先应用 5 位有效数字
+	// 当 PxDecimals=nil 时，无论是股票还是加密货币，都使用 5 位有效数字规则
+	// Hyperliquid HIP-3 股票和加密货币在 PxDecimals 未指定时使用相同的精度规则
 	sigPrice := t.roundPriceToSigfigs(price, truncate)
 
-	// 再应用 tick: 最大小数位 = max(0, 6 - szDecimals)
-	priceDecimals := t.getMaxPriceDecimals(coin)
-	multiplier := math.Pow10(priceDecimals)
+	// 进一步按照 Hyperliquid 官方规则应用 tick：priceDecimals = max(0, 6 - szDecimals)
+	priceDecimals := t.getPriceDecimals(coin)
 	var finalPrice float64
+	multiplier := math.Pow10(priceDecimals)
 	if truncate {
 		finalPrice = math.Floor(sigPrice*multiplier) / multiplier
 	} else {
 		finalPrice = math.Round(sigPrice*multiplier) / multiplier
 	}
 
-	log.Printf("📊 [PriceFmt] 5 sigfig + tick(%d 位): %.8f -> %.8f -> %.8f",
-		priceDecimals, price, sigPrice, finalPrice)
+	if t.isStockAsset(coin) {
+		log.Printf("📊 [HIP-3] 股票价格 5 位有效数字 + tick(%d 位): %.8f -> %.8f -> %.8f",
+			priceDecimals, price, sigPrice, finalPrice)
+	} else {
+		log.Printf("📈 [HIP-3] 加密货价格 5 位有效数字 + tick(%d 位): %.8f -> %.8f -> %.8f",
+			priceDecimals, price, sigPrice, finalPrice)
+	}
 	return finalPrice
 }
 
@@ -2342,9 +2403,9 @@ func (t *HyperliquidTrader) executeOrderWithRetry(order *hyperliquid.CreateOrder
 	log.Printf("🔄 [重试参数] maxRetries: %d", maxRetries)
 	log.Printf("🔄 [重试参数] isStockAsset: %t", t.isStockAsset(order.Coin))
 	log.Printf("🔄 [重试参数] szDecimals: %d", t.getSzDecimals(order.Coin))
-	maxPxDecimals, hasPxDecimals := t.getPxDecimals(order.Coin)
-	log.Printf("🔄 [重试参数] maxPriceDecimals: %d", maxPxDecimals)
-	log.Printf("🔄 [重试参数] hasPxDecimals(meta): %t", hasPxDecimals)
+	pxDecimals, hasPxDecimals := t.getPxDecimals(order.Coin)
+	log.Printf("🔄 [重试参数] pxDecimals: %d", pxDecimals)
+	log.Printf("🔄 [重试参数] hasPxDecimals: %t", hasPxDecimals)
 	log.Printf("🔄 [重试参数] 重试开始时间: %s", time.Now().Format("2006-01-02 15:04:05.000"))
 	log.Printf("🔄 [重试参数] =======================================")
 
