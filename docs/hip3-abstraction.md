@@ -1,7 +1,7 @@
 # HIP-3 兼容改动复盘（2025-12-24）
 
 ## 资产 ID 映射
-- 规则：`assetId = 100000 + dexIndex*10000 + index_in_meta`。
+- 规则：`assetId = 100000 + (dexIndex+1)*10000 + index_in_meta`（按要求对 dexIndex 加 1 偏移）。
 - 范围：仅为带冒号的 HIP-3 资产补充映射，保留主 perp 的原生映射，避免多 DEX 展平导致错路由。
 - 位置：`ensureAssetMap()` (`trader/hyperliquid_trader.go`).
 

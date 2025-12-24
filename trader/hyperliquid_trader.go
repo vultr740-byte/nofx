@@ -2819,7 +2819,7 @@ func (t *HyperliquidTrader) ensureAssetMap() error {
 
 		hipCount := 0
 		for dexIdx, meta := range metas {
-			base := 100000 + dexIdx*10000 // 官方规则：100000 + dexIndex*10000
+			base := 100000 + (dexIdx+1)*10000 // 按需 +1 偏移：100000 + (dexIndex+1)*10000
 			for idx, asset := range meta.Universe {
 				name := normalizeHip3Symbol(asset.Name)
 				if !strings.Contains(name, ":") {
