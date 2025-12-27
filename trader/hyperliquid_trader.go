@@ -166,6 +166,83 @@ func (t *HyperliquidTrader) fetchPriceFromRecentTrades(coin string) (float64, er
 	return 0, fmt.Errorf("recentTrades 未找到价格字段")
 }
 
+// fetchHip3PriceFromAssetCtx 通过 metaAndAssetCtxs 获取 HIP-3 资产的 mark/mid/oracle 价格
+func (t *HyperliquidTrader) fetchHip3PriceFromAssetCtx(coin string) (float64, error) {
+	coin = normalizeHip3Symbol(coin)
+	payload := []byte(`{"type":"metaAndAssetCtxs"}`)
+	req, err := http.NewRequest("POST", infoAPIURL(t.testnet), bytes.NewBuffer(payload))
+	if err != nil {
+		return 0, fmt.Errorf("创建 metaAndAssetCtxs 请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "NOFX-Hyperliquid-AssetCtx")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("调用 metaAndAssetCtxs 失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("读取 metaAndAssetCtxs 响应失败: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("metaAndAssetCtxs 返回状态码 %d: %s", resp.StatusCode, string(body))
+	}
+
+	var payloadResp []struct {
+		Universe  []PerpMetaAssetLite          `json:"universe"`
+		AssetCtxs []map[string]json.RawMessage `json:"assetCtxs"`
+	}
+	if err := json.Unmarshal(body, &payloadResp); err != nil {
+		return 0, fmt.Errorf("解析 metaAndAssetCtxs 失败: %w", err)
+	}
+
+	for _, dex := range payloadResp {
+		for idx, asset := range dex.Universe {
+			if normalizeHip3Symbol(asset.Name) != coin {
+				continue
+			}
+			if idx >= len(dex.AssetCtxs) {
+				return 0, fmt.Errorf("assetCtxs 缺少 %s 的上下文", coin)
+			}
+			ctxMap := dex.AssetCtxs[idx]
+			// 优先 midPx -> markPx -> oraclePx
+			parsePrice := func(key string) (float64, bool) {
+				raw, ok := ctxMap[key]
+				if !ok || len(raw) == 0 || string(raw) == "null" {
+					return 0, false
+				}
+				var s string
+				if err := json.Unmarshal(raw, &s); err == nil {
+					if f, err := strconv.ParseFloat(s, 64); err == nil {
+						return f, true
+					}
+				}
+				var f float64
+				if err := json.Unmarshal(raw, &f); err == nil && f != 0 {
+					return f, true
+				}
+				return 0, false
+			}
+			if v, ok := parsePrice("midPx"); ok {
+				return v, nil
+			}
+			if v, ok := parsePrice("markPx"); ok {
+				return v, nil
+			}
+			if v, ok := parsePrice("oraclePx"); ok {
+				return v, nil
+			}
+			return 0, fmt.Errorf("未找到 %s 的 mid/mark/oracle 价格", coin)
+		}
+	}
+
+	return 0, fmt.Errorf("metaAndAssetCtxs 未找到交易对: %s", coin)
+}
+
 // fetchPerpMetaAsset 通过 allPerpMetas 获取资产名和精度（支持主网/测试网切换）
 // 使用轻量结构体避免依赖 SDK 内部类型
 func (t *HyperliquidTrader) fetchPerpMetaAsset(coin string, forceMainnet bool) (string, *PerpMetaAssetLite, error) {
@@ -1994,13 +2071,21 @@ func (t *HyperliquidTrader) GetMarketPrice(symbol string) (float64, error) {
 
 	// HIP-3 / 非加密资产优先用 recentTrades（AllMids 默认不包含股票/商品）
 	if t.isStockAsset(coin) {
+		// 1) metaAndAssetCtxs -> midPx/markPx/oraclePx
+		if priceFloat, err := t.fetchHip3PriceFromAssetCtx(coin); err == nil {
+			return priceFloat, nil
+		} else {
+			log.Printf("⚠️ metaAndAssetCtxs 获取价格失败: %v", err)
+		}
+
+		// 2) recentTrades 作为兜底
 		if priceFloat, err := t.fetchPriceFromRecentTrades(coin); err == nil {
 			return priceFloat, nil
 		} else {
 			log.Printf("⚠️ recentTrades 获取价格失败: %v", err)
 		}
 
-		// 再尝试 InfoAPI allMids
+		// 3) 再尝试 InfoAPI allMids
 		if priceFloat, err := t.fetchPriceFromInfoAPI(coin); err == nil {
 			log.Printf("🔄 使用 InfoAPI allMids 获取价格成功: %s = %.6f", coin, priceFloat)
 			return priceFloat, nil
