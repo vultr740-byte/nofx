@@ -2932,28 +2932,27 @@ func (t *HyperliquidTrader) ensureAssetMap() error {
 	t.hip3Meta = make(map[string]PerpMetaAssetLite)
 
 	hipCount := 0
-	runningOffset := 0 // 按 dex 顺序累加资产数，生成连续 assetId
 	for dexIdx, meta := range metas {
+		// 官方/社区通用映射：assetId = 100000 + dexIdx*10000 + idx
+		base := 100000 + dexIdx*10000
 		for idx, asset := range meta.Universe {
 			name := normalizeHip3Symbol(asset.Name)
 			if !strings.Contains(name, ":") {
 				continue // 仅处理 HIP-3 / 股票、商品等带前缀资产
 			}
-			assetId := runningOffset + idx
+			assetId := base + idx
 			t.assetMap[name] = assetId
 			t.hip3Meta[name] = asset
 			hipCount++
 		}
-		// 该 dex 资产结束后偏移量累加（保持全局连续编号）
-		runningOffset += len(meta.Universe)
-		log.Printf("🔍 dex %d 资产数=%d，累积偏移=%d", dexIdx, len(meta.Universe), runningOffset)
+		log.Printf("🔍 dex %d 资产数=%d，基准=%d", dexIdx, len(meta.Universe), base)
 	}
 
 	if hipCount == 0 {
 		return fmt.Errorf("allPerpMetas 未返回任何 HIP-3 资产")
 	}
 
-	log.Printf("✅ 构建资产映射完成: HIP-3 资产 %d 个，使用连续编号 assetId=累积偏移+索引", hipCount)
+	log.Printf("✅ 构建资产映射完成: HIP-3 资产 %d 个，公式 assetId=100000 + dexIdx*10000 + idx", hipCount)
 
 	// 同步到 SDK
 	return t.applyAssetMapToSDK()
