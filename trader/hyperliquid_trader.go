@@ -1992,6 +1992,23 @@ func (t *HyperliquidTrader) GetMarketPrice(symbol string) (float64, error) {
 		return 0, err
 	}
 
+	// HIP-3 / 非加密资产优先用 recentTrades（AllMids 默认不包含股票/商品）
+	if t.isStockAsset(coin) {
+		if priceFloat, err := t.fetchPriceFromRecentTrades(coin); err == nil {
+			return priceFloat, nil
+		} else {
+			log.Printf("⚠️ recentTrades 获取价格失败: %v", err)
+		}
+
+		// 再尝试 InfoAPI allMids
+		if priceFloat, err := t.fetchPriceFromInfoAPI(coin); err == nil {
+			log.Printf("🔄 使用 InfoAPI allMids 获取价格成功: %s = %.6f", coin, priceFloat)
+			return priceFloat, nil
+		} else {
+			log.Printf("⚠️ InfoAPI allMids 获取价格失败: %v", err)
+		}
+	}
+
 	// 获取所有市场价格
 	allMids, err := t.exchange.Info().AllMids(t.ctx)
 	if err != nil {
