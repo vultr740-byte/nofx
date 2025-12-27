@@ -2196,11 +2196,12 @@ func (t *HyperliquidTrader) roundToSzDecimalsCeil(coin string, quantity float64)
 	return math.Ceil(quantity*multiplier) / multiplier
 }
 
-// getPxDecimals 获取价格小数精度（若缺失则回退到5位有效数字规则）
+// getPxDecimals 计算价格允许的小数位（遵循官方 Tick & Lot 规则）并标记来源
+// Hyperliquid 文档: 价格最多 5 位有效数字，且小数位 <= MAX_DECIMALS - szDecimals（perp: MAX_DECIMALS=6）。
+// 官方接口未提供 pxDecimals 字段，所有资产统一按该规则推导。
 func (t *HyperliquidTrader) getPxDecimals(coin string) (int, bool) {
-	// 接口不返回 pxDecimals，按官方 Tick & Lot 规则计算：maxDecimals = max(0, 6 - szDecimals)（perp）
 	maxDecimals := t.getMaxPriceDecimals(coin)
-	return maxDecimals, false
+	return maxDecimals, false // 基于官方规则推导，无 API pxDecimals
 }
 
 // getMaxPriceDecimals 根据 Tick & Lot 规则计算允许的最大小数位
@@ -2280,8 +2281,8 @@ func (t *HyperliquidTrader) roundPriceForCoin(coin string, price float64, trunca
 	// 先应用 5 位有效数字
 	sigPrice := t.roundPriceToSigfigs(price, truncate)
 
-	// 再应用 tick: 最大小数位 = max(0, 6 - szDecimals)
-	priceDecimals := t.getMaxPriceDecimals(coin)
+	// 再应用 tick：小数位 = min(官方规则, recentTrades 推断值)
+	priceDecimals, _ := t.getPxDecimals(coin)
 	multiplier := math.Pow10(priceDecimals)
 	var finalPrice float64
 	if truncate {
