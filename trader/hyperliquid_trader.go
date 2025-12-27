@@ -2793,68 +2793,65 @@ func (t *HyperliquidTrader) ensureAssetMap() error {
 		return fmt.Errorf("exchange 未初始化")
 	}
 
-	if len(t.assetMap) == 0 {
-		// 使用 allPerpMetas 获取全量资产列表（包含 HIP-3 股票），并按官方规则推导 assetId
-		payload := []byte(`{"type":"allPerpMetas"}`)
-		req, err := http.NewRequest("POST", infoAPIURL(t.testnet), bytes.NewBuffer(payload))
-		if err != nil {
-			return fmt.Errorf("创建 InfoAPI 请求失败: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", "NOFX-Hyperliquid-AssetMap")
+	// 始终重建映射，避免进程长时间运行后使用了旧公式
+	t.assetMap = make(map[string]int)
 
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
-		if err != nil {
-			return fmt.Errorf("调用 InfoAPI 失败: %w", err)
-		}
-		defer resp.Body.Close()
+	// 使用 allPerpMetas 获取全量资产列表（包含 HIP-3 股票），并按官方规则推导 assetId
+	payload := []byte(`{"type":"allPerpMetas"}`)
+	req, err := http.NewRequest("POST", infoAPIURL(t.testnet), bytes.NewBuffer(payload))
+	if err != nil {
+		return fmt.Errorf("创建 InfoAPI 请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "NOFX-Hyperliquid-AssetMap")
 
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("读取 InfoAPI 响应失败: %w", err)
-		}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("调用 InfoAPI 失败: %w", err)
+	}
+	defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("InfoAPI 返回错误状态码 %d: %s", resp.StatusCode, string(body))
-		}
-
-		var metas []PerpMetaLite
-		if err := json.Unmarshal(body, &metas); err != nil {
-			return fmt.Errorf("解析 InfoAPI 响应失败: %w", err)
-		}
-
-		// 展平所有资产
-		var assets []PerpMetaAssetLite
-		for _, meta := range metas {
-			assets = append(assets, meta.Universe...)
-		}
-
-		hipCount := 0
-		for dexIdx, meta := range metas {
-			base := 100000 + (dexIdx+1)*10000 // 按需 +1 偏移：100000 + (dexIndex+1)*10000
-			for idx, asset := range meta.Universe {
-				name := normalizeHip3Symbol(asset.Name)
-				if !strings.Contains(name, ":") {
-					continue // 保留 SDK 原生映射，避免覆盖主 perp
-				}
-				assetId := base + idx
-				t.assetMap[name] = assetId
-				if _, ok := t.hip3Meta[name]; !ok {
-					t.hip3Meta[name] = asset
-				}
-				hipCount++
-			}
-		}
-
-		if hipCount == 0 {
-			return fmt.Errorf("allPerpMetas 未返回任何 HIP-3 资产")
-		}
-
-		log.Printf("✅ 构建资产映射完成: HIP-3 资产 %d 个，使用公式 100000 + dexIndex*10000 + index", hipCount)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("读取 InfoAPI 响应失败: %w", err)
 	}
 
-	// 已构建过，确保映射同步到 SDK
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("InfoAPI 返回错误状态码 %d: %s", resp.StatusCode, string(body))
+	}
+
+	var metas []PerpMetaLite
+	if err := json.Unmarshal(body, &metas); err != nil {
+		return fmt.Errorf("解析 InfoAPI 响应失败: %w", err)
+	}
+
+	// 重置 HIP-3 meta 缓存（仅针对带冒号资产）
+	t.hip3Meta = make(map[string]PerpMetaAssetLite)
+
+	hipCount := 0
+	for dexIdx, meta := range metas {
+		// 官方公式：assetId = 100000 + perpDexIndex*10000 + index_in_meta
+		base := 100000 + dexIdx*10000
+		for idx, asset := range meta.Universe {
+			name := normalizeHip3Symbol(asset.Name)
+			if !strings.Contains(name, ":") {
+				continue // 保留 SDK 原生映射，避免覆盖主 perp
+			}
+			assetId := base + idx
+			t.assetMap[name] = assetId
+			t.hip3Meta[name] = asset
+			hipCount++
+		}
+	}
+
+	if hipCount == 0 {
+		return fmt.Errorf("allPerpMetas 未返回任何 HIP-3 资产")
+	}
+
+	log.Printf("✅ 构建资产映射完成: HIP-3 资产 %d 个，使用公式 assetId=100000 + dexIndex*10000 + index", hipCount)
+
+	// 同步到 SDK
 	return t.applyAssetMapToSDK()
 }
 
