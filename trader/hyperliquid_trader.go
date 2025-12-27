@@ -714,6 +714,9 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 		openOrders = nil
 	}
 
+	// 记录已被识别为 TP/SL 的订单，避免 fallback 再次把同一触发单误判为另一种类型
+	classifiedOrderKinds := make(map[int64]string)
+
 	var result []map[string]interface{}
 
 	// 遍历所有持仓
@@ -859,6 +862,9 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 					}
 				}
 			}
+
+			// 记录该订单已被明确分类，避免 fallback 重复使用
+			classifiedOrderKinds[ord.Oid] = orderKind
 		}
 		if stopLossPx > 0 {
 			posMap["stopLoss"] = stopLossPx
@@ -881,6 +887,12 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 				if !strings.EqualFold(ord.Coin, position.Coin) {
 					continue
 				}
+
+				// 避免把已经识别为 TP/SL 的触发单再次用来兜底
+				if _, exists := classifiedOrderKinds[ord.Oid]; exists {
+					continue
+				}
+
 				side := strings.ToUpper(ord.Side)
 
 				// 判断是否为减少仓位方向的单子（无 reduceOnly 字段时的近似判断）
