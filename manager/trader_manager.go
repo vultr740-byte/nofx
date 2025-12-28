@@ -1032,6 +1032,17 @@ func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord,
 		return fmt.Errorf("创建TG交易员失败: %w", err)
 	}
 
+	// 将数据库中的自定义 Prompt 注入运行实例，确保重启/重新加载后仍然生效
+	if tgTrader.CustomPrompt != "" {
+		trader.SetCustomPrompt(tgTrader.CustomPrompt)
+		trader.SetOverrideBasePrompt(tgTrader.OverrideBasePrompt)
+		if tgTrader.OverrideBasePrompt {
+			log.Printf("✓ TG交易员 %s 加载自定义 Prompt（覆盖基础模板）", tgTrader.Name)
+		} else {
+			log.Printf("✓ TG交易员 %s 加载自定义 Prompt（附加在基础模板后）", tgTrader.Name)
+		}
+	}
+
 	// 添加到内存中
 	tm.traders[tgTrader.ID] = trader
 
