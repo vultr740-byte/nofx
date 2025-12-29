@@ -868,16 +868,6 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 
 // fetchUserStateWithDex 调用 clearinghouseState，支持 dex 参数以获取不同 perp 市场（含 HIP-3）
 func (t *HyperliquidTrader) fetchUserStateWithDex(dex string) (*hyperliquid.UserState, error) {
-	// 优先使用 WS 缓存，freshWithin=5s
-	if state, ok := getAccountFeed().getUserState(dex, 5*time.Second); ok {
-		// 如果 WS 返回了空持仓，直接回退 HTTP 以获取完整明细（避免 WS 端裁剪导致漏单）
-		if len(state.AssetPositions) == 0 {
-			log.Printf("⚠️ WS 缓存 assetPositions 为空，改用 HTTP 获取持仓 (dex=%s)", dex)
-		} else {
-			return state, nil
-		}
-	}
-
 	payload := map[string]interface{}{
 		"type": "clearinghouseState",
 		"user": t.walletAddr,
