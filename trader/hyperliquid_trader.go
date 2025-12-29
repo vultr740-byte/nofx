@@ -23,6 +23,34 @@ import (
 	"github.com/sonirico/go-hyperliquid"
 )
 
+// 全局 Meta 缓存，避免并发初始化时重复拉取导致 429
+var (
+	cachedMeta  *hyperliquid.Meta
+	metaOnce    sync.Once
+	metaInitErr error
+)
+
+// 获取 Meta（带重试 + 全局缓存）
+func getMetaCached(ctx context.Context, ex *hyperliquid.Exchange) (*hyperliquid.Meta, error) {
+	metaOnce.Do(func() {
+		var lastErr error
+		backoff := 500 * time.Millisecond
+		for i := 0; i < 5; i++ {
+			meta, err := ex.Info().Meta(ctx)
+			if err == nil && meta != nil {
+				cachedMeta = meta
+				metaInitErr = nil
+				return
+			}
+			lastErr = err
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+		metaInitErr = lastErr
+	})
+	return cachedMeta, metaInitErr
+}
+
 type perpMetaResponse struct {
 	Universe []struct {
 		Name string `json:"name"`
@@ -247,38 +275,9 @@ func (t *HyperliquidTrader) fetchHip3PriceFromAssetCtx(coin string) (float64, er
 // 使用轻量结构体避免依赖 SDK 内部类型
 func (t *HyperliquidTrader) fetchPerpMetaAsset(coin string, forceMainnet bool) (string, *PerpMetaAssetLite, error) {
 	coin = normalizeHip3Symbol(coin)
-	payload := []byte(`{"type":"allPerpMetas"}`)
-	endpoint := infoAPIURL(t.testnet)
-	if forceMainnet {
-		endpoint = infoAPIURL(false)
-	}
-
-	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(payload))
+	metas, err := t.fetchAllPerpMetas(forceMainnet)
 	if err != nil {
-		return "", nil, fmt.Errorf("创建 InfoAPI 请求失败: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "NOFX-Hyperliquid-Resolve")
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", nil, fmt.Errorf("调用 InfoAPI 失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", nil, fmt.Errorf("读取 InfoAPI 响应失败: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", nil, fmt.Errorf("InfoAPI 返回错误状态码 %d: %s", resp.StatusCode, string(body))
-	}
-
-	var metas []PerpMetaLite
-	if err := json.Unmarshal(body, &metas); err != nil {
-		return "", nil, fmt.Errorf("解析 InfoAPI 响应失败: %w", err)
+		return "", nil, err
 	}
 
 	log.Printf("🔍 [HIP-3 API] 处理 allPerpMetas 响应，共 %d 个 meta 块", len(metas))
@@ -336,6 +335,58 @@ func (t *HyperliquidTrader) ResolveNonCryptoSymbol(symbol string, preferMainnet 
 func (t *HyperliquidTrader) resolveFromInfoAPI(coin string, forceMainnet bool) (string, error) {
 	mapped, _, err := t.fetchPerpMetaAsset(coin, forceMainnet)
 	return mapped, err
+}
+
+// fetchAllPerpMetas 带重试获取 allPerpMetas
+func (t *HyperliquidTrader) fetchAllPerpMetas(forceMainnet bool) ([]PerpMetaLite, error) {
+	payload := []byte(`{"type":"allPerpMetas"}`)
+	endpoint := infoAPIURL(t.testnet)
+	if forceMainnet {
+		endpoint = infoAPIURL(false)
+	}
+
+	var lastErr error
+	backoff := 500 * time.Millisecond
+	for i := 0; i < 4; i++ {
+		req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(payload))
+		if err != nil {
+			return nil, fmt.Errorf("创建 InfoAPI 请求失败: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "NOFX-Hyperliquid-Resolve")
+
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("调用 InfoAPI 失败: %w", err)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("读取 InfoAPI 响应失败: %w", err)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("InfoAPI 返回错误状态码 %d: %s", resp.StatusCode, string(body))
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+		var metas []PerpMetaLite
+		if err := json.Unmarshal(body, &metas); err != nil {
+			lastErr = fmt.Errorf("解析 InfoAPI 响应失败: %w", err)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+		return metas, nil
+	}
+	return nil, lastErr
 }
 
 // GetRecentTradePrice 使用 recentTrades 接口获取最新成交价（适用于 HIP-3 股票等非加密资产）
@@ -523,7 +574,7 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 	log.Printf("✓ Hyperliquid交易器初始化成功 (testnet=%v, wallet=%s)", testnet, walletAddr)
 
 	// 获取meta信息（包含精度等配置）
-	meta, err := exchange.Info().Meta(ctx)
+	meta, err := getMetaCached(ctx, exchange)
 	if err != nil {
 		return nil, fmt.Errorf("获取meta信息失败: %w", err)
 	}
@@ -584,6 +635,8 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 
 	// 启动 WS 账户状态订阅，降低 HTTP 调用频率
 	startAccountFeed(ctx, walletAddr, testnet)
+	// 启动 WS 订单订阅，缓存挂单，降低 HTTP openOrders/frontEnd 调用
+	startOrderFeed(ctx, walletAddr, testnet)
 
 	// 🔐 自动检查并授权 Builder（一次性）
 	// Builder 功能暂时禁用（主钱包私钥不可用于 API 授权）
@@ -1752,9 +1805,14 @@ func (t *HyperliquidTrader) CancelAllOrders(symbol string) error {
 	}
 
 	// 获取所有挂单
-	openOrders, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
-	if err != nil {
-		return fmt.Errorf("获取挂单失败: %w", err)
+	openOrders := getOrderFeed().getOpenOrdersFromCache(coin)
+	if len(openOrders) == 0 {
+		// 兜底 HTTP
+		openOrdersHTTP, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
+		if err != nil {
+			return fmt.Errorf("获取挂单失败: %w", err)
+		}
+		openOrders = openOrdersHTTP
 	}
 
 	// 取消该币种的所有挂单
@@ -1781,9 +1839,14 @@ func (t *HyperliquidTrader) CancelStopOrders(symbol string) error {
 	}
 
 	// 获取所有挂单
-	openOrders, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
-	if err != nil {
-		return fmt.Errorf("获取挂单失败: %w", err)
+	openOrders := getOrderFeed().getOpenOrdersFromCache(coin)
+	if len(openOrders) == 0 {
+		// 兜底 HTTP
+		openOrdersHTTP, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
+		if err != nil {
+			return fmt.Errorf("获取挂单失败: %w", err)
+		}
+		openOrders = openOrdersHTTP
 	}
 
 	// 注意：Hyperliquid SDK 的 OpenOrder 结构不暴露 trigger 字段
@@ -1899,6 +1962,11 @@ func extractOid(status hyperliquid.OrderStatus) int64 {
 // triggerOrdersBySymbol 获取当前币种的触发类挂单（仅 ReduceOnly）
 func (t *HyperliquidTrader) triggerOrdersBySymbol(symbol string) ([]hyperliquid.FrontendOpenOrder, error) {
 	coin := convertSymbolToHyperliquid(symbol)
+	// 优先从 WS 缓存
+	cached := getOrderFeed().getFrontendOrdersFromCache(coin)
+	if len(cached) > 0 {
+		return cached, nil
+	}
 	orders, err := t.exchange.Info().FrontendOpenOrders(t.ctx, t.walletAddr)
 	if err != nil {
 		return nil, err
