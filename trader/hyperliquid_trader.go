@@ -582,6 +582,9 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 		log.Printf("⚠️ 构建资产映射失败: %v", err)
 	}
 
+	// 启动 WS 账户状态订阅，降低 HTTP 调用频率
+	startAccountFeed(ctx, walletAddr, testnet)
+
 	// 🔐 自动检查并授权 Builder（一次性）
 	// Builder 功能暂时禁用（主钱包私钥不可用于 API 授权）
 
@@ -717,6 +720,11 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 
 // fetchUserStateWithDex 调用 clearinghouseState，支持 dex 参数以获取不同 perp 市场（含 HIP-3）
 func (t *HyperliquidTrader) fetchUserStateWithDex(dex string) (*hyperliquid.UserState, error) {
+	// 优先使用 WS 缓存，freshWithin=5s
+	if state, ok := getAccountFeed().getUserState(dex, 5*time.Second); ok {
+		return state, nil
+	}
+
 	payload := map[string]interface{}{
 		"type": "clearinghouseState",
 		"user": t.walletAddr,
