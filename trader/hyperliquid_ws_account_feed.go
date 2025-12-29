@@ -3,14 +3,12 @@ package trader
 import (
 	"context"
 	"encoding/json"
-	"log"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/sonirico/go-hyperliquid"
+	"nofx/hyperws"
 )
 
 // accountFeed 通过 WS 订阅 allDexsClearinghouseState，缓存多 dex 账户状态，减少 HTTP 调用。
@@ -18,8 +16,6 @@ type accountFeed struct {
 	mu        sync.RWMutex
 	byDex     map[string]hyperliquid.UserState
 	updatedAt time.Time
-	conn      *websocket.Conn
-	done      chan struct{}
 }
 
 var accountFeedSingleton struct {
@@ -31,7 +27,6 @@ func getAccountFeed() *accountFeed {
 	accountFeedSingleton.once.Do(func() {
 		accountFeedSingleton.feed = &accountFeed{
 			byDex: make(map[string]hyperliquid.UserState),
-			done:  make(chan struct{}),
 		}
 	})
 	return accountFeedSingleton.feed
@@ -42,68 +37,21 @@ func startAccountFeed(ctx context.Context, wallet string, testnet bool) {
 	f := getAccountFeed()
 
 	go func() {
-		base := "wss://api.hyperliquid.xyz/ws"
+		url := "wss://api.hyperliquid.xyz/ws"
 		if testnet {
-			base = "wss://api.hyperliquid-testnet.xyz/ws"
+			url = "wss://api.hyperliquid-testnet.xyz/ws"
 		}
-		u, _ := url.Parse(base)
-		dialer := websocket.Dialer{
-			HandshakeTimeout: 10 * time.Second,
+		man := hyperws.Get(url)
+		payload := map[string]interface{}{
+			"method": "subscribe",
+			"subscription": map[string]interface{}{
+				"type": "allDexsClearinghouseState",
+				"user": strings.ToLower(wallet),
+			},
 		}
-		for {
-			conn, _, err := dialer.Dial(u.String(), nil)
-			if err != nil {
-				log.Printf("⚠️ accountFeed WS 连接失败: %v", err)
-				time.Sleep(2 * time.Second)
-				continue
-			}
-			f.mu.Lock()
-			f.conn = conn
-			f.mu.Unlock()
-
-			sub := map[string]interface{}{
-				"method": "subscribe",
-				"subscription": map[string]interface{}{
-					"type": "allDexsClearinghouseState",
-					"user": strings.ToLower(wallet),
-				},
-			}
-			if err := conn.WriteJSON(sub); err != nil {
-				log.Printf("⚠️ accountFeed 订阅失败: %v", err)
-				conn.Close()
-				time.Sleep(2 * time.Second)
-				continue
-			}
-			log.Printf("✅ accountFeed 已订阅 allDexsClearinghouseState")
-
-			// 读循环
-			for {
-				_, msg, err := conn.ReadMessage()
-				if err != nil {
-					log.Printf("⚠️ accountFeed 读失败: %v", err)
-					conn.Close()
-					break
-				}
-				var envelope struct {
-					Channel string          `json:"channel"`
-					Data    json.RawMessage `json:"data"`
-				}
-				if err := json.Unmarshal(msg, &envelope); err != nil {
-					continue
-				}
-				if envelope.Channel != "allDexsClearinghouseState" {
-					continue
-				}
-				f.handleAllDexsMsg(envelope.Data)
-			}
-			// 重连
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			time.Sleep(2 * time.Second)
-		}
+		man.Subscribe("allDexsClearinghouseState", payload, func(_ string, data json.RawMessage) {
+			f.handleAllDexsMsg(data)
+		})
 	}()
 }
 

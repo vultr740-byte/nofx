@@ -11,7 +11,6 @@ import (
 
 type WSMonitor struct {
 	wsClient        *WSClient              // Binance WS (保留以备后续切换)
-	hlClient        *HLWSClient            // Hyperliquid WS
 	combinedClient  *CombinedStreamsClient // Binance 合并流（保留但默认不用）
 	symbols         []string
 	featuresMap     sync.Map
@@ -54,7 +53,6 @@ var subKlineTime = []string{"3m", "15m", "4h"} // 管理订阅流的K线周期
 func NewWSMonitor(batchSize int) *WSMonitor {
 	WSMonitorCli = &WSMonitor{
 		wsClient:       NewWSClient(),
-		hlClient:       NewHLWSClient(),
 		combinedClient: NewCombinedStreamsClient(batchSize),
 		alertsChan:     make(chan Alert, 1000),
 		batchSize:      batchSize,
@@ -153,11 +151,6 @@ func (m *WSMonitor) Start(coins []string) {
 		return
 	}
 
-	// 连接 Hyperliquid WS 并订阅 K 线
-	if err := m.hlClient.Connect(); err != nil {
-		log.Printf("❌ Hyperliquid WS 连接失败: %v", err)
-		return
-	}
 	if err := m.subscribeAll(); err != nil {
 		log.Printf("❌ 订阅 Hyperliquid K线失败: %v", err)
 		return
@@ -168,13 +161,12 @@ func (m *WSMonitor) Start(coins []string) {
 func (m *WSMonitor) subscribeSymbol(symbol, st string) []string {
 	var streams []string
 	hlSymbol := ToHLSymbol(symbol)
-	ch, err := m.hlClient.SubscribeCandle(hlSymbol, st)
-	if err != nil {
-		log.Printf("❌ 订阅 %s %s 失败: %v", hlSymbol, st, err)
-		return streams
-	}
+	// 使用全局 WS manager 订阅
+	unsub := subscribeHLCandle(hlSymbol, st, func(c HLCandle) {
+		m.handleHLKlineData(symbol, c, st)
+	})
+	_ = unsub
 	streams = append(streams, hlSymbol+"@"+st)
-	go m.handleHLKlineData(symbol, ch, st)
 
 	return streams
 }
@@ -202,23 +194,21 @@ func (m *WSMonitor) handleKlineData(symbol string, ch <-chan []byte, _time strin
 }
 
 // handleHLKlineData 处理 Hyperliquid K 线
-func (m *WSMonitor) handleHLKlineData(symbol string, ch <-chan HLCandle, _time string) {
-	for candle := range ch {
-		kline := Kline{
-			OpenTime:            candle.StartTime,
-			Open:                candle.Open,
-			High:                candle.High,
-			Low:                 candle.Low,
-			Close:               candle.Close,
-			Volume:              candle.Volume,
-			CloseTime:           candle.EndTime,
-			QuoteVolume:         0,
-			Trades:              candle.Trades,
-			TakerBuyBaseVolume:  0,
-			TakerBuyQuoteVolume: 0,
-		}
-		m.storeKline(symbol, kline, _time)
+func (m *WSMonitor) handleHLKlineData(symbol string, candle HLCandle, _time string) {
+	kline := Kline{
+		OpenTime:            candle.StartTime,
+		Open:                candle.Open,
+		High:                candle.High,
+		Low:                 candle.Low,
+		Close:               candle.Close,
+		Volume:              candle.Volume,
+		CloseTime:           candle.EndTime,
+		QuoteVolume:         0,
+		Trades:              candle.Trades,
+		TakerBuyBaseVolume:  0,
+		TakerBuyQuoteVolume: 0,
 	}
+	m.storeKline(symbol, kline, _time)
 }
 
 // toHLSymbol 将内部 symbol 映射为 Hyperliquid 符号

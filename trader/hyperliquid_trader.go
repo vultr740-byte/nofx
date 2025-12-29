@@ -635,8 +635,6 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 
 	// 启动 WS 账户状态订阅，降低 HTTP 调用频率
 	startAccountFeed(ctx, walletAddr, testnet)
-	// 启动 WS 订单订阅，缓存挂单，降低 HTTP openOrders/frontEnd 调用
-	startOrderFeed(ctx, walletAddr, testnet)
 
 	// 🔐 自动检查并授权 Builder（一次性）
 	// Builder 功能暂时禁用（主钱包私钥不可用于 API 授权）
@@ -1805,14 +1803,9 @@ func (t *HyperliquidTrader) CancelAllOrders(symbol string) error {
 	}
 
 	// 获取所有挂单
-	openOrders := getOrderFeed().getOpenOrdersFromCache(coin)
-	if len(openOrders) == 0 {
-		// 兜底 HTTP
-		openOrdersHTTP, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
-		if err != nil {
-			return fmt.Errorf("获取挂单失败: %w", err)
-		}
-		openOrders = openOrdersHTTP
+	openOrders, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
+	if err != nil {
+		return fmt.Errorf("获取挂单失败: %w", err)
 	}
 
 	// 取消该币种的所有挂单
@@ -1839,14 +1832,9 @@ func (t *HyperliquidTrader) CancelStopOrders(symbol string) error {
 	}
 
 	// 获取所有挂单
-	openOrders := getOrderFeed().getOpenOrdersFromCache(coin)
-	if len(openOrders) == 0 {
-		// 兜底 HTTP
-		openOrdersHTTP, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
-		if err != nil {
-			return fmt.Errorf("获取挂单失败: %w", err)
-		}
-		openOrders = openOrdersHTTP
+	openOrders, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
+	if err != nil {
+		return fmt.Errorf("获取挂单失败: %w", err)
 	}
 
 	// 注意：Hyperliquid SDK 的 OpenOrder 结构不暴露 trigger 字段
@@ -1962,11 +1950,6 @@ func extractOid(status hyperliquid.OrderStatus) int64 {
 // triggerOrdersBySymbol 获取当前币种的触发类挂单（仅 ReduceOnly）
 func (t *HyperliquidTrader) triggerOrdersBySymbol(symbol string) ([]hyperliquid.FrontendOpenOrder, error) {
 	coin := convertSymbolToHyperliquid(symbol)
-	// 优先从 WS 缓存
-	cached := getOrderFeed().getFrontendOrdersFromCache(coin)
-	if len(cached) > 0 {
-		return cached, nil
-	}
 	orders, err := t.exchange.Info().FrontendOpenOrders(t.ctx, t.walletAddr)
 	if err != nil {
 		return nil, err
