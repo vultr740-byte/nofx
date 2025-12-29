@@ -94,7 +94,7 @@ func (m *WSMonitor) Initialize(coins []string) error {
 }
 
 func (m *WSMonitor) initializeHistoricalData() error {
-	apiClient := NewAPIClient()
+	apiClient := NewHLAPIClient()
 
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, 5) // 限制并发数
@@ -167,7 +167,7 @@ func (m *WSMonitor) Start(coins []string) {
 // subscribeSymbol 注册监听
 func (m *WSMonitor) subscribeSymbol(symbol, st string) []string {
 	var streams []string
-	hlSymbol := toHLSymbol(symbol)
+	hlSymbol := ToHLSymbol(symbol)
 	ch, err := m.hlClient.SubscribeCandle(hlSymbol, st)
 	if err != nil {
 		log.Printf("❌ 订阅 %s %s 失败: %v", hlSymbol, st, err)
@@ -222,7 +222,7 @@ func (m *WSMonitor) handleHLKlineData(symbol string, ch <-chan HLCandle, _time s
 }
 
 // toHLSymbol 将内部 symbol 映射为 Hyperliquid 符号
-func toHLSymbol(symbol string) string {
+func ToHLSymbol(symbol string) string {
 	s := strings.ToUpper(symbol)
 	if strings.Contains(s, ":") {
 		return s
@@ -306,8 +306,8 @@ func (m *WSMonitor) GetCurrentKlines(symbol string, _time string) ([]Kline, erro
 	// 对每一个进来的symbol检测是否存在内类 是否的话就订阅它
 	value, exists := m.getKlineDataMap(_time).Load(symbol)
 	if !exists {
-		// 如果Ws数据未初始化完成时,单独使用api获取 - 兼容性代码 (防止在未初始化完成是,已经有交易员运行)
-		apiClient := NewAPIClient()
+		// 如果Ws数据未初始化完成时,单独使用 Hyperliquid API 获取
+		apiClient := NewHLAPIClient()
 		limit := getKlineLimit(_time)
 		klines, err := apiClient.GetKlines(symbol, _time, limit)
 		if err != nil {
@@ -316,14 +316,6 @@ func (m *WSMonitor) GetCurrentKlines(symbol string, _time string) ([]Kline, erro
 
 		// 动态缓存进缓存
 		m.getKlineDataMap(_time).Store(strings.ToUpper(symbol), klines)
-
-		// 订阅 WebSocket 流
-		subStr := m.subscribeSymbol(symbol, _time)
-		subErr := m.combinedClient.subscribeStreams(subStr)
-		log.Printf("动态订阅流: %v", subStr)
-		if subErr != nil {
-			log.Printf("警告: 动态订阅%v分钟K线失败: %v (使用API数据)", _time, subErr)
-		}
 
 		// ✅ FIX: 返回深拷贝而非引用
 		result := make([]Kline, len(klines))
