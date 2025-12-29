@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -74,7 +75,8 @@ func (c *HLAPIClient) GetKlines(symbol, interval string, limit int) ([]Kline, er
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HL candleSnapshot status %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HL candleSnapshot status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var out []candleSnapshotOut

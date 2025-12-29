@@ -223,11 +223,15 @@ func (m *WSMonitor) handleHLKlineData(symbol string, ch <-chan HLCandle, _time s
 
 // toHLSymbol 将内部 symbol 映射为 Hyperliquid 符号
 func ToHLSymbol(symbol string) string {
-	s := strings.ToUpper(symbol)
+	s := strings.TrimSpace(symbol)
 	if strings.Contains(s, ":") {
-		return s
+		parts := strings.SplitN(s, ":", 2)
+		prefix := strings.ToLower(parts[0])
+		suffix := strings.ToUpper(parts[1])
+		return prefix + ":" + suffix
 	}
 	// 去掉常见后缀
+	s = strings.ToUpper(s)
 	s = strings.TrimSuffix(s, "USDT")
 	s = strings.TrimSuffix(s, "USD")
 	// 简单商品映射
