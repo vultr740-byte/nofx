@@ -30,25 +30,122 @@ var (
 	metaInitErr error
 )
 
-// 获取 Meta（带重试 + 全局缓存）
-func getMetaCached(ctx context.Context, ex *hyperliquid.Exchange) (*hyperliquid.Meta, error) {
+// 获取 Meta（带重试 + 全局缓存），失败时回退至 allPerpMetas 构造基础精度信息，避免 429 造成初始化中断。
+func getMetaCached(ctx context.Context, ex *hyperliquid.Exchange, testnet bool) (*hyperliquid.Meta, error) {
 	metaOnce.Do(func() {
-		var lastErr error
-		backoff := 500 * time.Millisecond
-		for i := 0; i < 5; i++ {
-			meta, err := ex.Info().Meta(ctx)
-			if err == nil && meta != nil {
-				cachedMeta = meta
-				metaInitErr = nil
-				return
-			}
-			lastErr = err
-			time.Sleep(backoff)
-			backoff *= 2
+		// 1) 正常调用 SDK Meta（指数回退重试）
+		if meta, err := fetchMetaWithRetry(ctx, ex); err == nil && meta != nil {
+			cachedMeta = meta
+			metaInitErr = nil
+			return
+		} else {
+			metaInitErr = err
 		}
-		metaInitErr = lastErr
+
+		// 2) 回退：使用 allPerpMetas 构造精简 Meta（含 szDecimals），保障最少精度信息可用
+		if fallbackMeta, err := fetchMetaFromAllPerpMetas(testnet); err == nil && fallbackMeta != nil {
+			log.Printf("✅ Meta 回退成功：使用 allPerpMetas 构造精简精度信息，避免 429 阻塞初始化")
+			cachedMeta = fallbackMeta
+			metaInitErr = nil
+			return
+		} else {
+			log.Printf("❌ Meta 回退失败: %v", err)
+			metaInitErr = err
+		}
 	})
 	return cachedMeta, metaInitErr
+}
+
+// fetchMetaWithRetry 调用 SDK Meta，带指数退避
+func fetchMetaWithRetry(ctx context.Context, ex *hyperliquid.Exchange) (*hyperliquid.Meta, error) {
+	var lastErr error
+	backoff := 500 * time.Millisecond
+	for i := 0; i < 5; i++ {
+		meta, err := ex.Info().Meta(ctx)
+		if err == nil && meta != nil {
+			return meta, nil
+		}
+		lastErr = err
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+	return nil, lastErr
+}
+
+// fetchMetaFromAllPerpMetas 使用 Info API 的 allPerpMetas 构造基础 Meta（仅需 szDecimals 等）
+func fetchMetaFromAllPerpMetas(testnet bool) (*hyperliquid.Meta, error) {
+	payload := []byte(`{"type":"allPerpMetas"}`)
+	client := &http.Client{Timeout: 8 * time.Second}
+
+	var lastErr error
+	backoff := 500 * time.Millisecond
+	for i := 0; i < 4; i++ {
+		req, err := http.NewRequest("POST", infoAPIURL(testnet), bytes.NewBuffer(payload))
+		if err != nil {
+			return nil, fmt.Errorf("创建 allPerpMetas 请求失败: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "NOFX-Hyperliquid-MetaFallback")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("调用 allPerpMetas 失败: %w", err)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("读取 allPerpMetas 响应失败: %w", err)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("allPerpMetas 返回状态码 %d: %s", resp.StatusCode, string(body))
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		var metas []PerpMetaLite
+		if err := json.Unmarshal(body, &metas); err != nil {
+			lastErr = fmt.Errorf("解析 allPerpMetas 响应失败: %w", err)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		var universe []hyperliquid.AssetInfo
+		for _, m := range metas {
+			for _, asset := range m.Universe {
+				universe = append(universe, hyperliquid.AssetInfo{
+					Name:          asset.Name,
+					SzDecimals:    asset.SzDecimals,
+					MaxLeverage:   0,
+					MarginTableId: 0,
+					OnlyIsolated:  asset.OnlyIsolated,
+					IsDelisted:    false,
+				})
+			}
+		}
+		if len(universe) == 0 {
+			lastErr = fmt.Errorf("allPerpMetas 未返回资产数据")
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		// marginTables 在此场景下不关键，可留空
+		return &hyperliquid.Meta{
+			Universe:     universe,
+			MarginTables: nil,
+		}, nil
+	}
+	return nil, lastErr
 }
 
 type perpMetaResponse struct {
@@ -574,7 +671,7 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 	log.Printf("✓ Hyperliquid交易器初始化成功 (testnet=%v, wallet=%s)", testnet, walletAddr)
 
 	// 获取meta信息（包含精度等配置）
-	meta, err := getMetaCached(ctx, exchange)
+	meta, err := getMetaCached(ctx, exchange, testnet)
 	if err != nil {
 		return nil, fmt.Errorf("获取meta信息失败: %w", err)
 	}
