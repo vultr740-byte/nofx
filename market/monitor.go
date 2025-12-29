@@ -10,8 +10,9 @@ import (
 )
 
 type WSMonitor struct {
-	wsClient        *WSClient
-	combinedClient  *CombinedStreamsClient
+	wsClient        *WSClient              // Binance WS (保留以备后续切换)
+	hlClient        *HLWSClient            // Hyperliquid WS
+	combinedClient  *CombinedStreamsClient // Binance 合并流（保留但默认不用）
 	symbols         []string
 	featuresMap     sync.Map
 	alertsChan      chan Alert
@@ -53,6 +54,7 @@ var subKlineTime = []string{"3m", "15m", "4h"} // 管理订阅流的K线周期
 func NewWSMonitor(batchSize int) *WSMonitor {
 	WSMonitorCli = &WSMonitor{
 		wsClient:       NewWSClient(),
+		hlClient:       NewHLWSClient(),
 		combinedClient: NewCombinedStreamsClient(batchSize),
 		alertsChan:     make(chan Alert, 1000),
 		batchSize:      batchSize,
@@ -151,15 +153,13 @@ func (m *WSMonitor) Start(coins []string) {
 		return
 	}
 
-	err = m.combinedClient.Connect()
-	if err != nil {
-		log.Printf("❌ 批量订阅流失败: %v", err)
+	// 连接 Hyperliquid WS 并订阅 K 线
+	if err := m.hlClient.Connect(); err != nil {
+		log.Printf("❌ Hyperliquid WS 连接失败: %v", err)
 		return
 	}
-	// 订阅所有交易对
-	err = m.subscribeAll()
-	if err != nil {
-		log.Printf("❌ 订阅币种交易对失败: %v", err)
+	if err := m.subscribeAll(); err != nil {
+		log.Printf("❌ 订阅 Hyperliquid K线失败: %v", err)
 		return
 	}
 }
@@ -167,10 +167,14 @@ func (m *WSMonitor) Start(coins []string) {
 // subscribeSymbol 注册监听
 func (m *WSMonitor) subscribeSymbol(symbol, st string) []string {
 	var streams []string
-	stream := fmt.Sprintf("%s@kline_%s", strings.ToLower(symbol), st)
-	ch := m.combinedClient.AddSubscriber(stream, 100)
-	streams = append(streams, stream)
-	go m.handleKlineData(symbol, ch, st)
+	hlSymbol := toHLSymbol(symbol)
+	ch, err := m.hlClient.SubscribeCandle(hlSymbol, st)
+	if err != nil {
+		log.Printf("❌ 订阅 %s %s 失败: %v", hlSymbol, st, err)
+		return streams
+	}
+	streams = append(streams, hlSymbol+"@"+st)
+	go m.handleHLKlineData(symbol, ch, st)
 
 	return streams
 }
@@ -180,13 +184,6 @@ func (m *WSMonitor) subscribeAll() error {
 	for _, symbol := range m.symbols {
 		for _, st := range subKlineTime {
 			m.subscribeSymbol(symbol, st)
-		}
-	}
-	for _, st := range subKlineTime {
-		err := m.combinedClient.BatchSubscribeKlines(m.symbols, st)
-		if err != nil {
-			log.Printf("❌ 订阅 %s K线失败: %v", st, err)
-			return err
 		}
 	}
 	log.Println("所有交易对订阅完成")
@@ -202,6 +199,45 @@ func (m *WSMonitor) handleKlineData(symbol string, ch <-chan []byte, _time strin
 		}
 		m.processKlineUpdate(symbol, klineData, _time)
 	}
+}
+
+// handleHLKlineData 处理 Hyperliquid K 线
+func (m *WSMonitor) handleHLKlineData(symbol string, ch <-chan HLCandle, _time string) {
+	for candle := range ch {
+		kline := Kline{
+			OpenTime:            candle.StartTime,
+			Open:                candle.Open,
+			High:                candle.High,
+			Low:                 candle.Low,
+			Close:               candle.Close,
+			Volume:              candle.Volume,
+			CloseTime:           candle.EndTime,
+			QuoteVolume:         0,
+			Trades:              candle.Trades,
+			TakerBuyBaseVolume:  0,
+			TakerBuyQuoteVolume: 0,
+		}
+		m.storeKline(symbol, kline, _time)
+	}
+}
+
+// toHLSymbol 将内部 symbol 映射为 Hyperliquid 符号
+func toHLSymbol(symbol string) string {
+	s := strings.ToUpper(symbol)
+	if strings.Contains(s, ":") {
+		return s
+	}
+	// 去掉常见后缀
+	s = strings.TrimSuffix(s, "USDT")
+	s = strings.TrimSuffix(s, "USD")
+	// 简单商品映射
+	switch s {
+	case "SILVER", "XAG":
+		return "xyz:SILVER"
+	case "GOLD", "XAU":
+		return "xyz:GOLD"
+	}
+	return s
 }
 
 func (m *WSMonitor) getKlineDataMap(_time string) *sync.Map {
@@ -233,6 +269,11 @@ func (m *WSMonitor) processKlineUpdate(symbol string, wsData KlineWSData, _time 
 	kline.QuoteVolume, _ = parseFloat(wsData.Kline.QuoteVolume)
 	kline.TakerBuyBaseVolume, _ = parseFloat(wsData.Kline.TakerBuyBaseVolume)
 	kline.TakerBuyQuoteVolume, _ = parseFloat(wsData.Kline.TakerBuyQuoteVolume)
+	m.storeKline(symbol, kline, _time)
+}
+
+// storeKline 将 K 线写入对应的周期缓存
+func (m *WSMonitor) storeKline(symbol string, kline Kline, _time string) {
 	// 更新K线数据
 	var klineDataMap = m.getKlineDataMap(_time)
 	value, exists := klineDataMap.Load(symbol)
