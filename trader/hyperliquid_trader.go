@@ -870,7 +870,16 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 func (t *HyperliquidTrader) fetchUserStateWithDex(dex string) (*hyperliquid.UserState, error) {
 	// 优先使用 WS 缓存，freshWithin=5s
 	if state, ok := getAccountFeed().getUserState(dex, 5*time.Second); ok {
-		return state, nil
+		// 如果 WS 摘要显示有持仓但 assetPositions 为空，则回退 HTTP 获取完整明细
+		if len(state.AssetPositions) == 0 {
+			if tot := strings.TrimSpace(state.MarginSummary.TotalNtlPos); tot != "" && tot != "0" && tot != "0.0" {
+				log.Printf("⚠️ WS 缓存缺少 assetPositions，回退 HTTP 获取持仓 (dex=%s, totalNtlPos=%s)", dex, state.MarginSummary.TotalNtlPos)
+			} else {
+				return state, nil
+			}
+		} else {
+			return state, nil
+		}
 	}
 
 	payload := map[string]interface{}{
