@@ -1528,6 +1528,10 @@ func (t *HyperliquidTrader) ensureCollateralAvailable(dex string, neededUsd floa
 
 // placeSpotMarketBuy 使用 IOC 限价模拟市价买入 base（支付 USDC）
 func (t *HyperliquidTrader) placeSpotMarketBuy(pairName string, assetIndex int, sizeBase float64, limitPx float64) (float64, error) {
+	// 避免 float_to_wire 精度报错：数量截断到6位小数，价格截断到8位
+	sizeBase = roundToDecimalsLocal(sizeBase, 6)
+	limitPx = roundToDecimalsLocal(limitPx, 8)
+
 	order := hyperliquid.CreateOrderRequest{
 		Coin:       pairName,
 		IsBuy:      true,
@@ -3531,6 +3535,12 @@ func absFloat(x float64) float64 {
 		return -x
 	}
 	return x
+}
+
+// roundToDecimalsLocal 截断/四舍五入到指定位数（四舍五入）
+func roundToDecimalsLocal(v float64, decimals int) float64 {
+	m := math.Pow10(decimals)
+	return math.Round(v*m) / m
 }
 
 // classifyOrderByPriceHeuristic 基于价格启发式判断订单类型
