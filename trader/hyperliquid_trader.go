@@ -1474,6 +1474,15 @@ func (t *HyperliquidTrader) ensureCollateralAvailable(dex string, neededUsd floa
 
 	// 需要的 base 数量与 USDC
 	needBase := missing * 1.002 // 加一点余量
+
+	// 按 collateral token 的数量精度截断，避免 size 无效
+	dec := collToken.SzDecimals
+	mult := math.Pow10(dec)
+	needBase = math.Floor(needBase*mult) / mult
+	if needBase <= 0 {
+		needBase = 1 / mult // 至少一个最小单位
+	}
+
 	needUsdc := needBase * mid * (1 + t.maxSwapSlippage)
 
 	usdcBal, err := t.spotBalanceByToken(0)
