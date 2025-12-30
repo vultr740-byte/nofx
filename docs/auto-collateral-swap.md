@@ -29,6 +29,7 @@
    - mid 价取 `allMids`/现货 ticker；滑点保护 0.2%。  
    - 购买数量=缺口/midPx×(1+0.002)。  
    - 构造 Spot 市价买单（IOC/市价，slippageCap 0.5%）。  
+   - 若现货 USDC 不足，先用 `usdClassTransfer` 将 perp 的 withdrawable USDC 转入 spot（多转 1% 余量，上限可提金额）。  
    - 轮询 `spotOpenOrders`/`spotUserState`，成交比例≥95%，超时 5s。  
    - 若成交不足/失败：中止开仓并提示。
 
