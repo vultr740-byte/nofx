@@ -1480,8 +1480,35 @@ func (t *HyperliquidTrader) ensureCollateralAvailable(dex string, neededUsd floa
 	if err != nil {
 		return fmt.Errorf("查询USDC余额失败: %w", err)
 	}
+
+	// 若 spot USDC 不足，尝试从 perp withdrawable 转回 spot
 	if usdcBal < needUsdc {
-		return fmt.Errorf("USDC余额不足以兑换抵押资产，需要 %.4f USDC，当前 %.4f", needUsdc, usdcBal)
+		required := needUsdc - usdcBal
+		state, err := t.exchange.Info().UserState(t.ctx, t.walletAddr)
+		if err != nil {
+			return fmt.Errorf("查询可提余额失败: %w", err)
+		}
+		withdrawable, _ := strconv.ParseFloat(state.Withdrawable, 64)
+		if withdrawable < required {
+			return fmt.Errorf("USDC余额不足以兑换抵押资产，需要 %.4f USDC，当前 %.4f (含可提 %.4f)", needUsdc, usdcBal, withdrawable)
+		}
+		// 转 perp -> spot
+		transferAmt := required * 1.01 // 多转一点防止精度
+		if transferAmt > withdrawable {
+			transferAmt = required
+		}
+		log.Printf("💱 perp->spot USDC 转账以补足兑换: %.4f", transferAmt)
+		if _, err := t.exchange.UsdClassTransfer(t.ctx, transferAmt, false); err != nil {
+			return fmt.Errorf("perp 转 spot 失败: %w", err)
+		}
+		// 重新查询 spot USDC
+		usdcBal, err = t.spotBalanceByToken(0)
+		if err != nil {
+			return fmt.Errorf("转账后查询USDC余额失败: %w", err)
+		}
+		if usdcBal < needUsdc {
+			return fmt.Errorf("转账后 USDC 仍不足兑换抵押资产，需要 %.4f USDC，当前 %.4f", needUsdc, usdcBal)
+		}
 	}
 
 	// 下 IOC 现货买单
