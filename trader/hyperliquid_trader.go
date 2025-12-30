@@ -1524,7 +1524,7 @@ func (t *HyperliquidTrader) ensureCollateralAvailable(dex string, neededUsd floa
 	log.Printf("💱 自动兑换抵押资产: dex=%s collateral=%s needBase=%.6f mid=%.6f limit=%.6f usdcCost<=%.4f",
 		dexLabel(dex), collToken.Name, needBase, mid, mid*(1+t.maxSwapSlippage), needUsdc)
 
-	filled, err := t.placeSpotMarketBuy(pairName, assetIndex, needBase, mid*(1+t.maxSwapSlippage))
+	filled, err := t.placeSpotMarketBuy(pairName, assetIndex, needBase, mid*(1+t.maxSwapSlippage), collToken.SzDecimals)
 	if err != nil {
 		return fmt.Errorf("抵押兑换下单失败: %w", err)
 	}
@@ -1536,10 +1536,14 @@ func (t *HyperliquidTrader) ensureCollateralAvailable(dex string, neededUsd floa
 }
 
 // placeSpotMarketBuy 使用 IOC 限价模拟市价买入 base（支付 USDC）
-func (t *HyperliquidTrader) placeSpotMarketBuy(pairName string, assetIndex int, sizeBase float64, limitPx float64) (float64, error) {
-	// 避免 float_to_wire 精度报错：数量截断到6位小数，价格截断到8位
-	sizeBase = roundToDecimalsLocal(sizeBase, 6)
-	limitPx = roundToDecimalsLocal(limitPx, 8)
+func (t *HyperliquidTrader) placeSpotMarketBuy(pairName string, assetIndex int, sizeBase float64, limitPx float64, baseSzDecimals int) (float64, error) {
+	// 避免 float_to_wire 精度报错：数量截断到 base sz，价格按 tick 截断
+	sizeBase = roundToDecimalsLocal(sizeBase, baseSzDecimals)
+	tickDecimals := 6 - baseSzDecimals
+	if tickDecimals < 0 {
+		tickDecimals = 0
+	}
+	limitPx = roundToDecimalsLocal(limitPx, tickDecimals)
 
 	order := hyperliquid.CreateOrderRequest{
 		Coin:       pairName,
