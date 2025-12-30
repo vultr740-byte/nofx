@@ -595,6 +595,11 @@ type HyperliquidTrader struct {
 	// 抵押资产缓存：dex -> collateral token index；token index -> token 元信息
 	dexCollateral    map[string]int
 	collateralTokens map[int]hyperliquid.SpotTokenInfo
+
+	// 自动抵押兑换参数
+	autoCollateralSwap bool
+	maxSwapSlippage    float64 // 价格滑点上限（比例）
+	minFillRatio       float64 // 市价单最小成交比例
 }
 
 const hyenaBuilderAddress = "0x1924b8561eeF20e70Ede628A296175D358BE80e5"
@@ -793,21 +798,24 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 
 	// 创建 trader 实例
 	trader := &HyperliquidTrader{
-		exchange:         exchange,
-		ctx:              ctx,
-		walletAddr:       walletAddr,
-		meta:             meta,
-		assetMap:         make(map[string]int),
-		hip3Meta:         make(map[string]PerpMetaAssetLite),
-		testnet:          testnet,
-		isCrossMargin:    true, // 默认使用全仓模式
-		stopLossOrders:   make(map[string]orderRef),
-		takeProfitOrders: make(map[string]orderRef),
-		agentPrivateKey:  privateKey,
-		apiBaseURL:       apiURL,
-		dexCollateral:    dexCollateral,
-		collateralTokens: tokenByIndex,
-		spotMeta:         spotMeta,
+		exchange:           exchange,
+		ctx:                ctx,
+		walletAddr:         walletAddr,
+		meta:               meta,
+		spotMeta:           spotMeta,
+		assetMap:           make(map[string]int),
+		hip3Meta:           make(map[string]PerpMetaAssetLite),
+		testnet:            testnet,
+		isCrossMargin:      true, // 默认使用全仓模式
+		stopLossOrders:     make(map[string]orderRef),
+		takeProfitOrders:   make(map[string]orderRef),
+		agentPrivateKey:    privateKey,
+		apiBaseURL:         apiURL,
+		dexCollateral:      dexCollateral,
+		collateralTokens:   tokenByIndex,
+		autoCollateralSwap: true,
+		maxSwapSlippage:    0.005, // 0.5%
+		minFillRatio:       0.95,
 	}
 
 	// 构建 asset 映射并同步到 SDK，防止 HIP-3 股票被映射到资产 0 (BTC)
@@ -1349,6 +1357,165 @@ func loadCollateralInfo(testnet bool) (map[string]int, map[int]hyperliquid.SpotT
 	return dexCollateral, tokenByIndex, spotMeta, nil
 }
 
+// dexForCoin 返回 HIP-3 前缀，普通 perp 为空字符串
+func dexForCoin(coin string) string {
+	if strings.Contains(coin, ":") {
+		parts := strings.SplitN(coin, ":", 2)
+		return strings.ToLower(parts[0])
+	}
+	return ""
+}
+
+// spotBalanceByToken 返回指定 tokenIndex 的 total 余额
+func (t *HyperliquidTrader) spotBalanceByToken(tokenIndex int) (float64, error) {
+	state, err := t.exchange.Info().SpotUserState(t.ctx, t.walletAddr)
+	if err != nil {
+		return 0, err
+	}
+	for _, b := range state.Balances {
+		if b.Token == tokenIndex {
+			f, _ := strconv.ParseFloat(b.Total, 64)
+			return f, nil
+		}
+	}
+	return 0, nil
+}
+
+// findCollateralPair 查找 collateral/USDC 现货交易对及 midPx
+func (t *HyperliquidTrader) findCollateralPair(collIdx int) (assetName string, assetIndex int, mid float64, err error) {
+	if t.spotMeta == nil {
+		return "", 0, 0, fmt.Errorf("spotMeta 未初始化")
+	}
+	var target *hyperliquid.SpotAssetInfo
+	for i := range t.spotMeta.Universe {
+		u := t.spotMeta.Universe[i]
+		if len(u.Tokens) != 2 {
+			continue
+		}
+		if u.Tokens[0] == collIdx && u.Tokens[1] == 0 { // base=collateral, quote=USDC(index 0)
+			target = &u
+			assetIndex = u.Index + 10000 // spot asset offset
+			assetName = u.Name
+			break
+		}
+	}
+	if target == nil {
+		return "", 0, 0, fmt.Errorf("未找到 collateral/USDC 现货对 (token=%d)", collIdx)
+	}
+
+	// 获取 midPx via SpotMetaAndAssetCtxs
+	spotCtx, err := t.exchange.Info().SpotMetaAndAssetCtxs(t.ctx)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("获取 spotMetaAndAssetCtxs 失败: %w", err)
+	}
+	if target.Index >= len(spotCtx.Ctxs) {
+		return "", 0, 0, fmt.Errorf("spot ctx 缺少 index=%d", target.Index)
+	}
+	ctx := spotCtx.Ctxs[target.Index]
+	if ctx.MidPx == nil || *ctx.MidPx == "" {
+		return "", 0, 0, fmt.Errorf("spot midPx 缺失 (pair=%s)", target.Name)
+	}
+	mid, err = strconv.ParseFloat(*ctx.MidPx, 64)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("解析 midPx 失败: %w", err)
+	}
+	return
+}
+
+// ensureCollateralAvailable 如抵押资产不足则尝试用 USDC 兑换
+func (t *HyperliquidTrader) ensureCollateralAvailable(dex string, neededUsd float64) error {
+	if !t.autoCollateralSwap {
+		return nil
+	}
+	collIdx, ok := t.dexCollateral[dex]
+	if !ok {
+		return fmt.Errorf("未知 dex 抵押资产: %s", dexLabel(dex))
+	}
+	if collIdx == 0 {
+		return nil // USDC 直接返回
+	}
+
+	collToken, ok := t.collateralTokens[collIdx]
+	if !ok {
+		return fmt.Errorf("缺少 collateral token 元信息: idx=%d", collIdx)
+	}
+
+	collBal, err := t.spotBalanceByToken(collIdx)
+	if err != nil {
+		return fmt.Errorf("查询抵押余额失败: %w", err)
+	}
+	if collBal >= neededUsd {
+		return nil
+	}
+
+	missing := neededUsd - collBal
+
+	// 查找对 USDC 的现货对
+	pairName, assetIndex, mid, err := t.findCollateralPair(collIdx)
+	if err != nil {
+		return err
+	}
+
+	// 稳定币价格保护
+	if mid < 0.8 || mid > 1.2 {
+		return fmt.Errorf("抵押币 %s midPx=%.4f 超出安全范围，请手动充值", collToken.Name, mid)
+	}
+
+	// 需要的 base 数量与 USDC
+	needBase := missing * 1.002 // 加一点余量
+	needUsdc := needBase * mid * (1 + t.maxSwapSlippage)
+
+	usdcBal, err := t.spotBalanceByToken(0)
+	if err != nil {
+		return fmt.Errorf("查询USDC余额失败: %w", err)
+	}
+	if usdcBal < needUsdc {
+		return fmt.Errorf("USDC余额不足以兑换抵押资产，需要 %.4f USDC，当前 %.4f", needUsdc, usdcBal)
+	}
+
+	// 下 IOC 现货买单
+	log.Printf("💱 自动兑换抵押资产: dex=%s collateral=%s needBase=%.6f mid=%.6f limit=%.6f usdcCost<=%.4f",
+		dexLabel(dex), collToken.Name, needBase, mid, mid*(1+t.maxSwapSlippage), needUsdc)
+
+	filled, err := t.placeSpotMarketBuy(pairName, assetIndex, needBase, mid*(1+t.maxSwapSlippage))
+	if err != nil {
+		return fmt.Errorf("抵押兑换下单失败: %w", err)
+	}
+	if filled < needBase*t.minFillRatio {
+		return fmt.Errorf("抵押兑换成交不足 (filled %.6f / %.6f)", filled, needBase)
+	}
+
+	return nil
+}
+
+// placeSpotMarketBuy 使用 IOC 限价模拟市价买入 base（支付 USDC）
+func (t *HyperliquidTrader) placeSpotMarketBuy(pairName string, assetIndex int, sizeBase float64, limitPx float64) (float64, error) {
+	order := hyperliquid.CreateOrderRequest{
+		Coin:       pairName,
+		IsBuy:      true,
+		Size:       sizeBase,
+		Price:      limitPx,
+		ReduceOnly: false,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifIoc},
+		},
+	}
+
+	res, err := t.exchange.Order(t.ctx, order, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	if res.Filled != nil {
+		filledSz, _ := strconv.ParseFloat(res.Filled.TotalSz, 64)
+		return filledSz, nil
+	}
+	if res.Resting != nil {
+		return 0, fmt.Errorf("现货IOC订单未完全成交 (resting)")
+	}
+	return 0, fmt.Errorf("现货订单未知状态")
+}
+
 // enableDexAbstractionOnce 尝试开启 HIP-3 DEX 抽象模式（agent 签名），失败不阻塞
 func (t *HyperliquidTrader) enableDexAbstractionOnce() {
 	t.abstractionOnce.Do(func() {
@@ -1516,6 +1683,14 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 	log.Printf("  isStockAsset: %t", t.isStockAsset(coin))
 	log.Printf("  leverage: %d", leverage)
 	log.Printf("")
+
+	// 保证抵押资产充足（可能自动用 USDC 兑换）
+	positionValue := roundedQuantity * validatedPrice
+	neededMargin := positionValue / float64(leverage)
+	if err := t.ensureCollateralAvailable(dexForCoin(coin), neededMargin); err != nil {
+		return nil, fmt.Errorf("抵押资产检查失败: %w", err)
+	}
+
 	log.Printf("🔍 [完整订单参数] 账户信息: (信息通过外部API获取)")
 	log.Printf("🔍 [完整订单参数] ================================")
 
@@ -1699,6 +1874,13 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 	log.Printf("  isStockAsset: %t", t.isStockAsset(coin))
 	log.Printf("  leverage: %d", leverage)
 	log.Printf("")
+	// 保证抵押资产充足（可能自动用 USDC 兑换）
+	positionValue := roundedQuantity * validatedPrice
+	neededMargin := positionValue / float64(leverage)
+	if err := t.ensureCollateralAvailable(dexForCoin(coin), neededMargin); err != nil {
+		return nil, fmt.Errorf("抵押资产检查失败: %w", err)
+	}
+
 	log.Printf("🔍 [完整订单参数] 账户信息: (信息通过外部API获取)")
 	log.Printf("🔍 [完整订单参数] ================================")
 
