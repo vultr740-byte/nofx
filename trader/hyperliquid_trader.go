@@ -178,12 +178,83 @@ func normalizeHip3Symbol(symbol string) string {
 	return prefix + ":" + suffix
 }
 
+// dexLabel 为空字符串时返回 "main" 方便日志
+func dexLabel(dex string) string {
+	if dex == "" {
+		return "main"
+	}
+	return dex
+}
+
 // infoAPIURL 根据网络返回 Info API 地址
 func infoAPIURL(testnet bool) string {
 	if testnet {
 		return "https://api.hyperliquid-testnet.xyz/info"
 	}
 	return "https://api.hyperliquid.xyz/info"
+}
+
+// fetchMetaForDex 获取指定 dex 的 meta（返回 collateralToken）
+func fetchMetaForDex(testnet bool, dex string) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"type": "meta",
+	}
+	if dex != "" {
+		payload["dex"] = dex
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest("POST", infoAPIURL(testnet), bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("meta(dex=%s) status %d: %s", dexLabel(dex), resp.StatusCode, string(respBody))
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+// fetchSpotMeta 拉取 spotMeta
+func fetchSpotMeta(testnet bool) (*hyperliquid.SpotMeta, error) {
+	payload := []byte(`{"type":"spotMeta"}`)
+	req, err := http.NewRequest("POST", infoAPIURL(testnet), bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("spotMeta status %d: %s", resp.StatusCode, string(body))
+	}
+	var sm hyperliquid.SpotMeta
+	if err := json.Unmarshal(body, &sm); err != nil {
+		return nil, err
+	}
+	return &sm, nil
 }
 
 // fetchPriceFromInfoAPI 调用 Info API allMids 获取价格（用于AllMids缺失时兜底）
@@ -508,8 +579,9 @@ type HyperliquidTrader struct {
 	ctx              context.Context
 	walletAddr       string
 	meta             *hyperliquid.Meta // 缓存meta信息（包含精度等）
-	assetMap         map[string]int    // HIP-3 名称 -> assetId (补充SDK缺失的股票映射)
-	testnet          bool              // 当前是否为测试网
+	spotMeta         *hyperliquid.SpotMeta
+	assetMap         map[string]int // HIP-3 名称 -> assetId (补充SDK缺失的股票映射)
+	testnet          bool           // 当前是否为测试网
 	hip3Meta         map[string]PerpMetaAssetLite
 	isCrossMargin    bool // 是否为全仓模式
 	orderMu          sync.Mutex
@@ -519,6 +591,10 @@ type HyperliquidTrader struct {
 	agentPrivateKey *ecdsa.PrivateKey // Agent 签名私钥，用于自定义 action
 	apiBaseURL      string            // Exchange 基础地址
 	abstractionOnce sync.Once         // 只尝试一次开启 DEX 抽象
+
+	// 抵押资产缓存：dex -> collateral token index；token index -> token 元信息
+	dexCollateral    map[string]int
+	collateralTokens map[int]hyperliquid.SpotTokenInfo
 }
 
 const hyenaBuilderAddress = "0x1924b8561eeF20e70Ede628A296175D358BE80e5"
@@ -676,6 +752,12 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 		return nil, fmt.Errorf("获取meta信息失败: %w", err)
 	}
 
+	// 获取抵押资产映射与 spotMeta
+	dexCollateral, tokenByIndex, spotMeta, err := loadCollateralInfo(testnet)
+	if err != nil {
+		return nil, fmt.Errorf("获取抵押资产信息失败: %w", err)
+	}
+
 	// 🔍 Security check: Validate Agent wallet balance (should be close to 0)
 	// Only check if using separate Agent wallet (not when main wallet is used as agent)
 	if !strings.EqualFold(walletAddr, agentAddr) {
@@ -723,6 +805,9 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 		takeProfitOrders: make(map[string]orderRef),
 		agentPrivateKey:  privateKey,
 		apiBaseURL:       apiURL,
+		dexCollateral:    dexCollateral,
+		collateralTokens: tokenByIndex,
+		spotMeta:         spotMeta,
 	}
 
 	// 构建 asset 映射并同步到 SDK，防止 HIP-3 股票被映射到资产 0 (BTC)
@@ -1214,6 +1299,54 @@ func (t *HyperliquidTrader) SetLeverage(symbol string, leverage int) error {
 
 	log.Printf("  ✓ %s 杠杆已切换为 %dx (isCross=%t)", symbol, leverage, isCross)
 	return nil
+}
+
+// loadCollateralInfo 拉取各 dex 的抵押资产映射及 spot token 信息
+func loadCollateralInfo(testnet bool) (map[string]int, map[int]hyperliquid.SpotTokenInfo, *hyperliquid.SpotMeta, error) {
+	dexes := []string{"", "xyz", "flx", "vntl", "hyna"}
+	dexCollateral := make(map[string]int)
+
+	// fetch spot meta once
+	spotMeta, err := fetchSpotMeta(testnet)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("获取 spotMeta 失败: %w", err)
+	}
+	tokenByIndex := make(map[int]hyperliquid.SpotTokenInfo)
+	for _, t := range spotMeta.Tokens {
+		tokenByIndex[t.Index] = t
+	}
+
+	for _, dex := range dexes {
+		raw, err := fetchMetaForDex(testnet, dex)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("获取 meta(dex=%s) 失败: %w", dexLabel(dex), err)
+		}
+		val, ok := raw["collateralToken"]
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("meta(dex=%s) 缺少 collateralToken", dexLabel(dex))
+		}
+		var idx int
+		switch v := val.(type) {
+		case float64:
+			idx = int(v)
+		case int:
+			idx = v
+		default:
+			return nil, nil, nil, fmt.Errorf("meta(dex=%s) collateralToken 类型未知: %T", dexLabel(dex), val)
+		}
+		dexCollateral[dex] = idx
+
+		// 打印日志
+		tokenName := "unknown"
+		szDec := 0
+		if t, ok := tokenByIndex[idx]; ok {
+			tokenName = t.Name
+			szDec = t.SzDecimals
+		}
+		log.Printf("💱 DEX=%s collateralToken index=%d name=%s szDecimals=%d", dexLabel(dex), idx, tokenName, szDec)
+	}
+
+	return dexCollateral, tokenByIndex, spotMeta, nil
 }
 
 // enableDexAbstractionOnce 尝试开启 HIP-3 DEX 抽象模式（agent 签名），失败不阻塞
