@@ -3261,6 +3261,13 @@ func (t *HyperliquidTrader) resolveCoin(symbol string, assetType string) (string
 				return k, nil
 			}
 		}
+
+		// crypto 未匹配到时，尝试通过 allPerpMetas 解析 HIP-3 / 其它 dex 资产（如 hyna:LIGHTER）
+		if coinFromInfo, err := t.resolveFromInfoAPI(coin, false); err == nil && coinFromInfo != "" {
+			log.Printf("🔄 InfoAPI 匹配到扩展资产: %s (请求符号: %s)", coinFromInfo, symbol)
+			return coinFromInfo, nil
+		}
+
 		return "", fmt.Errorf("未找到交易对: %s", symbol)
 	}
 
