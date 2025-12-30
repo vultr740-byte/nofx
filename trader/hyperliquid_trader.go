@@ -388,52 +388,63 @@ func (t *HyperliquidTrader) fetchHip3PriceFromAssetCtx(coin string) (float64, er
 		return 0, fmt.Errorf("metaAndAssetCtxs 返回状态码 %d: %s", resp.StatusCode, string(body))
 	}
 
-	var payloadResp []struct {
-		Universe  []PerpMetaAssetLite          `json:"universe"`
-		AssetCtxs []map[string]json.RawMessage `json:"assetCtxs"`
-	}
-	if err := json.Unmarshal(body, &payloadResp); err != nil {
+	// 新格式：数组 [meta, assetCtxs]
+	var arr []json.RawMessage
+	if err := json.Unmarshal(body, &arr); err != nil {
 		return 0, fmt.Errorf("解析 metaAndAssetCtxs 失败: %w", err)
 	}
+	if len(arr) != 2 {
+		return 0, fmt.Errorf("metaAndAssetCtxs 返回意外结构，len=%d", len(arr))
+	}
 
-	for _, dex := range payloadResp {
-		for idx, asset := range dex.Universe {
-			if normalizeHip3Symbol(asset.Name) != coin {
-				continue
-			}
-			if idx >= len(dex.AssetCtxs) {
-				return 0, fmt.Errorf("assetCtxs 缺少 %s 的上下文", coin)
-			}
-			ctxMap := dex.AssetCtxs[idx]
-			// 优先 midPx -> markPx -> oraclePx
-			parsePrice := func(key string) (float64, bool) {
-				raw, ok := ctxMap[key]
-				if !ok || len(raw) == 0 || string(raw) == "null" {
-					return 0, false
-				}
-				var s string
-				if err := json.Unmarshal(raw, &s); err == nil {
-					if f, err := strconv.ParseFloat(s, 64); err == nil {
-						return f, true
-					}
-				}
-				var f float64
-				if err := json.Unmarshal(raw, &f); err == nil && f != 0 {
-					return f, true
-				}
+	var meta struct {
+		Universe []PerpMetaAssetLite `json:"universe"`
+	}
+	if err := json.Unmarshal(arr[0], &meta); err != nil {
+		return 0, fmt.Errorf("解析 metaAndAssetCtxs meta 失败: %w", err)
+	}
+
+	var assetCtxs []map[string]json.RawMessage
+	if err := json.Unmarshal(arr[1], &assetCtxs); err != nil {
+		return 0, fmt.Errorf("解析 metaAndAssetCtxs assetCtxs 失败: %w", err)
+	}
+
+	for idx, asset := range meta.Universe {
+		if normalizeHip3Symbol(asset.Name) != coin {
+			continue
+		}
+		if idx >= len(assetCtxs) {
+			return 0, fmt.Errorf("assetCtxs 缺少 %s 的上下文", coin)
+		}
+		ctxMap := assetCtxs[idx]
+		// 优先 midPx -> markPx -> oraclePx
+		parsePrice := func(key string) (float64, bool) {
+			raw, ok := ctxMap[key]
+			if !ok || len(raw) == 0 || string(raw) == "null" {
 				return 0, false
 			}
-			if v, ok := parsePrice("midPx"); ok {
-				return v, nil
+			var s string
+			if err := json.Unmarshal(raw, &s); err == nil {
+				if f, err := strconv.ParseFloat(s, 64); err == nil {
+					return f, true
+				}
 			}
-			if v, ok := parsePrice("markPx"); ok {
-				return v, nil
+			var f float64
+			if err := json.Unmarshal(raw, &f); err == nil && f != 0 {
+				return f, true
 			}
-			if v, ok := parsePrice("oraclePx"); ok {
-				return v, nil
-			}
-			return 0, fmt.Errorf("未找到 %s 的 mid/mark/oracle 价格", coin)
+			return 0, false
 		}
+		if v, ok := parsePrice("midPx"); ok {
+			return v, nil
+		}
+		if v, ok := parsePrice("markPx"); ok {
+			return v, nil
+		}
+		if v, ok := parsePrice("oraclePx"); ok {
+			return v, nil
+		}
+		return 0, fmt.Errorf("未找到 %s 的 mid/mark/oracle 价格", coin)
 	}
 
 	return 0, fmt.Errorf("metaAndAssetCtxs 未找到交易对: %s", coin)
