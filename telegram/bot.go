@@ -688,18 +688,21 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 	}
 
 	// 生成充值消息（使用与首次创建相同的地址展示格式，方便复制）
-	depositMsg := fmt.Sprintf(`🏦 USDC 充值地址（Arbitrum 网络）
+	depositMsg := fmt.Sprintf(`🏦 Hyperliquid 充值地址（Arbitrum 网络）
 
 <code>%s</code>（点击复制）
 
 📋 充值说明:
-• 支持资产: USDC
-• 支持网络: Arbitrum One
-• 最小充值: 20 USDC
+• 优先充值 USDC，系统会在下单前自动兑换到目标抵押资产
+  - main / xyz: USDC
+  - flx / vntl: USDH
+  - hyna: USDE
+• 网络: Arbitrum One
+• 建议最小充值: 20 USDC
 • 到账时间: 通常 2-5 分钟
 
 ⚠️ 注意事项:
-• 请勿充值其他资产到该地址
+• 仅支持 Arbitrum 网络转账
 • 充值后可在 /balance 查看余额`, esc(walletAddr))
 
 	tbm.sendMessage(chatID, depositMsg)
