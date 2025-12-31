@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"math/big"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -1960,6 +1961,14 @@ func (tbm *TelegramBotManager) PushDecisionToUser(telegramID int64, decisionMsg 
 	successCount := 0
 	failedChunks := make([]int, 0)
 
+	// 使用 sendMessageDraft 流式更新同一草稿（仅在私聊可见，失败则忽略）
+	draftID := rand.Int31n(1<<30) + 1 // 非零
+	for i, chunk := range rawChunks {
+		chunkNum := i + 1
+		enhancedChunk := tbm.enhanceChunkWithNavigation(decisionChunk{Text: chunk, IsJSON: strings.Contains(chunk, "```json")}, chunkNum, totalChunks)
+		_ = tbm.sendMessageDraft(telegramID, int(draftID), enhancedChunk) // 流式展示；失败忽略
+	}
+
 	for i, chunk := range rawChunks {
 		chunkNum := i + 1
 		enhancedChunk := tbm.enhanceChunkWithNavigation(decisionChunk{Text: chunk, IsJSON: strings.Contains(chunk, "```json")}, chunkNum, totalChunks)
@@ -2146,6 +2155,24 @@ func (tbm *TelegramBotManager) sendSimplifiedChunk(telegramID int64, chunk decis
 
 	msg := tgbotapi.NewMessage(telegramID, simplifiedContent)
 	_, err := tbm.bot.Send(msg)
+	return err
+}
+
+// sendMessageDraft 使用 sendMessageDraft 流式更新草稿（失败由调用方决定是否忽略）
+func (tbm *TelegramBotManager) sendMessageDraft(chatID int64, draftID int, text string) error {
+	if tbm.bot == nil {
+		return fmt.Errorf("Telegram Bot未初始化")
+	}
+	if draftID == 0 {
+		draftID = 1
+	}
+	params := map[string]string{
+		"chat_id":    strconv.FormatInt(chatID, 10),
+		"draft_id":   strconv.Itoa(draftID),
+		"text":       text,
+		"parse_mode": "HTML",
+	}
+	_, err := tbm.bot.MakeRequest("sendMessageDraft", params)
 	return err
 }
 
