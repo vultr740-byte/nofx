@@ -936,9 +936,9 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 		availableBalance = 0
 	}
 
-	// ✅ Step 5: 采用 JavaScript 计算方式
-	// 直接使用 accountValue 作为总资产，避免重复计算现货余额
-	totalWalletBalance := accountValue
+	// ✅ Step 5: 计算总资产
+	// Hyperliquid 的 AccountValue 仅覆盖 Perpetuals 账户，不包含现货余额，因此需要与 Spot 余额相加
+	totalWalletBalance := accountValue + spotUSDCBalance
 
 	result["totalWalletBalance"] = totalWalletBalance    // 总资产（使用 accountValue）
 	result["availableBalance"] = availableBalance        // 可用余额（Withdrawable 字段）
