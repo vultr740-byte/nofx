@@ -143,6 +143,25 @@ func (s *HyperliquidService) FetchBalance(agentKey, walletAddr string, testnet b
 		return nil, fmt.Errorf("获取余额失败: %w", err)
 	}
 
+	// 若存在现货 USDC 余额，自动划转到合约账户后重新获取余额
+	if spotBalance, ok := balance["spotBalance"].(float64); ok && spotBalance > 0.0001 {
+		if err := trader.TransferSpotToPerp(spotBalance); err != nil {
+			log.Printf("⚠️ 现货自动划转失败: %v", err)
+			balance["autoTransferError"] = err.Error()
+		} else {
+			log.Printf("🔄 已自动将现货 %.4f USDC 划转至合约账户", spotBalance)
+			balance["autoTransferred"] = spotBalance
+
+			// 重新获取余额以展示划转后的数值
+			if refreshed, err := trader.GetBalance(); err == nil {
+				balance = refreshed
+				balance["autoTransferred"] = spotBalance
+			} else {
+				log.Printf("⚠️ 划转后刷新余额失败: %v", err)
+			}
+		}
+	}
+
 	return balance, nil
 }
 
@@ -229,6 +248,8 @@ func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}
 	totalUnrealizedProfit, _ := balance["totalUnrealizedProfit"].(float64)
 	spotBalance, _ := balance["spotBalance"].(float64)
 	totalPosition, _ := balance["totalPosition"].(float64)
+	autoTransferred, _ := balance["autoTransferred"].(float64)
+	autoTransferErr, _ := balance["autoTransferError"].(string)
 
 	// 计算盈亏百分比
 	var profitPercent float64
@@ -261,6 +282,13 @@ func (s *HyperliquidService) formatBalanceMessage(balance map[string]interface{}
 		totalUnrealizedProfit,
 		profitPercent,
 	)
+
+	if autoTransferred > 0 {
+		message += fmt.Sprintf("\n🔄 已自动将现货 %.2f USDC 划转至合约账户", autoTransferred)
+	}
+	if autoTransferErr != "" {
+		message += fmt.Sprintf("\n⚠️ 自动划转失败: %s", autoTransferErr)
+	}
 
 	return message
 }

@@ -970,6 +970,19 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	return result, nil
 }
 
+// TransferSpotToPerp 将 USDC 从现货账户划转到合约账户
+func (t *HyperliquidTrader) TransferSpotToPerp(amount float64) error {
+	if amount <= 0 {
+		return nil
+	}
+	log.Printf("🔄 正在将 %.4f USDC 从 Spot 划转到 Perp...", amount)
+	if _, err := t.exchange.UsdClassTransfer(t.ctx, amount, true); err != nil {
+		return fmt.Errorf("Spot->Perp 划转失败: %w", err)
+	}
+	log.Printf("✅ Spot->Perp 划转完成: %.4f USDC", amount)
+	return nil
+}
+
 // fetchUserStateWithDex 调用 clearinghouseState，支持 dex 参数以获取不同 perp 市场（含 HIP-3）
 func (t *HyperliquidTrader) fetchUserStateWithDex(dex string) (*hyperliquid.UserState, error) {
 	payload := map[string]interface{}{
