@@ -143,6 +143,34 @@ func (s *HyperliquidService) FetchBalance(agentKey, walletAddr string, testnet b
 		return nil, fmt.Errorf("获取余额失败: %w", err)
 	}
 
+	return balance, nil
+}
+
+// GetBalance 获取余额并格式化为 Telegram 消息
+func (s *HyperliquidService) GetBalance(agentKey, walletAddr string, testnet bool) (string, error) {
+	balance, err := s.FetchBalance(agentKey, walletAddr, testnet)
+	if err != nil {
+		return "", err
+	}
+
+	// 格式化余额信息
+	return s.formatBalanceMessage(balance), nil
+}
+
+// GetBalanceWithAutoTransfer 仅在明确请求（如 /balance 命令）时自动将现货划转至合约
+func (s *HyperliquidService) GetBalanceWithAutoTransfer(agentKey, walletAddr string, testnet bool) (string, error) {
+	// 创建 Hyperliquid 交易器
+	trader, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
+	if err != nil {
+		return "", fmt.Errorf("创建 Hyperliquid 交易器失败: %w", err)
+	}
+
+	// 获取初始余额
+	balance, err := trader.GetBalance()
+	if err != nil {
+		return "", fmt.Errorf("获取余额失败: %w", err)
+	}
+
 	// 若存在现货 USDC 余额，自动划转到合约账户后重新获取余额
 	if spotBalance, ok := balance["spotBalance"].(float64); ok && spotBalance > 0.0001 {
 		if err := trader.TransferSpotToPerp(spotBalance); err != nil {
@@ -162,17 +190,6 @@ func (s *HyperliquidService) FetchBalance(agentKey, walletAddr string, testnet b
 		}
 	}
 
-	return balance, nil
-}
-
-// GetBalance 获取余额并格式化为 Telegram 消息
-func (s *HyperliquidService) GetBalance(agentKey, walletAddr string, testnet bool) (string, error) {
-	balance, err := s.FetchBalance(agentKey, walletAddr, testnet)
-	if err != nil {
-		return "", err
-	}
-
-	// 格式化余额信息
 	return s.formatBalanceMessage(balance), nil
 }
 

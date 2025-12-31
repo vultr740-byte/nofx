@@ -335,8 +335,8 @@ func (tbm *TelegramBotManager) handleBalance(update tgbotapi.Update) {
 		return
 	}
 
-	// 查询余额
-	balanceMsg, err := tbm.hlService.GetBalance(agentKey, walletAddr, tbm.testnet)
+	// 查询余额（并在此处显式触发现货->合约划转）
+	balanceMsg, err := tbm.hlService.GetBalanceWithAutoTransfer(agentKey, walletAddr, tbm.testnet)
 	if err != nil {
 		log.Printf("查询余额失败: %v", err)
 		tbm.sendMessage(chatID, "❌ 查询余额失败，请稍后重试")
