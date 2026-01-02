@@ -2,19 +2,18 @@ package trader
 
 import (
 	"context"
-	"encoding/json"
+	"log"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/sonirico/go-hyperliquid"
-	"nofx/hyperws"
 )
 
 // accountFeed 通过 WS 订阅 allDexsClearinghouseState，缓存多 dex 账户状态，减少 HTTP 调用。
 type accountFeed struct {
 	mu        sync.RWMutex
-	byDex     map[string]hyperliquid.UserState
+	byDex     map[string]hyperliquid.ClearinghouseState
 	updatedAt time.Time
 }
 
@@ -26,7 +25,7 @@ var accountFeedSingleton struct {
 func getAccountFeed() *accountFeed {
 	accountFeedSingleton.once.Do(func() {
 		accountFeedSingleton.feed = &accountFeed{
-			byDex: make(map[string]hyperliquid.UserState),
+			byDex: make(map[string]hyperliquid.ClearinghouseState),
 		}
 	})
 	return accountFeedSingleton.feed
@@ -37,56 +36,52 @@ func startAccountFeed(ctx context.Context, wallet string, testnet bool) {
 	f := getAccountFeed()
 
 	go func() {
-		url := "wss://api.hyperliquid.xyz/ws"
+		base := hyperliquid.MainnetAPIURL
 		if testnet {
-			url = "wss://api.hyperliquid-testnet.xyz/ws"
+			base = hyperliquid.TestnetAPIURL
 		}
-		man := hyperws.Get(url)
-		payload := map[string]interface{}{
-			"method": "subscribe",
-			"subscription": map[string]interface{}{
-				"type": "allDexsClearinghouseState",
-				"user": strings.ToLower(wallet),
+
+		cli := hyperliquid.NewWebsocketClient(base)
+		_, err := cli.AllDexsClearinghouseState(
+			hyperliquid.AllDexsClearinghouseStateSubscriptionParams{
+				User: strings.ToLower(wallet),
 			},
+			func(msg hyperliquid.AllDexsClearinghouseState, err error) {
+				if err != nil {
+					log.Printf("⚠️ accountFeed ws error: %v", err)
+					return
+				}
+				f.handleAllDexsMsg(msg)
+			},
+		)
+		if err != nil {
+			log.Printf("⚠️ accountFeed subscribe failed: %v", err)
+			return
 		}
-		man.Subscribe("allDexsClearinghouseState", payload, func(_ string, data json.RawMessage) {
-			f.handleAllDexsMsg(data)
-		})
+
+		if err := cli.Connect(ctx); err != nil {
+			log.Printf("⚠️ accountFeed connect failed: %v", err)
+			return
+		}
+
+		<-ctx.Done()
+		_ = cli.Close()
 	}()
 }
 
-func (f *accountFeed) handleAllDexsMsg(data json.RawMessage) {
-	var payload struct {
-		User                string              `json:"user"`
-		ClearinghouseStates [][]json.RawMessage `json:"clearinghouseStates"`
-	}
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return
-	}
-
+func (f *accountFeed) handleAllDexsMsg(msg hyperliquid.AllDexsClearinghouseState) {
 	now := time.Now()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	for _, pair := range payload.ClearinghouseStates {
-		if len(pair) != 2 {
-			continue
-		}
-		var dex string
-		if err := json.Unmarshal(pair[0], &dex); err != nil {
-			continue
-		}
-		var state hyperliquid.UserState
-		if err := json.Unmarshal(pair[1], &state); err != nil {
-			continue
-		}
-		f.byDex[dex] = state
+	for _, pair := range msg.ClearinghouseStates {
+		f.byDex[pair.First] = pair.Second
 	}
 	f.updatedAt = now
 }
 
 // getUserState 从缓存获取指定 dex 的 state；freshWithin 表示可接受的最新时间窗口。
-func (f *accountFeed) getUserState(dex string, freshWithin time.Duration) (*hyperliquid.UserState, bool) {
+func (f *accountFeed) getUserState(dex string, freshWithin time.Duration) (*hyperliquid.ClearinghouseState, bool) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	if f.updatedAt.IsZero() || time.Since(f.updatedAt) > freshWithin {
