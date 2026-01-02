@@ -257,6 +257,23 @@ func fetchSpotMeta(testnet bool) (*hyperliquid.SpotMeta, error) {
 	return &sm, nil
 }
 
+// getPriceFromWSCached 尝试从 WS allMids 缓存获取价格，返回值及命中标记
+func (t *HyperliquidTrader) getPriceFromWSCached(coin string) (float64, bool) {
+	ws := getWSManager(t.testnet)
+	if ws == nil {
+		return 0, false
+	}
+	mids, ok := ws.getAllMids(1500 * time.Millisecond)
+	if !ok {
+		return 0, false
+	}
+	coin = normalizeHip3Symbol(coin)
+	if px, exists := mids[coin]; exists && px > 0 {
+		return px, true
+	}
+	return 0, false
+}
+
 // fetchPriceFromInfoAPI 调用 Info API allMids 获取价格（用于AllMids缺失时兜底）
 func (t *HyperliquidTrader) fetchPriceFromInfoAPI(coin string) (float64, error) {
 	coin = normalizeHip3Symbol(coin)
@@ -297,6 +314,29 @@ func (t *HyperliquidTrader) fetchPriceFromInfoAPI(coin string) (float64, error) 
 	}
 
 	return 0, fmt.Errorf("allMids 未找到价格: %s", coin)
+}
+
+// getMidPrice 优先使用 WS allMids 缓存，失败再调用 HTTP allMids
+func (t *HyperliquidTrader) getMidPrice(coin string) (float64, error) {
+	if px, ok := t.getPriceFromWSCached(coin); ok {
+		return px, nil
+	}
+	return t.fetchPriceFromInfoAPI(coin)
+}
+
+// getAllMidsMap 优先使用 WS 缓存，失败再调用 HTTP 接口
+func (t *HyperliquidTrader) getAllMidsMap() (map[string]string, error) {
+	ws := getWSManager(t.testnet)
+	if ws != nil {
+		if mids, ok := ws.getAllMids(1500 * time.Millisecond); ok && len(mids) > 0 {
+			res := make(map[string]string, len(mids))
+			for k, v := range mids {
+				res[k] = fmt.Sprintf("%f", v)
+			}
+			return res, nil
+		}
+	}
+	return t.exchange.Info().AllMids(t.ctx)
 }
 
 // fetchPriceFromRecentTrades 调用 Info API recentTrades 获取最新成交价（用于HIP-3等特殊资产）
@@ -2619,36 +2659,20 @@ func (t *HyperliquidTrader) GetMarketPrice(symbol string) (float64, error) {
 			log.Printf("⚠️ recentTrades 获取价格失败: %v", err)
 		}
 
-		// 3) 再尝试 InfoAPI allMids
-		if priceFloat, err := t.fetchPriceFromInfoAPI(coin); err == nil {
-			log.Printf("🔄 使用 InfoAPI allMids 获取价格成功: %s = %.6f", coin, priceFloat)
+		// 3) 再尝试 allMids（先 WS 后 HTTP）
+		if priceFloat, err := t.getMidPrice(coin); err == nil {
+			log.Printf("🔄 使用 allMids 获取价格成功: %s = %.6f", coin, priceFloat)
 			return priceFloat, nil
 		} else {
-			log.Printf("⚠️ InfoAPI allMids 获取价格失败: %v", err)
+			log.Printf("⚠️ allMids 获取价格失败: %v", err)
 		}
 	}
 
-	// 获取所有市场价格
-	allMids, err := t.exchange.Info().AllMids(t.ctx)
-	if err != nil {
-		return 0, fmt.Errorf("获取价格失败: %w", err)
-	}
-
-	// 查找对应币种的价格（allMids是map[string]string）
-	if priceStr, ok := allMids[coin]; ok {
-		priceFloat, err := strconv.ParseFloat(priceStr, 64)
-		if err == nil {
-			return priceFloat, nil
-		}
-		return 0, fmt.Errorf("价格格式错误: %v", err)
-	}
-
-	// 使用 Info API allMids 兜底获取价格
-	if priceFloat, err := t.fetchPriceFromInfoAPI(coin); err == nil {
-		log.Printf("🔄 使用 InfoAPI allMids 获取价格成功: %s = %.6f", coin, priceFloat)
+	// 加载 allMids（优先 WS，失败再 HTTP）
+	if priceFloat, err := t.getMidPrice(coin); err == nil {
 		return priceFloat, nil
 	} else {
-		log.Printf("⚠️ InfoAPI allMids 获取价格失败: %v", err)
+		log.Printf("⚠️ allMids 获取价格失败: %v", err)
 	}
 
 	// 使用 recentTrades 兜底获取最新成交价
@@ -3225,16 +3249,12 @@ func (t *HyperliquidTrader) diagnosePriceIssues(symbol string) error {
 	// Test price fetching from multiple sources
 	prices := make(map[string]float64)
 
-	// Test AllMids
-	if allMids, err := t.exchange.Info().AllMids(t.ctx); err == nil {
-		if priceStr, ok := allMids[coin]; ok {
-			if price, err := strconv.ParseFloat(priceStr, 64); err == nil {
-				prices["AllMids"] = price
-				log.Printf("📊 AllMids价格: %s = %.6f", coin, price)
-			}
-		}
+	// Test allMids (WS 优先)
+	if price, err := t.getMidPrice(coin); err == nil {
+		prices["AllMids"] = price
+		log.Printf("📊 AllMids价格: %s = %.6f", coin, price)
 	} else {
-		log.Printf("⚠️ AllMids API失败: %v", err)
+		log.Printf("⚠️ AllMids 获取失败: %v", err)
 	}
 
 	// Test recentTrades (for stocks)
@@ -3245,14 +3265,6 @@ func (t *HyperliquidTrader) diagnosePriceIssues(symbol string) error {
 		} else {
 			log.Printf("⚠️ recentTrades API失败: %v", err)
 		}
-	}
-
-	// Test Info API
-	if price, err := t.fetchPriceFromInfoAPI(coin); err == nil {
-		prices["InfoAPI"] = price
-		log.Printf("💾 InfoAPI价格: %s = %.6f", coin, price)
-	} else {
-		log.Printf("⚠️ InfoAPI失败: %v", err)
 	}
 
 	if len(prices) == 0 {
@@ -3316,7 +3328,7 @@ func (t *HyperliquidTrader) resolveCoin(symbol string, assetType string) (string
 	loweredAssetType := strings.ToLower(strings.TrimSpace(assetType))
 	// crypto 类型：仅走 AllMids / 直接匹配，不做 HIP-3 映射
 	if loweredAssetType == "crypto" || loweredAssetType == "" {
-		allMids, err := t.exchange.Info().AllMids(t.ctx)
+		allMids, err := t.getAllMidsMap()
 		if err != nil {
 			return "", fmt.Errorf("获取交易对列表失败: %w", err)
 		}
@@ -3340,7 +3352,7 @@ func (t *HyperliquidTrader) resolveCoin(symbol string, assetType string) (string
 	}
 
 	// 查询所有mid价格以获取有效交易对列表
-	allMids, err := t.exchange.Info().AllMids(t.ctx)
+	allMids, err := t.getAllMidsMap()
 	if err != nil {
 		return "", fmt.Errorf("获取交易对列表失败: %w", err)
 	}
@@ -3573,7 +3585,7 @@ func roundToDecimalsLocal(v float64, decimals int) float64 {
 // 当其他方法无法确定时，使用触发价格与当前价格的相对关系来判断
 func (t *HyperliquidTrader) classifyOrderByPriceHeuristic(ord hyperliquid.FrontendOpenOrder, positionSide string, triggerPx float64) string {
 	// 获取当前市场价格
-	allMids, err := t.exchange.Info().AllMids(t.ctx)
+	allMids, err := t.getAllMidsMap()
 	if err != nil {
 		log.Printf("⚠️ 获取市场价格失败，无法进行启发式判断: %v", err)
 		return ""
