@@ -639,6 +639,8 @@ type HyperliquidTrader struct {
 	stopLossOrders   map[string]orderRef // symbol -> 最近一次止损挂单
 	takeProfitOrders map[string]orderRef // symbol -> 最近一次止盈挂单
 
+	wsManager *hyperliquidWSManager // WS 管理器（缓存 allMids / openOrders）
+
 	agentPrivateKey *ecdsa.PrivateKey // Agent 签名私钥，用于自定义 action
 	apiBaseURL      string            // Exchange 基础地址
 	abstractionOnce sync.Once         // 只尝试一次开启 DEX 抽象
@@ -852,6 +854,7 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 		exchange:           exchange,
 		ctx:                ctx,
 		walletAddr:         walletAddr,
+		wsManager:          getWSManager(testnet),
 		meta:               meta,
 		spotMeta:           spotMeta,
 		assetMap:           make(map[string]int),
