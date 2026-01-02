@@ -3,21 +3,23 @@ module nofx
 go 1.25.3
 
 require (
-	github.com/adshao/go-binance/v2 v2.8.7
-	github.com/ethereum/go-ethereum v1.16.7
-	github.com/gin-gonic/gin v1.11.0
-	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
-	github.com/golang-jwt/jwt/v5 v5.2.0
-	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.3
-	github.com/jackc/pgx/v5 v5.7.1
-	github.com/joho/godotenv v1.5.1
-	github.com/pquerna/otp v1.4.0
-	github.com/sirupsen/logrus v1.9.3
-	github.com/sonirico/go-hyperliquid v0.26.0
-	golang.org/x/crypto v0.42.0
-	modernc.org/sqlite v1.40.0
+    github.com/adshao/go-binance/v2 v2.8.7
+    github.com/ethereum/go-ethereum v1.16.7
+    github.com/gin-gonic/gin v1.11.0
+    github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
+    github.com/golang-jwt/jwt/v5 v5.2.0
+    github.com/google/uuid v1.6.0
+    github.com/gorilla/websocket v1.5.3
+    github.com/jackc/pgx/v5 v5.7.1
+    github.com/joho/godotenv v1.5.1
+    github.com/pquerna/otp v1.4.0
+    github.com/sirupsen/logrus v1.9.3
+    github.com/sonirico/go-hyperliquid v0.26.0
+    golang.org/x/crypto v0.42.0
+    modernc.org/sqlite v1.40.0
 )
+
+replace github.com/sonirico/go-hyperliquid => ./third_party/go-hyperliquid
 
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
