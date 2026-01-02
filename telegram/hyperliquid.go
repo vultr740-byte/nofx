@@ -592,9 +592,12 @@ func categorizeStocks(assets []PerpMetaAsset) []StockCategory {
 		})
 	}
 
-	// 按市场名称排序
+	// 按组内资产数量降序，数量相同再按市场名升序
 	sort.Slice(categories, func(i, j int) bool {
-		return categories[i].Name < categories[j].Name
+		if len(categories[i].List) == len(categories[j].List) {
+			return categories[i].Name < categories[j].Name
+		}
+		return len(categories[i].List) > len(categories[j].List)
 	})
 
 	return categories
