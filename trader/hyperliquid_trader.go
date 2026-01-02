@@ -342,6 +342,13 @@ func (t *HyperliquidTrader) getAllMidsMap() (map[string]string, error) {
 
 // fetchPriceFromRecentTrades 调用 Info API recentTrades 获取最新成交价（用于HIP-3等特殊资产）
 func (t *HyperliquidTrader) fetchPriceFromRecentTrades(coin string) (float64, error) {
+	// 优先使用 WS trades，避免额外 HTTP
+	if ws := getWSManager(t.testnet); ws != nil {
+		if px, ok := ws.getLastTradePrice(2*time.Second, normalizeHip3Symbol(coin)); ok {
+			return px, nil
+		}
+	}
+
 	coin = normalizeHip3Symbol(coin)
 	payload := []byte(fmt.Sprintf(`{"type":"recentTrades","coin":%q}`, coin))
 	req, err := http.NewRequest("POST", infoAPIURL(t.testnet), bytes.NewBuffer(payload))

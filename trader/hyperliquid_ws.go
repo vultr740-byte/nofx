@@ -16,6 +16,11 @@ type hyperliquidWSManager struct {
 	allMids  map[string]map[string]float64 // dex -> coin -> mid
 	midsMu   sync.RWMutex
 	lastMids map[string]time.Time // dex -> time
+
+	tradesMu      sync.RWMutex
+	lastTrades    map[string]float64   // coin -> last trade price
+	lastTradesAt  map[string]time.Time // coin -> time
+	tradeSubsOnce map[string]struct{}  // coin -> subscribed
 }
 
 func newHyperliquidWSManager(testnet bool) *hyperliquidWSManager {
@@ -32,9 +37,12 @@ func newHyperliquidWSManager(testnet bool) *hyperliquidWSManager {
 	}
 
 	m := &hyperliquidWSManager{
-		client:   ws,
-		allMids:  make(map[string]map[string]float64),
-		lastMids: make(map[string]time.Time),
+		client:        ws,
+		allMids:       make(map[string]map[string]float64),
+		lastMids:      make(map[string]time.Time),
+		lastTrades:    make(map[string]float64),
+		lastTradesAt:  make(map[string]time.Time),
+		tradeSubsOnce: make(map[string]struct{}),
 	}
 
 	// 订阅默认 perp 及常见 dex 列表
@@ -90,6 +98,58 @@ func (m *hyperliquidWSManager) getAllMids(ttl time.Duration, dex string) (map[st
 		mids[k] = v
 	}
 	return mids, true
+}
+
+// getLastTradePrice 返回指定币种最近成交价（在 TTL 内）。若未订阅则自动订阅 trades。
+func (m *hyperliquidWSManager) getLastTradePrice(ttl time.Duration, coin string) (float64, bool) {
+	if m == nil {
+		return 0, false
+	}
+
+	// fast path: cached & fresh
+	m.tradesMu.RLock()
+	price, ok := m.lastTrades[coin]
+	ts, okTs := m.lastTradesAt[coin]
+	m.tradesMu.RUnlock()
+	if ok && okTs && time.Since(ts) <= ttl {
+		return price, true
+	}
+
+	// ensure subscription once
+	m.tradesMu.Lock()
+	if _, subbed := m.tradeSubsOnce[coin]; !subbed {
+		coinCopy := coin
+		_, err := m.client.Trades(
+			hyperliquid.TradesSubscriptionParams{Coin: coinCopy},
+			func(trades []hyperliquid.Trade, err error) {
+				if err != nil || len(trades) == 0 {
+					return
+				}
+				// 取数组最后一个视为最新成交
+				last := trades[len(trades)-1]
+				if px, err2 := strconv.ParseFloat(last.Px, 64); err2 == nil {
+					m.tradesMu.Lock()
+					m.lastTrades[coinCopy] = px
+					m.lastTradesAt[coinCopy] = time.Now()
+					m.tradesMu.Unlock()
+				}
+			},
+		)
+		if err == nil {
+			m.tradeSubsOnce[coin] = struct{}{}
+		}
+	}
+	m.tradesMu.Unlock()
+
+	// 再检查一次缓存（防止第一次订阅后立刻可用）
+	m.tradesMu.RLock()
+	price, ok = m.lastTrades[coin]
+	ts, okTs = m.lastTradesAt[coin]
+	m.tradesMu.RUnlock()
+	if ok && okTs && time.Since(ts) <= ttl {
+		return price, true
+	}
+	return 0, false
 }
 
 var (
