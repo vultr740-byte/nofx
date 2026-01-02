@@ -708,12 +708,8 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 <code>%s</code>（点击复制）
 
 📋 充值说明:
-• 优先充值 USDC，系统会在下单前自动兑换到目标抵押资产
-  - main / xyz: USDC
-  - flx / vntl: USDH
-  - hyna: USDE
 • 网络: Arbitrum One
-• 建议最小充值: 20 USDC
+• 最小充值: 20 USDC
 • 到账时间: 通常 2-5 分钟
 
 ⚠️ 注意事项:
