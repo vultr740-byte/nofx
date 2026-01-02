@@ -258,12 +258,12 @@ func fetchSpotMeta(testnet bool) (*hyperliquid.SpotMeta, error) {
 }
 
 // getPriceFromWSCached 尝试从 WS allMids 缓存获取价格，返回值及命中标记
-func (t *HyperliquidTrader) getPriceFromWSCached(coin string) (float64, bool) {
+func (t *HyperliquidTrader) getPriceFromWSCached(coin string, dex string) (float64, bool) {
 	ws := getWSManager(t.testnet)
 	if ws == nil {
 		return 0, false
 	}
-	mids, ok := ws.getAllMids(1500 * time.Millisecond)
+	mids, ok := ws.getAllMids(1500*time.Millisecond, dex)
 	if !ok {
 		return 0, false
 	}
@@ -318,7 +318,8 @@ func (t *HyperliquidTrader) fetchPriceFromInfoAPI(coin string) (float64, error) 
 
 // getMidPrice 优先使用 WS allMids 缓存，失败再调用 HTTP allMids
 func (t *HyperliquidTrader) getMidPrice(coin string) (float64, error) {
-	if px, ok := t.getPriceFromWSCached(coin); ok {
+	// 默认使用 perp dex（空字符串）；如后续需要可传入特定 dex
+	if px, ok := t.getPriceFromWSCached(coin, ""); ok {
 		return px, nil
 	}
 	return t.fetchPriceFromInfoAPI(coin)
@@ -328,7 +329,7 @@ func (t *HyperliquidTrader) getMidPrice(coin string) (float64, error) {
 func (t *HyperliquidTrader) getAllMidsMap() (map[string]string, error) {
 	ws := getWSManager(t.testnet)
 	if ws != nil {
-		if mids, ok := ws.getAllMids(1500 * time.Millisecond); ok && len(mids) > 0 {
+		if mids, ok := ws.getAllMids(1500*time.Millisecond, ""); ok && len(mids) > 0 {
 			res := make(map[string]string, len(mids))
 			for k, v := range mids {
 				res[k] = fmt.Sprintf("%f", v)
