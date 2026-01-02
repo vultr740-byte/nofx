@@ -295,9 +295,14 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 	return data
 }
 
-// getOpenInterestData 获取OI数据
+// getOpenInterestData 获取OI数据（Binance 期货）
 func getOpenInterestData(symbol string) (*OIData, error) {
-	url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/openInterest?symbol=%s", symbol)
+	bnSymbol, ok := toBinanceSymbol(symbol)
+	if !ok {
+		return nil, fmt.Errorf("无法将符号 %s 映射为Binance交易对", symbol)
+	}
+
+	url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/openInterest?symbol=%s", bnSymbol)
 
 	var lastErr error
 	const maxRetries = 3
@@ -324,7 +329,7 @@ func getOpenInterestData(symbol string) (*OIData, error) {
 
 		if resp.StatusCode != http.StatusOK {
 			lastErr = fmt.Errorf("status %d, body %s", resp.StatusCode, truncateForLog(string(body)))
-			log.Printf("⚠️ 第%d次获取 %s OI 返回异常: %v", attempt, symbol, lastErr)
+			log.Printf("⚠️ 第%d次获取 %s OI 返回异常: %v", attempt, bnSymbol, lastErr)
 			continue
 		}
 
@@ -336,7 +341,7 @@ func getOpenInterestData(symbol string) (*OIData, error) {
 
 		if err := json.Unmarshal(body, &result); err != nil {
 			lastErr = err
-			log.Printf("⚠️ 第%d次解析 %s OI 响应失败: %v", attempt, symbol, err)
+			log.Printf("⚠️ 第%d次解析 %s OI 响应失败: %v", attempt, bnSymbol, err)
 			continue
 		}
 
@@ -350,9 +355,14 @@ func getOpenInterestData(symbol string) (*OIData, error) {
 	return nil, fmt.Errorf("获取OI失败: %w", lastErr)
 }
 
-// getFundingRate 获取资金费率
+// getFundingRate 获取资金费率（Binance 期货）
 func getFundingRate(symbol string) (float64, error) {
-	url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=%s", symbol)
+	bnSymbol, ok := toBinanceSymbol(symbol)
+	if !ok {
+		return 0, fmt.Errorf("无法将符号 %s 映射为Binance交易对", symbol)
+	}
+
+	url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=%s", bnSymbol)
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -511,6 +521,34 @@ func formatFloatSlice(values []float64) string {
 // Normalize 基础符号标准化（大小写）
 func Normalize(symbol string) string {
 	return strings.ToUpper(symbol)
+}
+
+// toBinanceSymbol 将内部符号转换为 Binance 期货/现货使用的交易对格式。
+// 规则：
+// - 已含 USDT/USDC/BUSD/USD 后缀则直接返回（去除中划线）
+// - 含 ":"（如商品前缀）视为非 Binance 资产，返回 false
+// - 含 "-PERP" 去除后缀再处理
+// - 其余默认追加 "USDT"
+func toBinanceSymbol(symbol string) (string, bool) {
+	s := strings.ToUpper(strings.TrimSpace(symbol))
+
+	// Hyperliquid 或自定义前缀的商品类，不适配 Binance
+	if strings.Contains(s, ":") {
+		return "", false
+	}
+
+	// 去除常见衍生品后缀和分隔符
+	s = strings.TrimSuffix(s, "-PERP")
+	s = strings.ReplaceAll(s, "-", "")
+
+	hasQuote := strings.HasSuffix(s, "USDT") || strings.HasSuffix(s, "USDC") ||
+		strings.HasSuffix(s, "BUSD") || strings.HasSuffix(s, "USD")
+
+	if hasQuote {
+		return s, true
+	}
+
+	return s + "USDT", true
 }
 
 func truncateForLog(s string) string {
