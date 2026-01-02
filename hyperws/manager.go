@@ -29,23 +29,30 @@ type Manager struct {
 }
 
 var (
-	mgrOnce sync.Once
-	mgr     *Manager
+	mgrMu    sync.Mutex
+	mgrByURL = make(map[string]*Manager)
 )
 
 // Get returns singleton manager; the first caller must pass wsURL.
 func Get(wsURL string) *Manager {
-	mgrOnce.Do(func() {
-		if wsURL == "" {
-			wsURL = "wss://api.hyperliquid.xyz/ws"
-		}
-		mgr = &Manager{
-			url:  wsURL,
-			byCh: make(map[string][]*subEntry),
-		}
-		mgr.startConnectLoop()
-	})
-	return mgr
+	if wsURL == "" {
+		wsURL = "wss://api.hyperliquid.xyz/ws"
+	}
+
+	mgrMu.Lock()
+	defer mgrMu.Unlock()
+
+	if m, ok := mgrByURL[wsURL]; ok {
+		return m
+	}
+
+	m := &Manager{
+		url:  wsURL,
+		byCh: make(map[string][]*subEntry),
+	}
+	m.startConnectLoop()
+	mgrByURL[wsURL] = m
+	return m
 }
 
 // Subscribe registers a subscription payload and handler; returns unsubscribe function.
