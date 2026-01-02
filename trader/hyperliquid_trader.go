@@ -921,16 +921,24 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	const wsTTL = 2 * time.Second
 
 	// ✅ Step 1: 查询 Spot 现货账户余额
-	spotState, err := t.exchange.Info().SpotUserState(t.ctx, t.walletAddr)
 	var spotUSDCBalance float64 = 0.0
-	if err != nil {
-		log.Printf("⚠️ 查询 Spot 余额失败（可能无现货资产）: %v", err)
-	} else if spotState != nil && len(spotState.Balances) > 0 {
-		for _, balance := range spotState.Balances {
-			if balance.Coin == "USDC" {
-				spotUSDCBalance, _ = strconv.ParseFloat(balance.Total, 64)
-				log.Printf("✓ 发现 Spot 现货余额: %.2f USDC", spotUSDCBalance)
-				break
+	if ws := getWSManager(t.testnet); ws != nil {
+		if bal, ok := ws.getSpotUSDC(wsTTL, t.walletAddr); ok {
+			spotUSDCBalance = bal
+			log.Printf("✅ 使用 WS webData2 现货余额: %.2f USDC (≤ %.0fs)", spotUSDCBalance, wsTTL.Seconds())
+		}
+	}
+	if spotUSDCBalance == 0 {
+		spotState, err := t.exchange.Info().SpotUserState(t.ctx, t.walletAddr)
+		if err != nil {
+			log.Printf("⚠️ 查询 Spot 余额失败（可能无现货资产）: %v", err)
+		} else if spotState != nil && len(spotState.Balances) > 0 {
+			for _, balance := range spotState.Balances {
+				if balance.Coin == "USDC" {
+					spotUSDCBalance, _ = strconv.ParseFloat(balance.Total, 64)
+					log.Printf("✓ 发现 Spot 现货余额: %.2f USDC", spotUSDCBalance)
+					break
+				}
 			}
 		}
 	}

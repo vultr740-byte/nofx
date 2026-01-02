@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,10 @@ type hyperliquidWSManager struct {
 	lastTrades    map[string]float64   // coin -> last trade price
 	lastTradesAt  map[string]time.Time // coin -> time
 	tradeSubsOnce map[string]struct{}  // coin -> subscribed
+
+	spotMu        sync.RWMutex
+	spotUSDC      float64
+	spotUpdatedAt time.Time
 }
 
 func newHyperliquidWSManager(testnet bool) *hyperliquidWSManager {
@@ -148,6 +153,63 @@ func (m *hyperliquidWSManager) getLastTradePrice(ttl time.Duration, coin string)
 	m.tradesMu.RUnlock()
 	if ok && okTs && time.Since(ts) <= ttl {
 		return price, true
+	}
+	return 0, false
+}
+
+// getSpotUSDC 返回 WS webData2 中的现货 USDC 余额（total），在 TTL 内有效。
+func (m *hyperliquidWSManager) getSpotUSDC(ttl time.Duration, user string) (float64, bool) {
+	if m == nil {
+		return 0, false
+	}
+
+	m.spotMu.RLock()
+	val := m.spotUSDC
+	ts := m.spotUpdatedAt
+	m.spotMu.RUnlock()
+	if !ts.IsZero() && time.Since(ts) <= ttl {
+		return val, true
+	}
+
+	// subscribe once per manager (per wallet)
+	m.spotMu.Lock()
+	already := !m.spotUpdatedAt.IsZero()
+	m.spotMu.Unlock()
+
+	if !already {
+		userLower := strings.ToLower(user)
+		_, err := m.client.WebData2(
+			hyperliquid.WebData2SubscriptionParams{User: userLower},
+			func(wd hyperliquid.WebData2, err error) {
+				if err != nil || wd.SpotState == nil {
+					return
+				}
+				usdc := 0.0
+				for _, b := range wd.SpotState.Balances {
+					if b.Coin == "USDC" {
+						if f, e := strconv.ParseFloat(b.Total, 64); e == nil {
+							usdc = f
+						}
+						break
+					}
+				}
+				m.spotMu.Lock()
+				m.spotUSDC = usdc
+				m.spotUpdatedAt = time.Now()
+				m.spotMu.Unlock()
+			},
+		)
+		if err != nil {
+			return 0, false
+		}
+	}
+
+	m.spotMu.RLock()
+	val = m.spotUSDC
+	ts = m.spotUpdatedAt
+	m.spotMu.RUnlock()
+	if !ts.IsZero() && time.Since(ts) <= ttl {
+		return val, true
 	}
 	return 0, false
 }
