@@ -627,16 +627,30 @@ func (tbm *TelegramBotManager) handleLeaderboard(update tgbotapi.Update) {
 		return
 	}
 
+	// 只保留盈利的交易员（收益率 > 0）
+	profitable := make([]map[string]interface{}, 0, len(traders))
+	for _, tr := range traders {
+		pnlPct, _ := tr["total_pnl_pct"].(float64)
+		if pnlPct > 0 {
+			profitable = append(profitable, tr)
+		}
+	}
+
+	if len(profitable) == 0 {
+		tbm.sendMessage(chatID, "⚠️ 暂无交易员数据。")
+		return
+	}
+
 	limit := 10
-	if len(traders) < limit {
-		limit = len(traders)
+	if len(profitable) < limit {
+		limit = len(profitable)
 	}
 
 	var sb strings.Builder
 	sb.WriteString("🏆 盈利排行榜（按收益率排名）\n\n")
 
 	for i := 0; i < limit; i++ {
-		tr := traders[i]
+		tr := profitable[i]
 		name, _ := tr["trader_name"].(string)
 		model, _ := tr["ai_model"].(string)
 		exchange, _ := tr["exchange"].(string)
