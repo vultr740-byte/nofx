@@ -1042,7 +1042,7 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 		allPositions = append(allPositions, state.AssetPositions...)
 	}
 	if len(allPositions) == 0 {
-		log.Printf("🔍 [DEBUG] 未获取到任何持仓")
+		log.Printf("🔍 [DEBUG] 未获取到任何持仓（所有 dex 返回空）")
 	}
 
 	// 预先获取触发类挂单，用于止盈/止损信息

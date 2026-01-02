@@ -1758,6 +1758,10 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 	if err != nil {
 		return nil, fmt.Errorf("获取候选币种失败: %w", err)
 	}
+	if len(candidateCoins) == 0 {
+		log.Printf("⚠️ [%s] 候选币种列表为空：tradingCoins=%v defaultCoins=%v exchange=%s",
+			at.name, at.tradingCoins, at.defaultCoins, at.exchange)
+	}
 
 	// 4. 计算总盈亏
 	totalPnL := totalEquity - at.userInitialBalance
