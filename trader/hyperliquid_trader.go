@@ -918,23 +918,17 @@ func safeNewHyperliquidExchange(ctx context.Context, privateKey *ecdsa.PrivateKe
 func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	log.Printf("🔄 正在调用Hyperliquid API获取账户余额...")
 
-	const (
-		perpWSTTL      = 10 * time.Second
-		spotFreshWSTTL = 10 * time.Second
-		spotStaleWSTTL = 5 * time.Minute
-	)
+	const wsTTL = 2 * time.Second
 
 	// ✅ Step 1: 查询 Spot 现货账户余额
 	var spotUSDCBalance float64 = 0.0
-	spotSource := ""
 	if ws := getWSManager(t.testnet); ws != nil {
-		if bal, ok := ws.getSpotUSDC(spotFreshWSTTL, t.walletAddr); ok {
+		if bal, ok := ws.getSpotUSDC(wsTTL, t.walletAddr); ok {
 			spotUSDCBalance = bal
-			spotSource = "WS"
-			log.Printf("✅ 使用 WS webData2 现货余额: %.2f USDC (≤ %.0fs)", spotUSDCBalance, spotFreshWSTTL.Seconds())
+			log.Printf("✅ 使用 WS webData2 现货余额: %.2f USDC (≤ %.0fs)", spotUSDCBalance, wsTTL.Seconds())
 		}
 	}
-	if spotSource == "" {
+	if spotUSDCBalance == 0 {
 		spotState, err := t.exchange.Info().SpotUserState(t.ctx, t.walletAddr)
 		if err != nil {
 			log.Printf("⚠️ 查询 Spot 余额失败（可能无现货资产）: %v", err)
@@ -942,20 +936,8 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 			for _, balance := range spotState.Balances {
 				if balance.Coin == "USDC" {
 					spotUSDCBalance, _ = strconv.ParseFloat(balance.Total, 64)
-					spotSource = "HTTP"
 					log.Printf("✓ 发现 Spot 现货余额: %.2f USDC", spotUSDCBalance)
 					break
-				}
-			}
-		}
-
-		// 若 HTTP 查询失败/未返回 USDC，回退使用 WS 的“上一次缓存值”（允许更长 TTL），避免现货余额抖动为 0
-		if spotSource == "" {
-			if ws := getWSManager(t.testnet); ws != nil {
-				if bal, ok := ws.getSpotUSDC(spotStaleWSTTL, t.walletAddr); ok {
-					spotUSDCBalance = bal
-					spotSource = "WS(stale)"
-					log.Printf("⚠️ 使用 WS 缓存的 Spot 现货余额(可能较旧, ≤ %.0fs): %.2f USDC", spotStaleWSTTL.Seconds(), spotUSDCBalance)
 				}
 			}
 		}
@@ -973,8 +955,8 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	)
 
 	if af := getAccountFeed(); af != nil {
-		if state, ok := af.getUserState("", perpWSTTL); ok && state.MarginSummary != nil {
-			log.Printf("✅ 使用 WS 缓存的 clearinghouseState (dex=\"\", <= %.0fs)", perpWSTTL.Seconds())
+		if state, ok := af.getUserState("", wsTTL); ok && state.MarginSummary != nil {
+			log.Printf("✅ 使用 WS 缓存的 clearinghouseState (dex=\"\", <= %.0fs)", wsTTL.Seconds())
 			accountValue, _ = strconv.ParseFloat(state.MarginSummary.AccountValue, 64)
 			totalMarginUsed, _ = strconv.ParseFloat(state.MarginSummary.TotalMarginUsed, 64)
 			totalNtlPos, _ = strconv.ParseFloat(state.MarginSummary.TotalNtlPos, 64)
@@ -1068,10 +1050,6 @@ func (t *HyperliquidTrader) TransferSpotToPerp(amount float64) error {
 	log.Printf("🔄 正在将 %.4f USDC 从 Spot 划转到 Perp...", amount)
 	if _, err := t.exchange.UsdClassTransfer(t.ctx, amount, true); err != nil {
 		return fmt.Errorf("Spot->Perp 划转失败: %w", err)
-	}
-	if ws := getWSManager(t.testnet); ws != nil {
-		// /balance 场景是“全额划转 USDC”，这里直接将现货缓存置 0，避免短时间内旧值被用于展示。
-		ws.setSpotUSDC(t.walletAddr, 0)
 	}
 	log.Printf("✅ Spot->Perp 划转完成: %.4f USDC", amount)
 	return nil
