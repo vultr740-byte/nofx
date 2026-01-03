@@ -197,6 +197,14 @@ func shortHexAddr(addr string) string {
 	return a[:4] + "..." + a[len(a)-4:]
 }
 
+func floorToDecimals(value float64, decimals int) float64 {
+	if decimals < 0 {
+		return value
+	}
+	pow := math.Pow(10, float64(decimals))
+	return math.Floor(value*pow) / pow
+}
+
 // infoAPIURL 根据网络返回 Info API 地址
 func infoAPIURL(testnet bool) string {
 	if testnet {
@@ -935,9 +943,11 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 
 	// ✅ Step 1: 查询 Spot 现货账户余额
 	var spotUSDCBalance float64 = 0.0
+	var spotUSDCHold float64 = 0.0
 	if ws := getWSManager(t.testnet); ws != nil {
-		if bal, ok := ws.getSpotUSDC(wsTTL, t.walletAddr); ok {
-			spotUSDCBalance = bal
+		if total, hold, ok := ws.getSpotUSDCWithHold(wsTTL, t.walletAddr); ok {
+			spotUSDCBalance = total
+			spotUSDCHold = hold
 			logf("✅ 使用 WS webData2 现货余额: %.2f USDC (≤ %.0fs)", spotUSDCBalance, wsTTL.Seconds())
 		}
 	}
@@ -949,11 +959,16 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 			for _, balance := range spotState.Balances {
 				if balance.Coin == "USDC" {
 					spotUSDCBalance, _ = strconv.ParseFloat(balance.Total, 64)
+					spotUSDCHold, _ = strconv.ParseFloat(balance.Hold, 64)
 					logf("✓ 发现 Spot 现货余额: %.2f USDC", spotUSDCBalance)
 					break
 				}
 			}
 		}
+	}
+	spotUSDCTransferable := spotUSDCBalance - spotUSDCHold
+	if spotUSDCTransferable < 0 {
+		spotUSDCTransferable = 0
 	}
 
 	// ✅ Step 2: 优先使用 WS allDexsClearinghouseState 缓存（dex=""），过期再回退 HTTP
@@ -1029,6 +1044,8 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	result["availableBalance"] = availableBalance        // 可用余额（Withdrawable 字段）
 	result["totalUnrealizedProfit"] = totalUnrealizedPnl // 未实现盈亏（仅来自 Perpetuals）
 	result["spotBalance"] = spotUSDCBalance              // Spot 现货余额（单独返回）
+	result["spotHold"] = spotUSDCHold                    // Spot 现货占用（挂单/冻结）
+	result["spotTransferable"] = spotUSDCTransferable    // Spot 可划转余额
 	result["totalMarginUsed"] = totalMarginUsed          // 占用保证金
 	result["totalPosition"] = totalNtlPos                // 总持仓名义价值
 
@@ -1038,6 +1055,8 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	logf("  • Withdrawable (可提现): %.2f USDC", availableBalance)
 	logf("  • TotalMarginUsed (占用保证金): %.2f USDC", totalMarginUsed)
 	logf("  • SpotUSDCBalance (现货余额): %.2f USDC", spotUSDCBalance)
+	logf("  • SpotUSDCHold (现货占用): %.2f USDC", spotUSDCHold)
+	logf("  • SpotUSDCTransferable (可划转): %.2f USDC", spotUSDCTransferable)
 	logf("  • TotalUnrealizedPnL (未实现盈亏): %.2f USDC", totalUnrealizedPnl)
 	logf("  • TotalNtlPos (总持仓): %.2f USDC", totalNtlPos)
 	logf("")
@@ -1057,6 +1076,10 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 
 // TransferSpotToPerp 将 USDC 从现货账户划转到合约账户
 func (t *HyperliquidTrader) TransferSpotToPerp(amount float64) error {
+	if amount <= 0 {
+		return nil
+	}
+	amount = floorToDecimals(amount-1e-9, 6)
 	if amount <= 0 {
 		return nil
 	}

@@ -31,7 +31,8 @@ type hyperliquidWSUserState struct {
 	refCount int
 	initCh   chan struct{}
 
-	spotUSDC      float64
+	spotUSDC      float64 // total
+	spotUSDCHold  float64
 	spotUpdatedAt time.Time
 
 	perpByDex     map[string]hyperliquid.ClearinghouseState
@@ -218,18 +219,23 @@ func (m *hyperliquidWSManager) acquireUserWS(user string) {
 			if err != nil || wd.SpotState == nil {
 				return
 			}
-			usdc := 0.0
+			usdcTotal := 0.0
+			usdcHold := 0.0
 			for _, b := range wd.SpotState.Balances {
 				if b.Coin == "USDC" {
 					if f, e := strconv.ParseFloat(b.Total, 64); e == nil {
-						usdc = f
+						usdcTotal = f
+					}
+					if f, e := strconv.ParseFloat(b.Hold, 64); e == nil {
+						usdcHold = f
 					}
 					break
 				}
 			}
 			m.userMu.Lock()
 			if st, ok := m.users[userLower]; ok {
-				st.spotUSDC = usdc
+				st.spotUSDC = usdcTotal
+				st.spotUSDCHold = usdcHold
 				st.spotUpdatedAt = time.Now()
 			}
 			m.userMu.Unlock()
@@ -358,6 +364,31 @@ func (m *hyperliquidWSManager) getSpotUSDC(ttl time.Duration, user string) (floa
 		return 0, false
 	}
 	return val, true
+}
+
+// getSpotUSDCWithHold 返回指定用户的 Spot USDC 缓存 total/hold（需要先 acquireUserWS），在 TTL 内有效。
+func (m *hyperliquidWSManager) getSpotUSDCWithHold(ttl time.Duration, user string) (total float64, hold float64, ok bool) {
+	if m == nil {
+		return 0, 0, false
+	}
+	userLower := strings.ToLower(strings.TrimSpace(user))
+	if userLower == "" {
+		return 0, 0, false
+	}
+
+	m.userMu.Lock()
+	st := m.users[userLower]
+	var ts time.Time
+	if st != nil {
+		total = st.spotUSDC
+		hold = st.spotUSDCHold
+		ts = st.spotUpdatedAt
+	}
+	m.userMu.Unlock()
+	if st == nil || ts.IsZero() || time.Since(ts) > ttl {
+		return 0, 0, false
+	}
+	return total, hold, true
 }
 
 // getPerpClearinghouseState 返回指定用户指定 dex 的 Perp clearinghouseState 缓存（需要先 acquireUserWS），在 TTL 内有效。

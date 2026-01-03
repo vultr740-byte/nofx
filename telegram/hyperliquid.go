@@ -129,6 +129,14 @@ func NewHyperliquidService() *HyperliquidService {
 	return &HyperliquidService{}
 }
 
+func floorToDecimals(value float64, decimals int) float64 {
+	if decimals < 0 {
+		return value
+	}
+	pow := math.Pow(10, float64(decimals))
+	return math.Floor(value*pow) / pow
+}
+
 // FetchBalance 获取原始余额信息，供外层业务复用
 func (s *HyperliquidService) FetchBalance(agentKey, walletAddr string, testnet bool) (map[string]interface{}, error) {
 	// 创建 Hyperliquid 交易器
@@ -172,18 +180,26 @@ func (s *HyperliquidService) GetBalanceWithAutoTransfer(agentKey, walletAddr str
 	}
 
 	// 若存在现货 USDC 余额，自动划转到合约账户后重新获取余额
-	if spotBalance, ok := balance["spotBalance"].(float64); ok && spotBalance > 0.0001 {
-		if err := trader.TransferSpotToPerp(spotBalance); err != nil {
+	spotTransferable := 0.0
+	if v, ok := balance["spotTransferable"].(float64); ok {
+		spotTransferable = v
+	} else if v, ok := balance["spotBalance"].(float64); ok {
+		spotTransferable = v
+	}
+	spotTransferable = floorToDecimals(spotTransferable-1e-9, 6)
+
+	if spotTransferable > 0.0001 {
+		if err := trader.TransferSpotToPerp(spotTransferable); err != nil {
 			log.Printf("⚠️ 现货自动划转失败: %v", err)
 			balance["autoTransferError"] = err.Error()
 		} else {
-			log.Printf("🔄 已自动将现货 %.4f USDC 划转至合约账户", spotBalance)
-			balance["autoTransferred"] = spotBalance
+			log.Printf("🔄 已自动将现货 %.4f USDC 划转至合约账户", spotTransferable)
+			balance["autoTransferred"] = spotTransferable
 
 			// 重新获取余额以展示划转后的数值
 			if refreshed, err := trader.GetBalance(); err == nil {
 				balance = refreshed
-				balance["autoTransferred"] = spotBalance
+				balance["autoTransferred"] = spotTransferable
 			} else {
 				log.Printf("⚠️ 划转后刷新余额失败: %v", err)
 			}
