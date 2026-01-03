@@ -129,14 +129,6 @@ func NewHyperliquidService() *HyperliquidService {
 	return &HyperliquidService{}
 }
 
-func floorToDecimals(value float64, decimals int) float64 {
-	if decimals < 0 {
-		return value
-	}
-	pow := math.Pow(10, float64(decimals))
-	return math.Floor(value*pow) / pow
-}
-
 // FetchBalance 获取原始余额信息，供外层业务复用
 func (s *HyperliquidService) FetchBalance(agentKey, walletAddr string, testnet bool) (map[string]interface{}, error) {
 	// 创建 Hyperliquid 交易器
@@ -186,7 +178,6 @@ func (s *HyperliquidService) GetBalanceWithAutoTransfer(agentKey, walletAddr str
 	} else if v, ok := balance["spotBalance"].(float64); ok {
 		spotTransferable = v
 	}
-	spotTransferable = floorToDecimals(spotTransferable-1e-9, 6)
 
 	if spotTransferable > 0.0001 {
 		if err := trader.TransferSpotToPerp(spotTransferable); err != nil {

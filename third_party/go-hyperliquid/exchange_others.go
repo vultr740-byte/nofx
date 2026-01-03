@@ -215,7 +215,7 @@ func (e *Exchange) UsdClassTransfer(
 ) (*TransferResponse, error) {
 	nonce := e.nextNonce()
 
-	strAmount := formatFloat(amount)
+	strAmount := formatFloatFloor6(amount)
 	if e.vault != "" {
 		strAmount += " subaccount:" + e.vault
 	}
@@ -463,7 +463,7 @@ func (e *Exchange) UsdTransfer(
 
 	action := map[string]any{
 		"destination": destination,
-		"amount":      formatFloat(amount),
+		"amount":      formatFloatFloor6(amount),
 		"time":        big.NewInt(nonce),
 		"type":        "usdSend",
 	}
@@ -508,7 +508,7 @@ func (e *Exchange) SpotTransfer(
 
 	action := map[string]any{
 		"destination": destination,
-		"amount":      formatFloat(amount),
+		"amount":      formatFloatFloor6(amount),
 		"token":       token,
 		"time":        big.NewInt(nonce),
 		"type":        "spotSend",
@@ -712,7 +712,7 @@ func (e *Exchange) WithdrawFromBridge(
 
 	action := map[string]any{
 		"destination": destination,
-		"amount":      formatFloat(amount),
+		"amount":      formatFloatFloor6(amount),
 		"time":        big.NewInt(nonce),
 		"type":        "withdraw3",
 	}

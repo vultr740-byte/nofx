@@ -197,14 +197,6 @@ func shortHexAddr(addr string) string {
 	return a[:4] + "..." + a[len(a)-4:]
 }
 
-func floorToDecimals(value float64, decimals int) float64 {
-	if decimals < 0 {
-		return value
-	}
-	pow := math.Pow(10, float64(decimals))
-	return math.Floor(value*pow) / pow
-}
-
 // infoAPIURL 根据网络返回 Info API 地址
 func infoAPIURL(testnet bool) string {
 	if testnet {
@@ -1076,10 +1068,6 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 
 // TransferSpotToPerp 将 USDC 从现货账户划转到合约账户
 func (t *HyperliquidTrader) TransferSpotToPerp(amount float64) error {
-	if amount <= 0 {
-		return nil
-	}
-	amount = floorToDecimals(amount-1e-9, 6)
 	if amount <= 0 {
 		return nil
 	}

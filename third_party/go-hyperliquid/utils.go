@@ -35,6 +35,14 @@ func formatFloat(f float64) string {
 	return fmt.Sprintf("%.6f", f)
 }
 
+// formatFloatFloor6 formats a float64 with 6 decimals, but never rounds up.
+// This is important for transfer-like actions where rounding up can cause
+// "insufficient balance" errors even if the displayed balance looks equal.
+func formatFloatFloor6(f float64) string {
+	floored := math.Floor(f*1e6) / 1e6
+	return fmt.Sprintf("%.6f", floored)
+}
+
 // floatToWire converts a float64 to a wire-compatible string format
 func floatToWire(x float64) (string, error) {
 	// Format to 8 decimal places
