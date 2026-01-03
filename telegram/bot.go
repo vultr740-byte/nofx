@@ -2641,7 +2641,7 @@ func (tbm *TelegramBotManager) handleEditCustomPrompt(callback *tgbotapi.Callbac
 		)
 		keyboard.ResizeKeyboard = true
 		keyboard.OneTimeKeyboard = true
-		keyboard.InputFieldPlaceholder = "点击复制提示词后修改发送"
+		keyboard.InputFieldPlaceholder = "粘贴/修改 Prompt 后发送"
 
 		tbm.sendMessageWithMarkup(chatID, msg, keyboard)
 	}
