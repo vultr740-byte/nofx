@@ -199,6 +199,26 @@ cat decision_logs/your_trader_id/$(ls -t decision_logs/your_trader_id/ | head -1
 
 如果上述方法都不行:
 
+---
+
+### 4. Telegram 交互问题
+
+#### ❌ 点击“取消”后，桌面端仍显示取消键盘（手机/电脑不同步）
+
+**症状：**
+- 在手机端点击 `取消` 后，手机键盘已收起
+- 但电脑桌面端仍停留在“取消”回复键盘，输入框占位也仍是编辑态
+
+**根本原因：**
+机器人发送的 `ReplyKeyboardRemove` 使用了 `selective=true`（选择性移除键盘）。当消息不是 *reply* 且未 *@mention* 目标用户时，部分客户端会忽略该“移除键盘”指令，从而导致多设备表现不一致。
+
+**解决方案：**
+- 发送移除键盘时使用 `selective=false`，确保所有客户端都能收到并应用该指令。
+  - Go（`telegram-bot-api/v5`）示例：使用 `tgbotapi.NewRemoveKeyboard(false)`。
+
+**补充说明：**
+- Telegram Bot API 无法“清空用户输入框里已输入的文字”，只能控制键盘显示/占位提示。
+
 1. **使用镜像代理网站下载:**
    - https://proxy.vvvv.ee/images.html （可离线下载）
    - https://github.com/dongyubin/DockerHub （镜像加速列表）
