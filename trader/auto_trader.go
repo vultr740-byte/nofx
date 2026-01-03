@@ -286,6 +286,10 @@ type AutoTrader struct {
 	userID                string             // 用户ID
 	telegramBotManager    interface{}        // Telegram Bot管理器引用（用于TG交易员推送决策）
 	reverseTrading        bool               // 是否启用反向交易（true=开多时做空，开空时做多）
+
+	hlWSSubscribed bool
+	hlWSWallet     string
+	hlWSTestnet    bool
 }
 
 // NewAutoTrader 创建自动交易器
@@ -429,6 +433,36 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 		telegramBotManager:    nil,                   // 初始化为空，后续通过SetTelegramBotManager设置
 		reverseTrading:        config.ReverseTrading, // 从配置中读取反向交易设置
 	}, nil
+}
+
+func (at *AutoTrader) ensureHyperliquidUserWS() {
+	if strings.ToLower(strings.TrimSpace(at.exchange)) != "hyperliquid" {
+		return
+	}
+	wallet := strings.TrimSpace(at.config.HyperliquidWalletAddr)
+	if wallet == "" {
+		return
+	}
+	ws := getWSManager(at.config.HyperliquidTestnet)
+	if ws == nil {
+		return
+	}
+	ws.acquireUserWS(wallet)
+	at.hlWSSubscribed = true
+	at.hlWSWallet = wallet
+	at.hlWSTestnet = at.config.HyperliquidTestnet
+}
+
+func (at *AutoTrader) releaseHyperliquidUserWS() {
+	if !at.hlWSSubscribed {
+		return
+	}
+	if ws := getWSManager(at.hlWSTestnet); ws != nil {
+		ws.releaseUserWS(at.hlWSWallet)
+	}
+	at.hlWSSubscribed = false
+	at.hlWSWallet = ""
+	at.hlWSTestnet = false
 }
 
 // SetTelegramBotManager 设置Telegram Bot管理器（用于TG交易员推送决策）
@@ -1080,7 +1114,7 @@ func (at *AutoTrader) buildFallbackMessage(record *logger.DecisionRecord) string
 }
 
 // Run 运行自动交易主循环
-func (at *AutoTrader) Run() error {
+func (at *AutoTrader) Run() (err error) {
 	at.isRunning = true
 	at.startTime = time.Now()
 
@@ -1093,6 +1127,15 @@ func (at *AutoTrader) Run() error {
 	default:
 		// 通道未关闭，正常使用
 	}
+
+	// 仅在交易员运行期间维持 Hyperliquid 的 user WS 订阅（多账号多钱包隔离 + 每网络单连接）。
+	at.ensureHyperliquidUserWS()
+	defer func() {
+		if err != nil {
+			at.isRunning = false
+			at.releaseHyperliquidUserWS()
+		}
+	}()
 
 	log.Println("🚀 AI驱动自动交易系统启动")
 
@@ -1196,6 +1239,8 @@ func (at *AutoTrader) Run() error {
 
 // Stop 停止自动交易
 func (at *AutoTrader) Stop() {
+	// 即使状态异常（例如启动过程提前失败），也尽量释放 WS 订阅避免泄漏。
+	at.releaseHyperliquidUserWS()
 	if !at.isRunning {
 		return
 	}

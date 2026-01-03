@@ -885,9 +885,6 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 		log.Printf("⚠️ 构建资产映射失败: %v", err)
 	}
 
-	// 启动 WS 账户状态订阅，降低 HTTP 调用频率
-	startAccountFeed(ctx, walletAddr, testnet)
-
 	// 🔐 自动检查并授权 Builder（一次性）
 	// Builder 功能暂时禁用（主钱包私钥不可用于 API 授权）
 
@@ -954,8 +951,8 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 		summaryType        string
 	)
 
-	if af := getAccountFeed(); af != nil {
-		if state, ok := af.getUserState("", wsTTL); ok && state.MarginSummary != nil {
+	if ws := getWSManager(t.testnet); ws != nil {
+		if state, ok := ws.getPerpClearinghouseState(wsTTL, t.walletAddr, ""); ok && state.MarginSummary != nil {
 			log.Printf("✅ 使用 WS 缓存的 clearinghouseState (dex=\"\", <= %.0fs)", wsTTL.Seconds())
 			accountValue, _ = strconv.ParseFloat(state.MarginSummary.AccountValue, 64)
 			totalMarginUsed, _ = strconv.ParseFloat(state.MarginSummary.TotalMarginUsed, 64)

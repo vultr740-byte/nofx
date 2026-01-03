@@ -23,9 +23,22 @@ type hyperliquidWSManager struct {
 	lastTradesAt  map[string]time.Time // coin -> time
 	tradeSubsOnce map[string]struct{}  // coin -> subscribed
 
-	spotMu        sync.RWMutex
+	userMu sync.Mutex
+	users  map[string]*hyperliquidWSUserState // user(lower) -> state
+}
+
+type hyperliquidWSUserState struct {
+	refCount int
+	initCh   chan struct{}
+
 	spotUSDC      float64
 	spotUpdatedAt time.Time
+
+	perpByDex     map[string]hyperliquid.ClearinghouseState
+	perpUpdatedAt time.Time
+
+	subWebData2    *hyperliquid.Subscription
+	subAllDexsPerp *hyperliquid.Subscription
 }
 
 func newHyperliquidWSManager(testnet bool) *hyperliquidWSManager {
@@ -36,11 +49,6 @@ func newHyperliquidWSManager(testnet bool) *hyperliquidWSManager {
 
 	ws := hyperliquid.NewWebsocketClient(url)
 	ctx := context.Background()
-	if err := ws.Connect(ctx); err != nil {
-		log.Printf("⚠️ Hyperliquid WS 连接失败: %v", err)
-		return &hyperliquidWSManager{client: ws, allMids: make(map[string]map[string]float64), lastMids: make(map[string]time.Time)}
-	}
-
 	m := &hyperliquidWSManager{
 		client:        ws,
 		allMids:       make(map[string]map[string]float64),
@@ -48,6 +56,13 @@ func newHyperliquidWSManager(testnet bool) *hyperliquidWSManager {
 		lastTrades:    make(map[string]float64),
 		lastTradesAt:  make(map[string]time.Time),
 		tradeSubsOnce: make(map[string]struct{}),
+		users:         make(map[string]*hyperliquidWSUserState),
+	}
+
+	if err := ws.Connect(ctx); err != nil {
+		log.Printf("⚠️ Hyperliquid WS 连接失败: %v", err)
+		m.client = nil
+		return m
 	}
 
 	// 订阅默认 perp 及常见 dex 列表
@@ -84,7 +99,7 @@ func newHyperliquidWSManager(testnet bool) *hyperliquidWSManager {
 
 // getAllMids 返回缓存的 allMids 及是否新鲜（TTL 内）
 func (m *hyperliquidWSManager) getAllMids(ttl time.Duration, dex string) (map[string]float64, bool) {
-	if m == nil {
+	if m == nil || m.client == nil {
 		return nil, false
 	}
 	key := dex
@@ -107,7 +122,7 @@ func (m *hyperliquidWSManager) getAllMids(ttl time.Duration, dex string) (map[st
 
 // getLastTradePrice 返回指定币种最近成交价（在 TTL 内）。若未订阅则自动订阅 trades。
 func (m *hyperliquidWSManager) getLastTradePrice(ttl time.Duration, coin string) (float64, bool) {
-	if m == nil {
+	if m == nil || m.client == nil {
 		return 0, false
 	}
 
@@ -157,78 +172,243 @@ func (m *hyperliquidWSManager) getLastTradePrice(ttl time.Duration, coin string)
 	return 0, false
 }
 
-// getSpotUSDC 返回 WS webData2 中的现货 USDC 余额（total），在 TTL 内有效。
+// acquireUserWS 确保指定用户的钱包订阅已开启（按 refcount 幂等）。
+// 约定：订阅生命周期由“交易员运行状态”驱动，非运行状态下不主动订阅。
+func (m *hyperliquidWSManager) acquireUserWS(user string) {
+	if m == nil || m.client == nil {
+		return
+	}
+	userLower := strings.ToLower(strings.TrimSpace(user))
+	if userLower == "" {
+		return
+	}
+
+	m.userMu.Lock()
+	state, ok := m.users[userLower]
+	if !ok {
+		state = &hyperliquidWSUserState{
+			refCount:  1,
+			perpByDex: make(map[string]hyperliquid.ClearinghouseState),
+		}
+		m.users[userLower] = state
+	} else {
+		state.refCount++
+	}
+	// already subscribed
+	if state.subWebData2 != nil && state.subAllDexsPerp != nil {
+		m.userMu.Unlock()
+		return
+	}
+	// initialization in progress: wait for it
+	if state.initCh != nil {
+		ch := state.initCh
+		m.userMu.Unlock()
+		<-ch
+		return
+	}
+	// start initialization
+	state.initCh = make(chan struct{})
+	ch := state.initCh
+	m.userMu.Unlock()
+
+	// 订阅 WebData2（含 SpotState）
+	subWebData2, err := m.client.WebData2(
+		hyperliquid.WebData2SubscriptionParams{User: userLower},
+		func(wd hyperliquid.WebData2, err error) {
+			if err != nil || wd.SpotState == nil {
+				return
+			}
+			usdc := 0.0
+			for _, b := range wd.SpotState.Balances {
+				if b.Coin == "USDC" {
+					if f, e := strconv.ParseFloat(b.Total, 64); e == nil {
+						usdc = f
+					}
+					break
+				}
+			}
+			m.userMu.Lock()
+			if st, ok := m.users[userLower]; ok {
+				st.spotUSDC = usdc
+				st.spotUpdatedAt = time.Now()
+			}
+			m.userMu.Unlock()
+		},
+	)
+	if err != nil {
+		log.Printf("⚠️ Hyperliquid WS webData2 订阅失败(user=%s): %v", userLower, err)
+		m.userMu.Lock()
+		if st, ok := m.users[userLower]; ok {
+			st.initCh = nil
+		}
+		close(ch)
+		m.userMu.Unlock()
+		return
+	}
+
+	// 订阅 allDexsClearinghouseState（Perp 账户状态）
+	subAllDexs, err := m.client.AllDexsClearinghouseState(
+		hyperliquid.AllDexsClearinghouseStateSubscriptionParams{User: userLower},
+		func(msg hyperliquid.AllDexsClearinghouseState, err error) {
+			if err != nil {
+				return
+			}
+			m.userMu.Lock()
+			st, ok := m.users[userLower]
+			if !ok {
+				m.userMu.Unlock()
+				return
+			}
+			if st.perpByDex == nil {
+				st.perpByDex = make(map[string]hyperliquid.ClearinghouseState)
+			}
+			for _, pair := range msg.ClearinghouseStates {
+				st.perpByDex[pair.First] = pair.Second
+			}
+			st.perpUpdatedAt = time.Now()
+			m.userMu.Unlock()
+		},
+	)
+	if err != nil {
+		log.Printf("⚠️ Hyperliquid WS allDexsClearinghouseState 订阅失败(user=%s): %v", userLower, err)
+		subWebData2.Close()
+		m.userMu.Lock()
+		if st, ok := m.users[userLower]; ok {
+			st.initCh = nil
+		}
+		close(ch)
+		m.userMu.Unlock()
+		return
+	}
+
+	m.userMu.Lock()
+	if st, ok := m.users[userLower]; ok {
+		st.subWebData2 = subWebData2
+		st.subAllDexsPerp = subAllDexs
+		st.initCh = nil
+		close(ch)
+		m.userMu.Unlock()
+		return
+	}
+	m.userMu.Unlock()
+
+	// User state was released during initialization; avoid leaking subscriptions.
+	subWebData2.Close()
+	subAllDexs.Close()
+	close(ch)
+}
+
+// releaseUserWS 在 refcount 归零时关闭订阅并清理缓存。
+func (m *hyperliquidWSManager) releaseUserWS(user string) {
+	if m == nil {
+		return
+	}
+	userLower := strings.ToLower(strings.TrimSpace(user))
+	if userLower == "" {
+		return
+	}
+
+	var toCloseWebData2 *hyperliquid.Subscription
+	var toCloseAllDexs *hyperliquid.Subscription
+
+	m.userMu.Lock()
+	st, ok := m.users[userLower]
+	if !ok {
+		m.userMu.Unlock()
+		return
+	}
+	st.refCount--
+	if st.refCount > 0 {
+		m.userMu.Unlock()
+		return
+	}
+	toCloseWebData2 = st.subWebData2
+	toCloseAllDexs = st.subAllDexsPerp
+	delete(m.users, userLower)
+	m.userMu.Unlock()
+
+	if toCloseWebData2 != nil {
+		toCloseWebData2.Close()
+	}
+	if toCloseAllDexs != nil {
+		toCloseAllDexs.Close()
+	}
+}
+
+// getSpotUSDC 返回指定用户的 Spot USDC 缓存（需要先 acquireUserWS），在 TTL 内有效。
 func (m *hyperliquidWSManager) getSpotUSDC(ttl time.Duration, user string) (float64, bool) {
 	if m == nil {
 		return 0, false
 	}
-
-	m.spotMu.RLock()
-	val := m.spotUSDC
-	ts := m.spotUpdatedAt
-	m.spotMu.RUnlock()
-	if !ts.IsZero() && time.Since(ts) <= ttl {
-		return val, true
+	userLower := strings.ToLower(strings.TrimSpace(user))
+	if userLower == "" {
+		return 0, false
 	}
 
-	// subscribe once per manager (per wallet)
-	m.spotMu.Lock()
-	already := !m.spotUpdatedAt.IsZero()
-	m.spotMu.Unlock()
+	m.userMu.Lock()
+	st := m.users[userLower]
+	var val float64
+	var ts time.Time
+	if st != nil {
+		val = st.spotUSDC
+		ts = st.spotUpdatedAt
+	}
+	m.userMu.Unlock()
+	if st == nil || ts.IsZero() || time.Since(ts) > ttl {
+		return 0, false
+	}
+	return val, true
+}
 
-	if !already {
-		userLower := strings.ToLower(user)
-		_, err := m.client.WebData2(
-			hyperliquid.WebData2SubscriptionParams{User: userLower},
-			func(wd hyperliquid.WebData2, err error) {
-				if err != nil || wd.SpotState == nil {
-					return
-				}
-				usdc := 0.0
-				for _, b := range wd.SpotState.Balances {
-					if b.Coin == "USDC" {
-						if f, e := strconv.ParseFloat(b.Total, 64); e == nil {
-							usdc = f
-						}
-						break
-					}
-				}
-				m.spotMu.Lock()
-				m.spotUSDC = usdc
-				m.spotUpdatedAt = time.Now()
-				m.spotMu.Unlock()
-			},
-		)
-		if err != nil {
-			return 0, false
-		}
+// getPerpClearinghouseState 返回指定用户指定 dex 的 Perp clearinghouseState 缓存（需要先 acquireUserWS），在 TTL 内有效。
+func (m *hyperliquidWSManager) getPerpClearinghouseState(ttl time.Duration, user string, dex string) (*hyperliquid.ClearinghouseState, bool) {
+	if m == nil {
+		return nil, false
+	}
+	userLower := strings.ToLower(strings.TrimSpace(user))
+	if userLower == "" {
+		return nil, false
 	}
 
-	m.spotMu.RLock()
-	val = m.spotUSDC
-	ts = m.spotUpdatedAt
-	m.spotMu.RUnlock()
-	if !ts.IsZero() && time.Since(ts) <= ttl {
-		return val, true
+	m.userMu.Lock()
+	st := m.users[userLower]
+	var ts time.Time
+	var state hyperliquid.ClearinghouseState
+	var ok bool
+	if st != nil {
+		ts = st.perpUpdatedAt
+		state, ok = st.perpByDex[dex]
 	}
-	return 0, false
+	m.userMu.Unlock()
+	if st == nil || ts.IsZero() || time.Since(ts) > ttl {
+		return nil, false
+	}
+	if !ok {
+		return nil, false
+	}
+	// return a copy so callers can't mutate internal cache
+	s := state
+	return &s, true
 }
 
 var (
 	wsManagerMainnet *hyperliquidWSManager
 	wsManagerTestnet *hyperliquidWSManager
-	wsOnce           sync.Once
+	wsMainOnce       sync.Once
+	wsTestOnce       sync.Once
 )
 
 // getWSManager 获取网络对应的 WS 管理器（单例）。
 func getWSManager(testnet bool) *hyperliquidWSManager {
-	wsOnce.Do(func() {
-		wsManagerMainnet = newHyperliquidWSManager(false)
-		wsManagerTestnet = newHyperliquidWSManager(true)
-	})
 	if testnet {
+		wsTestOnce.Do(func() {
+			wsManagerTestnet = newHyperliquidWSManager(true)
+		})
 		return wsManagerTestnet
 	}
+	wsMainOnce.Do(func() {
+		wsManagerMainnet = newHyperliquidWSManager(false)
+	})
 	return wsManagerMainnet
 }
 
