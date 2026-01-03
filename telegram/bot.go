@@ -2552,7 +2552,7 @@ func (tbm *TelegramBotManager) handleMenuCustomPrompt(callback *tgbotapi.Callbac
 	// 显示当前自定义 Prompt
 	var message string
 	if trader.CustomPrompt != "" {
-		// 截断显示，避免消息过长
+		// 截断显示，避免消息过长（编辑时会展示完整内容）
 		displayPrompt := trader.CustomPrompt
 		if len(displayPrompt) > 500 {
 			displayPrompt = displayPrompt[:500] + "...(已截断)"
@@ -2567,7 +2567,7 @@ func (tbm *TelegramBotManager) handleMenuCustomPrompt(callback *tgbotapi.Callbac
 • 可用于添加个人交易偏好、风险控制规则等
 • 修改后立即生效，无需重启交易员
 
-请直接发送新的自定义 Prompt 内容，或点击下方按钮：`, esc(displayPrompt))
+点击下方按钮开始操作：`, esc(displayPrompt))
 	} else {
 		message = `📝 <b>自定义 Prompt 设置</b>
 
@@ -2578,17 +2578,10 @@ func (tbm *TelegramBotManager) handleMenuCustomPrompt(callback *tgbotapi.Callbac
 • 可用于添加个人交易偏好、风险控制规则等
 • 例如: "优先做多，避免追涨杀跌，单笔仓位不超过总资金的20%"
 
-请直接发送您的自定义 Prompt 内容（输入 "cancel" 取消）：`
+请直接发送您的自定义 Prompt 内容：`
 	}
 
-	// 设置会话状态
-	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
-	sessionMgr.ClearSession(telegramID)
-	session := sessionMgr.GetOrCreateSession(telegramID)
-	session.State = StateEditingCustomPrompt
-	sessionMgr.UpdateSessionState(telegramID, StateEditingCustomPrompt)
-
-	// 创建按钮（仅当有自定义 Prompt 时显示清除按钮）
+	// 创建按钮
 	if trader.CustomPrompt != "" {
 		keyboard := tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
@@ -2598,7 +2591,22 @@ func (tbm *TelegramBotManager) handleMenuCustomPrompt(callback *tgbotapi.Callbac
 		)
 		tbm.sendMessageWithInlineKeyboard(chatID, message, keyboard)
 	} else {
-		tbm.sendMessage(chatID, message)
+		// 无 Prompt 时，直接进入编辑状态，并提供“取消”回复键盘按钮
+		sessionMgr := tbm.tgTraderMgr.GetSessionManager()
+		sessionMgr.ClearSession(telegramID)
+		session := sessionMgr.GetOrCreateSession(telegramID)
+		session.State = StateEditingCustomPrompt
+		sessionMgr.UpdateSessionState(telegramID, StateEditingCustomPrompt)
+
+		keyboard := tgbotapi.NewReplyKeyboard(
+			tgbotapi.NewKeyboardButtonRow(
+				tgbotapi.NewKeyboardButton("取消"),
+			),
+		)
+		keyboard.ResizeKeyboard = true
+		keyboard.OneTimeKeyboard = true
+
+		tbm.sendMessageWithMarkup(chatID, message, keyboard)
 	}
 }
 
@@ -2617,21 +2625,23 @@ func (tbm *TelegramBotManager) handleEditCustomPrompt(callback *tgbotapi.Callbac
 	}
 
 	if trader.CustomPrompt == "" {
-		tbm.sendMessage(chatID, "⚠️ 当前未设置自定义 Prompt，请直接发送新的 Prompt 内容（输入 \"cancel\" 取消）")
+		tbm.sendMessage(chatID, "⚠️ 当前未设置自定义 Prompt，请直接发送新的 Prompt 内容")
 	} else {
 		msg := fmt.Sprintf(`✏️ <b>编辑 Prompt</b>
 
-请直接回复本消息，发送修改后的 Prompt（输入 "cancel" 取消）：
+请发送修改后的 Prompt（如需取消，请点击键盘上的“取消”按钮）：
 
 <code>%s</code>`, esc(trader.CustomPrompt))
 
-		forceReply := tgbotapi.ForceReply{
-			ForceReply:            true,
-			Selective:             true,
-			InputFieldPlaceholder: "粘贴/修改 Prompt 后发送",
-		}
+		keyboard := tgbotapi.NewReplyKeyboard(
+			tgbotapi.NewKeyboardButtonRow(
+				tgbotapi.NewKeyboardButton("取消"),
+			),
+		)
+		keyboard.ResizeKeyboard = true
+		keyboard.OneTimeKeyboard = true
 
-		tbm.sendMessageWithMarkup(chatID, msg, forceReply)
+		tbm.sendMessageWithMarkup(chatID, msg, keyboard)
 	}
 
 	// 设置会话状态为编辑自定义 Prompt
@@ -2788,7 +2798,7 @@ func (tbm *TelegramBotManager) handleCustomPromptInput(update tgbotapi.Update, s
 	// 检查取消命令
 	if strings.EqualFold(input, "cancel") || input == "取消" {
 		sessionMgr.ClearSession(telegramID)
-		tbm.sendMessage(chatID, "❌ 已取消自定义 Prompt 设置")
+		tbm.sendMessageRemovingKeyboard(chatID, "❌ 已取消自定义 Prompt 设置")
 		return
 	}
 
@@ -2843,7 +2853,7 @@ func (tbm *TelegramBotManager) handleCustomPromptInput(update tgbotapi.Update, s
 
 %s`, esc(displayPrompt), effectMsg)
 
-	tbm.sendMessage(chatID, successMsg)
+	tbm.sendMessageRemovingKeyboard(chatID, successMsg)
 }
 
 func (tbm *TelegramBotManager) handleStopTraderCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
