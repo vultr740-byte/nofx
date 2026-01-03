@@ -1162,6 +1162,12 @@ func easyjson6601e8cdDecodeGithubComSoniricoGoHyperliquid10(in *jlexer.Lexer, ou
 			} else {
 				out.Error = string(in.String())
 			}
+		case "response":
+			if in.IsNull() {
+				in.Skip()
+			} else {
+				out.Response = string(in.String())
+			}
 		default:
 			in.SkipRecursive()
 		}
@@ -1190,6 +1196,11 @@ func easyjson6601e8cdEncodeGithubComSoniricoGoHyperliquid10(out *jwriter.Writer,
 		const prefix string = ",\"error\":"
 		out.RawString(prefix)
 		out.String(string(in.Error))
+	}
+	if in.Response != "" {
+		const prefix string = ",\"response\":"
+		out.RawString(prefix)
+		out.String(string(in.Response))
 	}
 	out.RawByte('}')
 }
