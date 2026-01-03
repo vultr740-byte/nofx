@@ -40,6 +40,8 @@ type TelegramBotManager struct {
 	gasSponsorWei *big.Int
 	gasProcMu     sync.Mutex
 	gasProcessing map[string]struct{}
+	mediaTextMu   sync.Mutex
+	mediaText     map[string]cachedMediaText
 }
 
 func esc(v interface{}) string {
@@ -65,6 +67,11 @@ const (
 type decisionChunk struct {
 	Text   string
 	IsJSON bool
+}
+
+type cachedMediaText struct {
+	Text string
+	At   time.Time
 }
 
 // MessageStructure 消息结构信息
@@ -164,7 +171,14 @@ func (tbm *TelegramBotManager) Start() {
 			if tbm.isSensitiveInput(update.Message.From.ID) {
 				log.Printf("收到消息 [%s] [敏感输入已隐藏]", update.Message.From.UserName)
 			} else {
-				log.Printf("收到消息 [%s] %s", update.Message.From.UserName, update.Message.Text)
+				tbm.rememberMediaGroupText(update.Message)
+				text, from := tbm.messageAnyText(update.Message)
+				meta := messagePayloadSummary(update.Message)
+				if text == "" {
+					log.Printf("收到消息 [%s] <empty> (%s)", update.Message.From.UserName, meta)
+				} else {
+					log.Printf("收到消息 [%s] (%s) %s (%s)", update.Message.From.UserName, from, text, meta)
+				}
 			}
 			tbm.handleMessage(update)
 		} else if update.CallbackQuery != nil {
@@ -862,7 +876,7 @@ func (tbm *TelegramBotManager) handleAPIKeyUpdateFlow(update tgbotapi.Update, se
 func (tbm *TelegramBotManager) handleRegularMessage(update tgbotapi.Update) {
 	chatID := update.Message.Chat.ID
 	telegramID := update.Message.From.ID
-	message := update.Message.Text
+	message, _ := tbm.messageAnyText(update.Message)
 
 	// 检查是否在配置向导过程中
 	session := tbm.tgTraderMgr.GetSessionManager().GetOrCreateSession(telegramID)
@@ -943,13 +957,17 @@ func (tbm *TelegramBotManager) handleForwardedSentiment(update tgbotapi.Update) 
 		return false
 	}
 
-	content := strings.TrimSpace(msg.Text)
-	if content == "" {
-		content = strings.TrimSpace(msg.Caption)
-	}
+	tbm.rememberMediaGroupText(msg)
+	content, _ := tbm.messageAnyText(msg)
 
 	if content == "" {
-		tbm.sendMessage(chatID, "❌ 转发消息不含文本，当前仅支持文本解析。")
+		meta := messagePayloadSummary(msg)
+		if msg.MediaGroupID != "" {
+			log.Printf("⚠️ [转发解析] 用户:%d 内容为空，跳过相册单条消息 (%s)", telegramID, meta)
+			return true
+		}
+		tbm.sendMessage(chatID, "❌ 这条转发消息没有可解析的文本。\n\n提示：\n- 机器人只会读取消息的文字/Caption；图片本身会被忽略。\n- 如果你是“转发时加了评论”，请把那段评论文字单独发一条（或转发带Caption的那张图）。")
+		log.Printf("⚠️ [转发解析] 用户:%d 内容为空 (%s)", telegramID, meta)
 		return true
 	}
 
@@ -1091,6 +1109,102 @@ func stripCodeFences(s string) string {
 		s = strings.TrimSpace(s)
 	}
 	return s
+}
+
+func (tbm *TelegramBotManager) rememberMediaGroupText(msg *tgbotapi.Message) {
+	if msg == nil || msg.MediaGroupID == "" {
+		return
+	}
+	text, _ := messageTextOrCaption(msg)
+	if text == "" {
+		return
+	}
+	key := mediaGroupKey(msg.Chat.ID, msg.MediaGroupID)
+	now := time.Now()
+	tbm.mediaTextMu.Lock()
+	if tbm.mediaText == nil {
+		tbm.mediaText = make(map[string]cachedMediaText, 64)
+	}
+	tbm.mediaText[key] = cachedMediaText{Text: text, At: now}
+	tbm.mediaTextMu.Unlock()
+}
+
+func (tbm *TelegramBotManager) messageAnyText(msg *tgbotapi.Message) (text string, from string) {
+	if msg == nil {
+		return "", ""
+	}
+	if t, src := messageTextOrCaption(msg); t != "" {
+		return t, src
+	}
+	if msg.ReplyToMessage != nil {
+		if t, src := messageTextOrCaption(msg.ReplyToMessage); t != "" {
+			return t, "reply_" + src
+		}
+	}
+	if msg.MediaGroupID == "" {
+		return "", ""
+	}
+	key := mediaGroupKey(msg.Chat.ID, msg.MediaGroupID)
+	tbm.mediaTextMu.Lock()
+	defer tbm.mediaTextMu.Unlock()
+	if tbm.mediaText == nil {
+		return "", ""
+	}
+	cached, ok := tbm.mediaText[key]
+	if !ok {
+		return "", ""
+	}
+	if time.Since(cached.At) > 2*time.Minute {
+		delete(tbm.mediaText, key)
+		return "", ""
+	}
+	return cached.Text, "album_cache"
+}
+
+func messageTextOrCaption(msg *tgbotapi.Message) (text string, from string) {
+	if msg == nil {
+		return "", ""
+	}
+	if t := strings.TrimSpace(msg.Text); t != "" {
+		return t, "text"
+	}
+	if c := strings.TrimSpace(msg.Caption); c != "" {
+		return c, "caption"
+	}
+	return "", ""
+}
+
+func mediaGroupKey(chatID int64, mediaGroupID string) string {
+	return fmt.Sprintf("%d:%s", chatID, mediaGroupID)
+}
+
+func messagePayloadSummary(msg *tgbotapi.Message) string {
+	if msg == nil {
+		return "unknown"
+	}
+	if strings.TrimSpace(msg.Text) != "" {
+		return "text"
+	}
+	parts := make([]string, 0, 4)
+	if strings.TrimSpace(msg.Caption) != "" {
+		parts = append(parts, "caption")
+	}
+	if len(msg.Photo) > 0 {
+		parts = append(parts, "photo")
+	}
+	if msg.Document != nil {
+		parts = append(parts, "document")
+	}
+	if msg.Video != nil {
+		parts = append(parts, "video")
+	}
+	if msg.MediaGroupID != "" {
+		parts = append(parts, "album")
+	}
+	if len(parts) == 0 {
+		return "unknown"
+	}
+	return strings.Join(parts, "+")
 }
 
 // setupCommands 设置 Bot 自定义菜单
@@ -3413,7 +3527,8 @@ func maskPrivateKey(privateKey string) string {
 func (tbm *TelegramBotManager) handleNaturalLanguageCommand(update tgbotapi.Update) bool {
 	chatID := update.Message.Chat.ID
 	telegramID := update.Message.From.ID
-	message := update.Message.Text
+	tbm.rememberMediaGroupText(update.Message)
+	message, _ := tbm.messageAnyText(update.Message)
 
 	// 确保解析器可用
 	if tbm.nlParser == nil {
