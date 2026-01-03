@@ -2605,6 +2605,7 @@ func (tbm *TelegramBotManager) handleMenuCustomPrompt(callback *tgbotapi.Callbac
 		)
 		keyboard.ResizeKeyboard = true
 		keyboard.OneTimeKeyboard = true
+		keyboard.InputFieldPlaceholder = "输入 Prompt，或点取消"
 
 		tbm.sendMessageWithMarkup(chatID, message, keyboard)
 	}
@@ -2629,7 +2630,7 @@ func (tbm *TelegramBotManager) handleEditCustomPrompt(callback *tgbotapi.Callbac
 	} else {
 		msg := fmt.Sprintf(`✏️ <b>编辑 Prompt</b>
 
-请发送修改后的 Prompt（如需取消，请点击键盘上的“取消”按钮）：
+请发送修改后的 Prompt（可点击下方提示词快速复制后修改）：
 
 <code>%s</code>`, esc(trader.CustomPrompt))
 
@@ -2640,6 +2641,7 @@ func (tbm *TelegramBotManager) handleEditCustomPrompt(callback *tgbotapi.Callbac
 		)
 		keyboard.ResizeKeyboard = true
 		keyboard.OneTimeKeyboard = true
+		keyboard.InputFieldPlaceholder = "点击复制提示词后修改发送"
 
 		tbm.sendMessageWithMarkup(chatID, msg, keyboard)
 	}
@@ -2798,7 +2800,12 @@ func (tbm *TelegramBotManager) handleCustomPromptInput(update tgbotapi.Update, s
 	// 检查取消命令
 	if strings.EqualFold(input, "cancel") || input == "取消" {
 		sessionMgr.ClearSession(telegramID)
-		tbm.sendMessageRemovingKeyboard(chatID, "❌ 已取消自定义 Prompt 设置")
+		// 尽量静默取消：移除键盘后立即删除提示消息，减少对话噪音
+		removeKeyboard := tgbotapi.NewRemoveKeyboard(true)
+		msg, err := tbm.sendMessageWithMarkupAndReturn(chatID, "已取消", removeKeyboard)
+		if err == nil && msg != nil {
+			tbm.scheduleDeleteMessage(chatID, msg.MessageID, 800*time.Millisecond)
+		}
 		return
 	}
 
