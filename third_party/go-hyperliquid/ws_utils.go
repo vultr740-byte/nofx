@@ -53,10 +53,17 @@ func keyUserFills(user string) string {
 	return key(ChannelUserFills, user)
 }
 
-func keyWebData2(_ string) string {
-	// WebData2 messages are user-specific but don't contain user info in the message itself.
-	// The dispatching is handled by the subscription system based on the subscription key.
-	return key(ChannelWebData2)
+func keyWebData2(user string) string {
+	// WebData2 messages are user-specific; include user in the subscription key so that
+	// a single WS connection can multiplex multiple wallets without cross-talk.
+	//
+	// NOTE: Some upstream comments stated webData2 does not include user in the message, but
+	// the payload contains a `user` field and the struct includes `User`, so we key by user.
+	user = strings.ToLower(user)
+	if user == "" {
+		return key(ChannelWebData2)
+	}
+	return key(ChannelWebData2, user)
 }
 
 func keyBbo(coin string) string {

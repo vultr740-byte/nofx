@@ -47,9 +47,9 @@ func (w WsOrders) Key() string {
 }
 
 func (w WebData2) Key() string {
-	// WebData2 messages are user-specific but don't contain user info in the message itself.
-	// The dispatching is handled by the subscription system based on the subscription key.
-	return ChannelWebData2
+	// WebData2 messages are user-specific; use the embedded user so dispatching works for
+	// multiple wallets on a single WS connection.
+	return keyWebData2(w.User)
 }
 
 func (w Bbo) Key() string { return keyBbo(w.Coin) }
