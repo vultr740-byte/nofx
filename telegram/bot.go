@@ -42,6 +42,8 @@ type TelegramBotManager struct {
 	gasProcessing map[string]struct{}
 	mediaTextMu   sync.Mutex
 	mediaText     map[string]cachedMediaText
+	forwardMu     sync.Mutex
+	forwardSeen   map[string]time.Time
 }
 
 func esc(v interface{}) string {
@@ -971,6 +973,14 @@ func (tbm *TelegramBotManager) handleForwardedSentiment(update tgbotapi.Update) 
 		return true
 	}
 
+	// 去重：相册/多媒体转发会拆成多条消息，避免对同一组重复解析与推送。
+	dedupeKey := tbm.forwardDedupeKey(msg)
+	if tbm.forwardAlreadySeen(dedupeKey, 2*time.Minute) {
+		log.Printf("ℹ️ [转发解析] 用户:%d 去重跳过 (%s)", telegramID, dedupeKey)
+		return true
+	}
+	tbm.forwardMarkSeen(dedupeKey)
+
 	// 获取运行中的交易员与 MCP 客户端
 	tgTraders, err := tbm.db.GetTgTraders(telegramID)
 	if err != nil || len(tgTraders) == 0 {
@@ -1176,6 +1186,60 @@ func messageTextOrCaption(msg *tgbotapi.Message) (text string, from string) {
 
 func mediaGroupKey(chatID int64, mediaGroupID string) string {
 	return fmt.Sprintf("%d:%s", chatID, mediaGroupID)
+}
+
+func (tbm *TelegramBotManager) forwardDedupeKey(msg *tgbotapi.Message) string {
+	if msg == nil {
+		return "nil"
+	}
+	chatID := msg.Chat.ID
+	if msg.MediaGroupID != "" {
+		return "album:" + mediaGroupKey(chatID, msg.MediaGroupID)
+	}
+	// 单条消息用 MessageID 去重即可（同一 chat 内唯一）
+	return fmt.Sprintf("msg:%d:%d", chatID, msg.MessageID)
+}
+
+func (tbm *TelegramBotManager) forwardAlreadySeen(key string, ttl time.Duration) bool {
+	if key == "" {
+		return false
+	}
+	now := time.Now()
+	tbm.forwardMu.Lock()
+	defer tbm.forwardMu.Unlock()
+	if tbm.forwardSeen == nil {
+		return false
+	}
+	at, ok := tbm.forwardSeen[key]
+	if !ok {
+		return false
+	}
+	if now.Sub(at) > ttl {
+		delete(tbm.forwardSeen, key)
+		return false
+	}
+	return true
+}
+
+func (tbm *TelegramBotManager) forwardMarkSeen(key string) {
+	if key == "" {
+		return
+	}
+	now := time.Now()
+	tbm.forwardMu.Lock()
+	if tbm.forwardSeen == nil {
+		tbm.forwardSeen = make(map[string]time.Time, 64)
+	}
+	// 简单清理，避免无限增长
+	if len(tbm.forwardSeen) > 512 {
+		for k, at := range tbm.forwardSeen {
+			if now.Sub(at) > 5*time.Minute {
+				delete(tbm.forwardSeen, k)
+			}
+		}
+	}
+	tbm.forwardSeen[key] = now
+	tbm.forwardMu.Unlock()
 }
 
 func messagePayloadSummary(msg *tgbotapi.Message) string {
