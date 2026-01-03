@@ -2607,7 +2607,9 @@ func (tbm *TelegramBotManager) handleMenuCustomPrompt(callback *tgbotapi.Callbac
 		keyboard.OneTimeKeyboard = true
 		keyboard.InputFieldPlaceholder = "输入 Prompt，或点取消"
 
-		tbm.sendMessageWithMarkup(chatID, message, keyboard)
+		if msg, err := tbm.sendMessageWithMarkupAndReturn(chatID, message, keyboard); err == nil && msg != nil {
+			sessionMgr.UpdateLastMessageID(telegramID, msg.MessageID)
+		}
 	}
 }
 
@@ -2630,7 +2632,7 @@ func (tbm *TelegramBotManager) handleEditCustomPrompt(callback *tgbotapi.Callbac
 	} else {
 		msg := fmt.Sprintf(`✏️ <b>编辑 Prompt</b>
 
-请发送修改后的 Prompt（可点击下方提示词快速复制后修改）：
+请发送修改后的 Prompt（可点击下方提示词复制后修改）：
 
 <code>%s</code>`, esc(trader.CustomPrompt))
 
@@ -2643,7 +2645,9 @@ func (tbm *TelegramBotManager) handleEditCustomPrompt(callback *tgbotapi.Callbac
 		keyboard.OneTimeKeyboard = true
 		keyboard.InputFieldPlaceholder = "粘贴/修改 Prompt 后发送"
 
-		tbm.sendMessageWithMarkup(chatID, msg, keyboard)
+		if sent, err := tbm.sendMessageWithMarkupAndReturn(chatID, msg, keyboard); err == nil && sent != nil {
+			tbm.tgTraderMgr.GetSessionManager().UpdateLastMessageID(telegramID, sent.MessageID)
+		}
 	}
 
 	// 设置会话状态为编辑自定义 Prompt
@@ -2799,12 +2803,29 @@ func (tbm *TelegramBotManager) handleCustomPromptInput(update tgbotapi.Update, s
 
 	// 检查取消命令
 	if strings.EqualFold(input, "cancel") || input == "取消" {
+		// 记录需要清理的“编辑提示消息”，避免多端不同步（删除 removeKeyboard 消息后键盘又回到上一条带键盘的消息）
+		promptMsgID := 0
+		if session != nil {
+			promptMsgID = session.LastMessageID
+		}
+
 		sessionMgr.ClearSession(telegramID)
-		// 尽量静默取消：移除键盘后立即删除提示消息，减少对话噪音
+
+		// 尽量静默取消：移除键盘并清理提示消息/用户取消消息，减少对话噪音
 		removeKeyboard := tgbotapi.NewRemoveKeyboard(true)
 		msg, err := tbm.sendMessageWithMarkupAndReturn(chatID, "已取消", removeKeyboard)
 		if err == nil && msg != nil {
 			tbm.scheduleDeleteMessage(chatID, msg.MessageID, 800*time.Millisecond)
+		}
+
+		// 删除触发取消的用户消息（部分客户端/场景可能不允许，失败则忽略）
+		if update.Message != nil {
+			tbm.deleteMessage(chatID, update.Message.MessageID)
+		}
+
+		// 删除“编辑提示消息”，确保键盘不会在其他设备上回弹
+		if promptMsgID != 0 {
+			tbm.scheduleDeleteMessage(chatID, promptMsgID, 900*time.Millisecond)
 		}
 		return
 	}
