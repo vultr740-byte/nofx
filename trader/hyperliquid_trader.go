@@ -1045,10 +1045,24 @@ func (t *HyperliquidTrader) TransferSpotToPerp(amount float64) error {
 		return nil
 	}
 	log.Printf("🔄 正在将 %.4f USDC 从 Spot 划转到 Perp...", amount)
-	if _, err := t.exchange.UsdClassTransfer(t.ctx, amount, true); err != nil {
+	res, err := t.exchange.UsdClassTransfer(t.ctx, amount, true)
+	if err != nil {
 		return fmt.Errorf("Spot->Perp 划转失败: %w", err)
 	}
-	log.Printf("✅ Spot->Perp 划转完成: %.4f USDC", amount)
+	if res == nil {
+		return fmt.Errorf("Spot->Perp 划转失败: empty response")
+	}
+	if strings.ToLower(strings.TrimSpace(res.Status)) != "ok" {
+		if strings.TrimSpace(res.Error) != "" {
+			return fmt.Errorf("Spot->Perp 划转失败: %s", res.Error)
+		}
+		return fmt.Errorf("Spot->Perp 划转失败: status=%s", res.Status)
+	}
+	if res.TxHash != "" {
+		log.Printf("✅ Spot->Perp 划转完成: %.4f USDC (tx=%s)", amount, res.TxHash)
+	} else {
+		log.Printf("✅ Spot->Perp 划转完成: %.4f USDC", amount)
+	}
 	return nil
 }
 
