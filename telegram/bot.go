@@ -2283,6 +2283,8 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleMenuSetAPI(callback, chatID, telegramID)
 	case "menu_custom_prompt":
 		tbm.handleMenuCustomPrompt(callback, chatID, telegramID)
+	case "edit_custom_prompt":
+		tbm.handleEditCustomPrompt(callback, chatID, telegramID)
 	case "clear_custom_prompt":
 		tbm.handleClearCustomPrompt(callback, chatID, telegramID)
 	case "fwd_pick":
@@ -2590,13 +2592,54 @@ func (tbm *TelegramBotManager) handleMenuCustomPrompt(callback *tgbotapi.Callbac
 	if trader.CustomPrompt != "" {
 		keyboard := tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("🗑️ 清除自定义 Prompt", fmt.Sprintf("clear_custom_prompt|%d", telegramID)),
+				tgbotapi.NewInlineKeyboardButtonData("✏️ 编辑 Prompt", fmt.Sprintf("edit_custom_prompt|%d", telegramID)),
+				tgbotapi.NewInlineKeyboardButtonData("🗑️ 清除 Prompt", fmt.Sprintf("clear_custom_prompt|%d", telegramID)),
 			),
 		)
 		tbm.sendMessageWithInlineKeyboard(chatID, message, keyboard)
 	} else {
 		tbm.sendMessage(chatID, message)
 	}
+}
+
+func (tbm *TelegramBotManager) handleEditCustomPrompt(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	tbm.answerCallbackQuery(callback.ID, "✏️ 正在打开编辑...")
+
+	trader, err := tbm.getPrimaryTrader(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, "❌ 未找到交易员")
+		return
+	}
+
+	if !trader.IsConfigured {
+		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /create_trader 完成设置")
+		return
+	}
+
+	if trader.CustomPrompt == "" {
+		tbm.sendMessage(chatID, "⚠️ 当前未设置自定义 Prompt，请直接发送新的 Prompt 内容（输入 \"cancel\" 取消）")
+	} else {
+		msg := fmt.Sprintf(`✏️ <b>编辑 Prompt</b>
+
+请直接回复本消息，发送修改后的 Prompt（输入 "cancel" 取消）：
+
+<code>%s</code>`, esc(trader.CustomPrompt))
+
+		forceReply := tgbotapi.ForceReply{
+			ForceReply:            true,
+			Selective:             true,
+			InputFieldPlaceholder: "粘贴/修改 Prompt 后发送",
+		}
+
+		tbm.sendMessageWithMarkup(chatID, msg, forceReply)
+	}
+
+	// 设置会话状态为编辑自定义 Prompt
+	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
+	sessionMgr.ClearSession(telegramID)
+	session := sessionMgr.GetOrCreateSession(telegramID)
+	session.State = StateEditingCustomPrompt
+	sessionMgr.UpdateSessionState(telegramID, StateEditingCustomPrompt)
 }
 
 // handleStocksCategoryCallback 处理股票市场分类回调
