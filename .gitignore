@@ -17,6 +17,7 @@ nofx_test
 *.test
 *.out
 .gocache/
+.cache/
 
 # 操作系统
 .DS_Store

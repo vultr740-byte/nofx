@@ -15,3 +15,17 @@ func TestTransferResponseUnmarshalResponseField(t *testing.T) {
 		t.Fatalf("expected response field to be parsed, got %q", tr.Response)
 	}
 }
+
+func TestTransferResponseUnmarshalResponseFieldObject(t *testing.T) {
+	var tr TransferResponse
+	raw := []byte(`{"status":"err","response":{"message":"not authorized"}}`)
+	if err := tr.UnmarshalJSON(raw); err != nil {
+		t.Fatalf("UnmarshalJSON failed: %v", err)
+	}
+	if tr.Status != "err" {
+		t.Fatalf("unexpected status: %q", tr.Status)
+	}
+	if tr.Response != `{"message":"not authorized"}` {
+		t.Fatalf("expected response field to be captured as raw JSON, got %q", tr.Response)
+	}
+}

@@ -1166,7 +1166,13 @@ func easyjson6601e8cdDecodeGithubComSoniricoGoHyperliquid10(in *jlexer.Lexer, ou
 			if in.IsNull() {
 				in.Skip()
 			} else {
-				out.Response = string(in.String())
+				if in.CurrentToken() == jlexer.TokenString {
+					out.Response = string(in.String())
+				} else {
+					if raw := in.Raw(); raw != nil {
+						out.Response = string(raw)
+					}
+				}
 			}
 		default:
 			in.SkipRecursive()
