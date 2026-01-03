@@ -1189,7 +1189,8 @@ func (tbm *TelegramBotManager) sendAIProviderSelectionMessage(chatID int64, text
 
 // sendMessageRemovingKeyboard 发送消息并移除键盘
 func (tbm *TelegramBotManager) sendMessageRemovingKeyboard(chatID int64, text string) {
-	removeKeyboard := tgbotapi.NewRemoveKeyboard(true)
+	// 这里不要使用 selective=true：在非 reply / 未 @mention 的情况下，部分客户端不会移除键盘。
+	removeKeyboard := tgbotapi.NewRemoveKeyboard(false)
 	tbm.sendMessageWithMarkupAndReturnInternal(chatID, text, removeKeyboard, true, false)
 }
 
@@ -2812,7 +2813,8 @@ func (tbm *TelegramBotManager) handleCustomPromptInput(update tgbotapi.Update, s
 		sessionMgr.ClearSession(telegramID)
 
 		// 尽量静默取消：移除键盘并清理提示消息/用户取消消息，减少对话噪音
-		removeKeyboard := tgbotapi.NewRemoveKeyboard(true)
+		// 不使用 selective=true，确保所有客户端/设备都能收到“移除键盘”的指令
+		removeKeyboard := tgbotapi.NewRemoveKeyboard(false)
 		msg, err := tbm.sendMessageWithMarkupAndReturn(chatID, "已取消", removeKeyboard)
 		if err == nil && msg != nil {
 			tbm.scheduleDeleteMessage(chatID, msg.MessageID, 800*time.Millisecond)
