@@ -2788,9 +2788,6 @@ func (tbm *TelegramBotManager) handleCustomPromptInput(update tgbotapi.Update, s
 
 	// 显示成功消息
 	displayPrompt := input
-	if len(displayPrompt) > 200 {
-		displayPrompt = displayPrompt[:200] + "..."
-	}
 
 	effectMsg := "💡 将在交易员启动后生效"
 	if immediateEffect {
