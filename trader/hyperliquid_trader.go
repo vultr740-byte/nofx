@@ -1053,8 +1053,12 @@ func (t *HyperliquidTrader) TransferSpotToPerp(amount float64) error {
 		return fmt.Errorf("Spot->Perp 划转失败: empty response")
 	}
 	if strings.ToLower(strings.TrimSpace(res.Status)) != "ok" {
-		if strings.TrimSpace(res.Error) != "" {
-			return fmt.Errorf("Spot->Perp 划转失败: %s", res.Error)
+		msg := strings.TrimSpace(res.Error)
+		if msg == "" {
+			msg = strings.TrimSpace(res.Response)
+		}
+		if msg != "" {
+			return fmt.Errorf("Spot->Perp 划转失败: %s", msg)
 		}
 		return fmt.Errorf("Spot->Perp 划转失败: status=%s", res.Status)
 	}
