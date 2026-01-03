@@ -23,9 +23,10 @@ type hyperliquidWSManager struct {
 	lastTradesAt  map[string]time.Time // coin -> time
 	tradeSubsOnce map[string]struct{}  // coin -> subscribed
 
-	spotMu        sync.RWMutex
-	spotUSDC      float64
-	spotUpdatedAt time.Time
+	spotMu              sync.RWMutex
+	spotUSDCByUser      map[string]float64   // user -> usdc total
+	spotUpdatedAtByUser map[string]time.Time // user -> time
+	spotSubsOnce        map[string]struct{}  // user -> subscribed
 }
 
 func newHyperliquidWSManager(testnet bool) *hyperliquidWSManager {
@@ -36,18 +37,22 @@ func newHyperliquidWSManager(testnet bool) *hyperliquidWSManager {
 
 	ws := hyperliquid.NewWebsocketClient(url)
 	ctx := context.Background()
-	if err := ws.Connect(ctx); err != nil {
-		log.Printf("⚠️ Hyperliquid WS 连接失败: %v", err)
-		return &hyperliquidWSManager{client: ws, allMids: make(map[string]map[string]float64), lastMids: make(map[string]time.Time)}
+	m := &hyperliquidWSManager{
+		client:              ws,
+		allMids:             make(map[string]map[string]float64),
+		lastMids:            make(map[string]time.Time),
+		lastTrades:          make(map[string]float64),
+		lastTradesAt:        make(map[string]time.Time),
+		tradeSubsOnce:       make(map[string]struct{}),
+		spotUSDCByUser:      make(map[string]float64),
+		spotUpdatedAtByUser: make(map[string]time.Time),
+		spotSubsOnce:        make(map[string]struct{}),
 	}
 
-	m := &hyperliquidWSManager{
-		client:        ws,
-		allMids:       make(map[string]map[string]float64),
-		lastMids:      make(map[string]time.Time),
-		lastTrades:    make(map[string]float64),
-		lastTradesAt:  make(map[string]time.Time),
-		tradeSubsOnce: make(map[string]struct{}),
+	if err := ws.Connect(ctx); err != nil {
+		log.Printf("⚠️ Hyperliquid WS 连接失败: %v", err)
+		m.client = nil
+		return m
 	}
 
 	// 订阅默认 perp 及常见 dex 列表
@@ -84,7 +89,7 @@ func newHyperliquidWSManager(testnet bool) *hyperliquidWSManager {
 
 // getAllMids 返回缓存的 allMids 及是否新鲜（TTL 内）
 func (m *hyperliquidWSManager) getAllMids(ttl time.Duration, dex string) (map[string]float64, bool) {
-	if m == nil {
+	if m == nil || m.client == nil {
 		return nil, false
 	}
 	key := dex
@@ -107,7 +112,7 @@ func (m *hyperliquidWSManager) getAllMids(ttl time.Duration, dex string) (map[st
 
 // getLastTradePrice 返回指定币种最近成交价（在 TTL 内）。若未订阅则自动订阅 trades。
 func (m *hyperliquidWSManager) getLastTradePrice(ttl time.Duration, coin string) (float64, bool) {
-	if m == nil {
+	if m == nil || m.client == nil {
 		return 0, false
 	}
 
@@ -159,59 +164,112 @@ func (m *hyperliquidWSManager) getLastTradePrice(ttl time.Duration, coin string)
 
 // getSpotUSDC 返回 WS webData2 中的现货 USDC 余额（total），在 TTL 内有效。
 func (m *hyperliquidWSManager) getSpotUSDC(ttl time.Duration, user string) (float64, bool) {
-	if m == nil {
+	if m == nil || m.client == nil {
 		return 0, false
 	}
 
+	userLower := strings.ToLower(user)
+
+	// fast path: cached & fresh
 	m.spotMu.RLock()
-	val := m.spotUSDC
-	ts := m.spotUpdatedAt
+	val, okVal := m.spotUSDCByUser[userLower]
+	ts, okTs := m.spotUpdatedAtByUser[userLower]
 	m.spotMu.RUnlock()
-	if !ts.IsZero() && time.Since(ts) <= ttl {
+	if okVal && okTs && !ts.IsZero() && time.Since(ts) <= ttl {
 		return val, true
 	}
 
-	// subscribe once per manager (per wallet)
+	// ensure subscription once per user
+	needSub := false
 	m.spotMu.Lock()
-	already := !m.spotUpdatedAt.IsZero()
+	if m.spotSubsOnce == nil {
+		m.spotSubsOnce = make(map[string]struct{})
+	}
+	if _, subbed := m.spotSubsOnce[userLower]; !subbed {
+		m.spotSubsOnce[userLower] = struct{}{}
+		needSub = true
+	}
 	m.spotMu.Unlock()
 
-	if !already {
-		userLower := strings.ToLower(user)
+	if needSub {
+		userKey := userLower // capture
 		_, err := m.client.WebData2(
-			hyperliquid.WebData2SubscriptionParams{User: userLower},
+			hyperliquid.WebData2SubscriptionParams{User: userKey},
 			func(wd hyperliquid.WebData2, err error) {
 				if err != nil || wd.SpotState == nil {
 					return
 				}
+
+				found := false
 				usdc := 0.0
 				for _, b := range wd.SpotState.Balances {
 					if b.Coin == "USDC" {
+						found = true
 						if f, e := strconv.ParseFloat(b.Total, 64); e == nil {
 							usdc = f
 						}
 						break
 					}
 				}
+
+				now := time.Now()
 				m.spotMu.Lock()
-				m.spotUSDC = usdc
-				m.spotUpdatedAt = time.Now()
+				if m.spotUSDCByUser == nil {
+					m.spotUSDCByUser = make(map[string]float64)
+				}
+				if m.spotUpdatedAtByUser == nil {
+					m.spotUpdatedAtByUser = make(map[string]time.Time)
+				}
+
+				// 若本次推送未包含 USDC，且之前有非零缓存，则不要将其覆盖成 0，避免间歇性“现货=0”抖动。
+				prev := m.spotUSDCByUser[userKey]
+				if found {
+					m.spotUSDCByUser[userKey] = usdc
+					m.spotUpdatedAtByUser[userKey] = now
+				} else if prev == 0 {
+					m.spotUSDCByUser[userKey] = 0
+					m.spotUpdatedAtByUser[userKey] = now
+				}
 				m.spotMu.Unlock()
 			},
 		)
 		if err != nil {
+			// allow re-subscribe attempts later if subscription failed
+			m.spotMu.Lock()
+			delete(m.spotSubsOnce, userLower)
+			m.spotMu.Unlock()
 			return 0, false
 		}
 	}
 
+	// check cache again
 	m.spotMu.RLock()
-	val = m.spotUSDC
-	ts = m.spotUpdatedAt
+	val, okVal = m.spotUSDCByUser[userLower]
+	ts, okTs = m.spotUpdatedAtByUser[userLower]
 	m.spotMu.RUnlock()
-	if !ts.IsZero() && time.Since(ts) <= ttl {
+	if okVal && okTs && !ts.IsZero() && time.Since(ts) <= ttl {
 		return val, true
 	}
 	return 0, false
+}
+
+// setSpotUSDC 强制写入某个用户的现货 USDC 缓存（用于划转后立即同步显示，避免短时间内旧值回填）。
+func (m *hyperliquidWSManager) setSpotUSDC(user string, usdc float64) {
+	if m == nil {
+		return
+	}
+	userLower := strings.ToLower(user)
+	now := time.Now()
+	m.spotMu.Lock()
+	if m.spotUSDCByUser == nil {
+		m.spotUSDCByUser = make(map[string]float64)
+	}
+	if m.spotUpdatedAtByUser == nil {
+		m.spotUpdatedAtByUser = make(map[string]time.Time)
+	}
+	m.spotUSDCByUser[userLower] = usdc
+	m.spotUpdatedAtByUser[userLower] = now
+	m.spotMu.Unlock()
 }
 
 var (
