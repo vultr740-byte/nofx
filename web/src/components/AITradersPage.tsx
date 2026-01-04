@@ -1659,7 +1659,7 @@ function ModelConfigModal({
                   type="text"
                   value={modelName}
                   onChange={(e) => setModelName(e.target.value)}
-                  placeholder="例如: deepseek-chat, qwen3-max, gpt-5"
+                  placeholder="例如: deepseek-reasoner, qwen3-max, gpt-5"
                   className="w-full px-3 py-2 rounded"
                   style={{
                     background: '#0B0E11',

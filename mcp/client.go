@@ -71,13 +71,13 @@ func (client *Client) SetDeepSeekAPIKey(apiKey string, customURL string, customM
 	if customModel != "" {
 		normalizedModel := strings.TrimSpace(customModel)
 		if strings.EqualFold(normalizedModel, "deepseek") {
-			normalizedModel = "deepseek-chat"
+			normalizedModel = "deepseek-reasoner"
 			log.Printf("🔧 [MCP] DeepSeek 自动修正模型名: %s -> %s", customModel, normalizedModel)
 		}
 		client.Model = normalizedModel
 		log.Printf("🔧 [MCP] DeepSeek 使用自定义 Model: %s", normalizedModel)
 	} else {
-		client.Model = "deepseek-chat"
+		client.Model = "deepseek-reasoner"
 		log.Printf("🔧 [MCP] DeepSeek 使用默认 Model: %s", client.Model)
 	}
 	// 打印 API Key 的前后各4位用于验证

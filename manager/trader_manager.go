@@ -1094,7 +1094,7 @@ func normalizeAIProviderID(value string) string {
 	switch trimmed {
 	case "qwen", "qianwen", "tongyi", "通义", "通義":
 		return "qwen"
-	case "deepseek", "deepseek-chat", "deepseekcoder":
+	case "deepseek", "deepseek-chat", "deepseek-reasoner", "deepseekcoder":
 		return "deepseek"
 	default:
 		return trimmed
