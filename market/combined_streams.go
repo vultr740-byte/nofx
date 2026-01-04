@@ -18,6 +18,11 @@ type CombinedStreamsClient struct {
 	reconnect   bool
 	done        chan struct{}
 	batchSize   int // 每批订阅的流数量
+
+	subMu      sync.Mutex
+	subscribed map[string]struct{} // 已订阅的 streams，用于重连后重放
+
+	reconnectMu sync.Mutex
 }
 
 func NewCombinedStreamsClient(batchSize int) *CombinedStreamsClient {
@@ -26,6 +31,7 @@ func NewCombinedStreamsClient(batchSize int) *CombinedStreamsClient {
 		reconnect:   true,
 		done:        make(chan struct{}),
 		batchSize:   batchSize,
+		subscribed:  make(map[string]struct{}),
 	}
 }
 
@@ -100,14 +106,28 @@ func (c *CombinedStreamsClient) subscribeStreams(streams []string) error {
 	}
 
 	c.mu.RLock()
-	defer c.mu.RUnlock()
+	conn := c.conn
+	c.mu.RUnlock()
 
-	if c.conn == nil {
+	if conn == nil {
 		return fmt.Errorf("WebSocket未连接")
 	}
 
 	log.Printf("订阅流: %v", streams)
-	return c.conn.WriteJSON(subscribeMsg)
+	if err := conn.WriteJSON(subscribeMsg); err != nil {
+		return err
+	}
+
+	c.subMu.Lock()
+	if c.subscribed == nil {
+		c.subscribed = make(map[string]struct{})
+	}
+	for _, s := range streams {
+		c.subscribed[s] = struct{}{}
+	}
+	c.subMu.Unlock()
+
+	return nil
 }
 
 func (c *CombinedStreamsClient) readMessages() {
@@ -174,13 +194,55 @@ func (c *CombinedStreamsClient) handleReconnect() {
 		return
 	}
 
+	c.reconnectMu.Lock()
+	defer c.reconnectMu.Unlock()
+
 	log.Println("组合流尝试重新连接...")
+
+	// 清理旧连接
+	c.mu.Lock()
+	old := c.conn
+	c.conn = nil
+	c.mu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+
 	time.Sleep(3 * time.Second)
 
 	if err := c.Connect(); err != nil {
 		log.Printf("组合流重新连接失败: %v", err)
 		go c.handleReconnect()
+		return
 	}
+
+	// 重放所有 streams 订阅
+	c.resubscribeAll()
+}
+
+func (c *CombinedStreamsClient) resubscribeAll() {
+	c.subMu.Lock()
+	streams := make([]string, 0, len(c.subscribed))
+	for s := range c.subscribed {
+		streams = append(streams, s)
+	}
+	c.subMu.Unlock()
+
+	if len(streams) == 0 {
+		return
+	}
+
+	batches := c.splitIntoBatches(streams, c.batchSize)
+	for i, batch := range batches {
+		if err := c.subscribeStreams(batch); err != nil {
+			log.Printf("重放订阅失败(batch=%d/%d): %v", i+1, len(batches), err)
+			return
+		}
+		if i < len(batches)-1 {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	log.Printf("✅ 组合流重连后已重放 %d 个订阅", len(streams))
 }
 
 func (c *CombinedStreamsClient) Close() {

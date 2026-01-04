@@ -25,10 +25,7 @@ type WSMonitor struct {
 	FilterSymbol    []string //经过筛选的币种
 
 	subMu      sync.Mutex
-	subscribed map[string]struct{} // key: symbol|interval
-
-	readyMu sync.Mutex
-	ready   map[string]chan struct{} // key: symbol|interval
+	subscribed map[string]struct{} // key: symbol|interval (Binance kline subscriptions)
 }
 
 // getKlineLimit 根据时间周期返回对应的K线数据根数
@@ -63,7 +60,6 @@ func NewWSMonitor(batchSize int) *WSMonitor {
 		alertsChan:     make(chan Alert, 1000),
 		batchSize:      batchSize,
 		subscribed:     make(map[string]struct{}),
-		ready:          make(map[string]chan struct{}),
 	}
 	return WSMonitorCli
 }
@@ -90,24 +86,60 @@ func (m *WSMonitor) Initialize(coins []string) error {
 		m.symbols = coins
 	}
 
-	// 统一币种格式（避免 BTC vs BTCUSDT 等导致 WS/缓存错配），并去重
+	// 统一币种格式（仅支持 Binance，去重；不支持 ":" / xyz: 等资产）
 	seen := make(map[string]struct{}, len(m.symbols))
 	normalized := make([]string, 0, len(m.symbols))
 	for _, s := range m.symbols {
-		sym := normalizeKlineSymbol(s)
-		if sym == "" {
+		bnSymbol, ok := toBinanceSymbol(s)
+		if !ok {
+			log.Printf("⚠️ 跳过非 Binance 币种: %s", s)
 			continue
 		}
-		if _, ok := seen[sym]; ok {
+		if _, ok := seen[bnSymbol]; ok {
 			continue
 		}
-		seen[sym] = struct{}{}
-		normalized = append(normalized, sym)
+		seen[bnSymbol] = struct{}{}
+		normalized = append(normalized, bnSymbol)
 	}
 	m.symbols = normalized
 
 	log.Printf("找到 %d 个交易对", len(m.symbols))
 
+	return nil
+}
+
+// initializeHistoricalData 启动时用 Binance REST 预热 K 线缓存（避免仅靠 WS 等待慢周期K线）。
+func (m *WSMonitor) initializeHistoricalData() error {
+	apiClient := NewAPIClient()
+
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, 5) // 限制并发数，避免触发 Binance 限流
+
+	for _, symbol := range m.symbols {
+		s := symbol
+		wg.Add(1)
+		semaphore <- struct{}{}
+
+		go func() {
+			defer wg.Done()
+			defer func() { <-semaphore }()
+
+			for _, tf := range subKlineTime {
+				limit := getKlineLimit(tf)
+				klines, err := apiClient.GetKlines(s, tf, limit)
+				if err != nil {
+					log.Printf("获取 %s %s 历史数据失败: %v", s, tf, err)
+					continue
+				}
+				if len(klines) > 0 {
+					m.getKlineDataMap(tf).Store(s, klines)
+					log.Printf("已加载 %s 的历史K线数据-%s: %d 条", s, tf, len(klines))
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
 	return nil
 }
 
@@ -120,139 +152,65 @@ func (m *WSMonitor) Start(coins []string) {
 		return
 	}
 
+	// 预热历史数据（REST）
+	if err := m.initializeHistoricalData(); err != nil {
+		log.Printf("初始化历史数据失败: %v", err)
+	}
+
 	if err := m.subscribeAll(); err != nil {
-		log.Printf("❌ 订阅 Hyperliquid K线失败: %v", err)
+		log.Printf("❌ 订阅 Binance K线失败: %v", err)
 		return
 	}
-}
-
-// subscribeSymbol 注册监听
-func (m *WSMonitor) subscribeSymbol(symbol, st string) []string {
-	var streams []string
-	hlSymbol := ToHLSymbol(symbol)
-	// 使用全局 WS manager 订阅
-	unsub := subscribeHLCandle(hlSymbol, st, func(c HLCandle) {
-		m.handleHLKlineData(symbol, c, st)
-	})
-	_ = unsub
-	streams = append(streams, hlSymbol+"@"+st)
-
-	return streams
 }
 
 func subKey(symbol, interval string) string {
 	return symbol + "|" + interval
 }
 
-// normalizeKlineSymbol 将输入 symbol 规范为内部 K 线缓存的 key。
-// - 普通币种：统一为 Binance 风格（默认追加 USDT），例如 BTC -> BTCUSDT
-// - Hyperliquid/HIP-3 等带 ":" 的符号保持不变（仅做大写）
-func normalizeKlineSymbol(symbol string) string {
-	symbol = Normalize(symbol)
-	if symbol == "" {
-		return ""
-	}
-	if s, ok := toBinanceSymbol(symbol); ok {
-		return s
-	}
-	return symbol
-}
-
-// ensureSubscribed 确保已通过 WS 订阅到指定 symbol/interval 的 K 线推送（幂等）。
-func (m *WSMonitor) ensureSubscribed(symbol, interval string) {
-	symbol = normalizeKlineSymbol(symbol)
+// ensureSubscribed 确保已为指定 symbol/interval 注册 Binance K 线订阅者（幂等）。
+// 返回值表示是否是首次注册。
+func (m *WSMonitor) ensureSubscribed(symbol, interval string) bool {
 	if symbol == "" || interval == "" {
-		return
+		return false
 	}
 
 	key := subKey(symbol, interval)
 	m.subMu.Lock()
 	if _, ok := m.subscribed[key]; ok {
 		m.subMu.Unlock()
-		return
+		return false
 	}
 	m.subscribed[key] = struct{}{}
 	m.subMu.Unlock()
 
-	m.subscribeSymbol(symbol, interval)
-}
+	stream := fmt.Sprintf("%s@kline_%s", strings.ToLower(symbol), interval)
+	ch := m.combinedClient.AddSubscriber(stream, 1000)
+	go m.handleKlineData(symbol, ch, interval)
 
-func (m *WSMonitor) getReadyChan(symbol, interval string) chan struct{} {
-	key := subKey(symbol, interval)
-	m.readyMu.Lock()
-	defer m.readyMu.Unlock()
-	if m.ready == nil {
-		m.ready = make(map[string]chan struct{})
-	}
-	ch, ok := m.ready[key]
-	if !ok {
-		ch = make(chan struct{})
-		m.ready[key] = ch
-	}
-	return ch
-}
-
-func (m *WSMonitor) clearReadyChan(symbol, interval string, ch chan struct{}) {
-	key := subKey(symbol, interval)
-	m.readyMu.Lock()
-	if m.ready != nil && m.ready[key] == ch {
-		delete(m.ready, key)
-	}
-	m.readyMu.Unlock()
-}
-
-func (m *WSMonitor) signalReady(symbol, interval string) {
-	key := subKey(symbol, interval)
-	m.readyMu.Lock()
-	ch, ok := m.ready[key]
-	if ok {
-		delete(m.ready, key)
-	}
-	m.readyMu.Unlock()
-	if ok {
-		close(ch)
-	}
-}
-
-func (m *WSMonitor) waitForFirstKline(symbol, interval string, timeout time.Duration) error {
-	if timeout <= 0 {
-		return nil
-	}
-
-	// fast path
-	if v, ok := m.getKlineDataMap(interval).Load(symbol); ok {
-		if ks, ok2 := v.([]Kline); ok2 && len(ks) > 0 {
-			return nil
-		}
-	}
-
-	ch := m.getReadyChan(symbol, interval)
-	// re-check after registering waiter to avoid missing a signal
-	if v, ok := m.getKlineDataMap(interval).Load(symbol); ok {
-		if ks, ok2 := v.([]Kline); ok2 && len(ks) > 0 {
-			m.clearReadyChan(symbol, interval, ch)
-			return nil
-		}
-	}
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	select {
-	case <-ch:
-		return nil
-	case <-timer.C:
-		m.clearReadyChan(symbol, interval, ch)
-		return fmt.Errorf("WS kline not ready: symbol=%s interval=%s timeout=%s", symbol, interval, timeout)
-	}
+	return true
 }
 
 func (m *WSMonitor) subscribeAll() error {
 	// 执行批量订阅
 	log.Println("开始订阅所有交易对...")
+
+	m.combinedClient.mu.RLock()
+	conn := m.combinedClient.conn
+	m.combinedClient.mu.RUnlock()
+	if conn == nil {
+		if err := m.combinedClient.Connect(); err != nil {
+			return err
+		}
+	}
+
 	for _, symbol := range m.symbols {
-		for _, st := range subKlineTime {
-			m.ensureSubscribed(symbol, st)
+		for _, tf := range subKlineTime {
+			m.ensureSubscribed(symbol, tf)
+		}
+	}
+	for _, tf := range subKlineTime {
+		if err := m.combinedClient.BatchSubscribeKlines(m.symbols, tf); err != nil {
+			return err
 		}
 	}
 	log.Println("所有交易对订阅完成")
@@ -268,47 +226,6 @@ func (m *WSMonitor) handleKlineData(symbol string, ch <-chan []byte, _time strin
 		}
 		m.processKlineUpdate(symbol, klineData, _time)
 	}
-}
-
-// handleHLKlineData 处理 Hyperliquid K 线
-func (m *WSMonitor) handleHLKlineData(symbol string, candle HLCandle, _time string) {
-	kline := Kline{
-		OpenTime:            candle.StartTime,
-		Open:                candle.Open,
-		High:                candle.High,
-		Low:                 candle.Low,
-		Close:               candle.Close,
-		Volume:              candle.Volume,
-		CloseTime:           candle.EndTime,
-		QuoteVolume:         0,
-		Trades:              candle.Trades,
-		TakerBuyBaseVolume:  0,
-		TakerBuyQuoteVolume: 0,
-	}
-	m.storeKline(symbol, kline, _time)
-}
-
-// toHLSymbol 将内部 symbol 映射为 Hyperliquid 符号
-func ToHLSymbol(symbol string) string {
-	s := strings.TrimSpace(symbol)
-	if strings.Contains(s, ":") {
-		parts := strings.SplitN(s, ":", 2)
-		prefix := strings.ToLower(parts[0])
-		suffix := strings.ToUpper(parts[1])
-		return prefix + ":" + suffix
-	}
-	// 去掉常见后缀
-	s = strings.ToUpper(s)
-	s = strings.TrimSuffix(s, "USDT")
-	s = strings.TrimSuffix(s, "USD")
-	// 简单商品映射
-	switch s {
-	case "SILVER", "XAG":
-		return "xyz:SILVER"
-	case "GOLD", "XAU":
-		return "xyz:GOLD"
-	}
-	return s
 }
 
 func (m *WSMonitor) getKlineDataMap(_time string) *sync.Map {
@@ -345,14 +262,14 @@ func (m *WSMonitor) processKlineUpdate(symbol string, wsData KlineWSData, _time 
 
 // storeKline 将 K 线写入对应的周期缓存
 func (m *WSMonitor) storeKline(symbol string, kline Kline, _time string) {
-	symbol = normalizeKlineSymbol(symbol)
-	if symbol == "" {
+	bnSymbol, ok := toBinanceSymbol(symbol)
+	if !ok {
 		return
 	}
 
 	// 更新K线数据
 	var klineDataMap = m.getKlineDataMap(_time)
-	value, exists := klineDataMap.Load(symbol)
+	value, exists := klineDataMap.Load(bnSymbol)
 	var klines []Kline
 	if exists {
 		// copy-on-write: 避免并发读/写共享底层数组产生竞态
@@ -378,39 +295,59 @@ func (m *WSMonitor) storeKline(symbol string, kline Kline, _time string) {
 		klines = []Kline{kline}
 	}
 
-	klineDataMap.Store(symbol, klines)
-	if !exists {
-		m.signalReady(symbol, _time)
-	}
+	klineDataMap.Store(bnSymbol, klines)
 }
 
 func (m *WSMonitor) GetCurrentKlines(symbol string, _time string) ([]Kline, error) {
-	symbol = normalizeKlineSymbol(symbol)
-	if symbol == "" {
-		return nil, fmt.Errorf("symbol 为空")
+	bnSymbol, ok := toBinanceSymbol(symbol)
+	if !ok || bnSymbol == "" {
+		return nil, fmt.Errorf("不支持的币种(非 Binance): %s", symbol)
 	}
 
-	m.ensureSubscribed(symbol, _time)
-	if err := m.waitForFirstKline(symbol, _time, 10*time.Second); err != nil {
-		return nil, err
+	m.ensureSubscribed(bnSymbol, _time)
+
+	// 如果 WS 已连接且该 stream 尚未订阅，则补订阅，确保后续实时更新。
+	m.combinedClient.mu.RLock()
+	conn := m.combinedClient.conn
+	m.combinedClient.mu.RUnlock()
+	if conn != nil {
+		stream := fmt.Sprintf("%s@kline_%s", strings.ToLower(bnSymbol), _time)
+		m.combinedClient.subMu.Lock()
+		_, subbed := m.combinedClient.subscribed[stream]
+		m.combinedClient.subMu.Unlock()
+		if !subbed {
+			_ = m.combinedClient.BatchSubscribeKlines([]string{bnSymbol}, _time)
+		}
 	}
 
-	value, exists := m.getKlineDataMap(_time).Load(symbol)
-	if !exists {
-		return nil, fmt.Errorf("K线数据不存在: symbol=%s interval=%s", symbol, _time)
+	value, exists := m.getKlineDataMap(_time).Load(bnSymbol)
+	var cached []Kline
+	if exists {
+		cached = value.([]Kline)
+	}
+	if !exists || len(cached) == 0 {
+		// 如果缓存未初始化/为空，使用 Binance REST 获取并填充
+		apiClient := NewAPIClient()
+		limit := getKlineLimit(_time)
+		klines, err := apiClient.GetKlines(bnSymbol, _time, limit)
+		if err != nil {
+			return nil, fmt.Errorf("获取%v分钟K线失败: %v", _time, err)
+		}
+		m.getKlineDataMap(_time).Store(bnSymbol, klines)
+
+		result := make([]Kline, len(klines))
+		copy(result, klines)
+		return result, nil
 	}
 
 	// ✅ FIX: 返回深拷贝而非引用，避免并发竞态条件
-	klines := value.([]Kline)
-	if len(klines) == 0 {
-		return nil, fmt.Errorf("K线数据为空: symbol=%s interval=%s", symbol, _time)
-	}
-	result := make([]Kline, len(klines))
-	copy(result, klines)
+	result := make([]Kline, len(cached))
+	copy(result, cached)
 	return result, nil
 }
 
 func (m *WSMonitor) Close() {
 	m.wsClient.Close()
+	m.combinedClient.Close()
 	close(m.alertsChan)
 }
