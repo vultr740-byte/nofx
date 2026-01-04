@@ -46,12 +46,23 @@ func New() *Client {
 		}
 	}
 
+	// 从环境变量读取 Timeout，默认 120s
+	timeout := 120 * time.Second
+	if envTimeout := os.Getenv("AI_TIMEOUT_SECONDS"); envTimeout != "" {
+		if parsed, err := strconv.Atoi(envTimeout); err == nil && parsed > 0 {
+			timeout = time.Duration(parsed) * time.Second
+			log.Printf("🔧 [MCP] 使用环境变量 AI_TIMEOUT_SECONDS: %ds", parsed)
+		} else {
+			log.Printf("⚠️  [MCP] 环境变量 AI_TIMEOUT_SECONDS 无效 (%s)，使用默认值: %v", envTimeout, timeout)
+		}
+	}
+
 	// 默认配置
 	return &Client{
 		Provider:  ProviderDeepSeek,
 		BaseURL:   "https://api.deepseek.com/v1",
 		Model:     "",
-		Timeout:   120 * time.Second, // 增加到120秒，因为AI需要分析大量数据
+		Timeout:   timeout, // 包含整个请求（含流式读取 body）的超时
 		MaxTokens: maxTokens,
 	}
 }
@@ -85,6 +96,11 @@ func (client *Client) SetDeepSeekAPIKey(apiKey string, customURL string, customM
 	if os.Getenv("AI_MAX_TOKENS") == "" && client.Model == "deepseek-reasoner" && client.MaxTokens == 2000 {
 		client.MaxTokens = 8000
 		log.Printf("🔧 [MCP] DeepSeek %s 自动提高 MaxTokens: %d", client.Model, client.MaxTokens)
+	}
+	// deepseek-reasoner 推理更耗时：在未显式设置超时时，适当提高默认超时，避免流式读取中断
+	if os.Getenv("AI_TIMEOUT_SECONDS") == "" && client.Model == "deepseek-reasoner" && client.Timeout == 120*time.Second {
+		client.Timeout = 300 * time.Second
+		log.Printf("🔧 [MCP] DeepSeek %s 自动提高 Timeout: %v", client.Model, client.Timeout)
 	}
 	// 避免在日志中泄露密钥内容（只记录长度用于排查）
 	if apiKey != "" {
@@ -283,6 +299,8 @@ func isRetryableError(err error) bool {
 	retryableErrors := []string{
 		"EOF",
 		"timeout",
+		"context deadline exceeded",
+		"Client.Timeout",
 		"connection reset",
 		"connection refused",
 		"temporary failure",
