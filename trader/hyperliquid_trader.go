@@ -1702,7 +1702,8 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 		log.Printf("📈 [HIP-3] 加密货币使用标准定价策略: 1.01倍")
 	}
 
-	aggressivePrice = t.roundPriceForCoin(coin, price*priceMultiplier, true)
+	slippage := math.Abs(priceMultiplier - 1.0)
+	aggressivePrice = t.iocLimitPriceForCoin(coin, true, price, slippage)
 	log.Printf("  💰 价格精度处理: %.8f * %.3f -> %.8f -> %.8f", price, priceMultiplier, price*priceMultiplier, aggressivePrice)
 
 	// 价格预验证
@@ -1893,7 +1894,8 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 		log.Printf("📈 [HIP-3] 加密货币使用标准定价策略: 0.99倍")
 	}
 
-	aggressivePrice = t.roundPriceForCoin(coin, price*priceMultiplier, true)
+	slippage := math.Abs(priceMultiplier - 1.0)
+	aggressivePrice = t.iocLimitPriceForCoin(coin, false, price, slippage)
 	log.Printf("  💰 价格精度处理: %.8f * %.3f -> %.8f -> %.8f", price, priceMultiplier, price*priceMultiplier, aggressivePrice)
 
 	// 价格预验证
@@ -2053,7 +2055,7 @@ func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (map[stri
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
 	// ⚠️ 关键：价格也需要处理为5位有效数字
-	aggressivePrice := t.roundPriceForCoin(coin, price*0.99, true)
+	aggressivePrice := t.iocLimitPriceForCoin(coin, false, price, 0.01)
 	log.Printf("  💰 价格精度处理: %.8f -> %.8f", price*0.99, aggressivePrice)
 
 	// 创建平仓订单（卖出 + ReduceOnly）
@@ -2128,7 +2130,7 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (map[str
 	log.Printf("  📏 数量精度处理: %.8f -> %.8f (szDecimals=%d)", quantity, roundedQuantity, t.getSzDecimals(coin))
 
 	// ⚠️ 关键：价格也需要处理为5位有效数字
-	aggressivePrice := t.roundPriceForCoin(coin, price*1.01, true)
+	aggressivePrice := t.iocLimitPriceForCoin(coin, true, price, 0.01)
 	log.Printf("  💰 价格精度处理: %.8f -> %.8f", price*1.01, aggressivePrice)
 
 	// 创建平仓订单（买入 + ReduceOnly）
@@ -2915,6 +2917,38 @@ func (t *HyperliquidTrader) roundPriceForCoin(coin string, price float64, trunca
 	log.Printf("📊 [PriceFmt] 5 sigfig + tick(%d 位): %.8f -> %.8f -> %.8f",
 		priceDecimals, price, sigPrice, finalPrice)
 	return finalPrice
+}
+
+// iocLimitPriceForCoin 生成符合 Hyperliquid tick/lot 规则的 IOC 限价（用于模拟市价单）
+//
+// 优先使用 SDK 的 SlippagePrice（与 Hyperliquid 官方规则保持一致），
+// 避免本地截断/浮点误差导致偶发 "Price must be divisible by tick size"。
+// 当 coin 未被 SDK 正确识别（例如映射缺失导致默认落到 BTC）时，回退到本地 roundPriceForCoin。
+func (t *HyperliquidTrader) iocLimitPriceForCoin(coin string, isBuy bool, marketPrice float64, slippage float64) float64 {
+	if marketPrice == 0 {
+		return 0
+	}
+	if slippage < 0 {
+		slippage = 0
+	}
+
+	if t.exchange != nil {
+		asset := t.exchange.Info().NameToAsset(coin)
+		if asset != 0 || strings.EqualFold(coin, "BTC") {
+			px := marketPrice
+			if p, err := t.exchange.SlippagePrice(t.ctx, coin, isBuy, slippage, &px); err == nil && p > 0 {
+				return p
+			}
+		}
+	}
+
+	multiplier := 1.0
+	if isBuy {
+		multiplier = 1 + slippage
+	} else {
+		multiplier = 1 - slippage
+	}
+	return t.roundPriceForCoin(coin, marketPrice*multiplier, true)
 }
 
 // roundPriceToSigfigs 将价格四舍五入到5位有效数字
