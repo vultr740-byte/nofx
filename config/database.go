@@ -2306,27 +2306,7 @@ func (d *Database) GetCustomCoins() []string {
 		}
 	}
 
-	// 1) 普通交易员（web/api）
-	if rows, err := d.queryTraderCoinRows(); err != nil {
-		log.Printf("⚠️  获取交易员币种配置失败: %v", err)
-	} else {
-		for rows.Next() {
-			var tradingSymbols, customCoins string
-			var useDefaultCoins bool
-			if err := rows.Scan(&tradingSymbols, &customCoins, &useDefaultCoins); err != nil {
-				log.Printf("⚠️  扫描交易员币种配置失败: %v", err)
-				continue
-			}
-			addCoins(tradingSymbols)
-			addCoins(customCoins)
-			if useDefaultCoins && strings.TrimSpace(tradingSymbols) == "" && strings.TrimSpace(customCoins) == "" {
-				needDefaultCoins = true
-			}
-		}
-		_ = rows.Close()
-	}
-
-	// 2) TG 交易员（telegram）
+	// TG 交易员（telegram）
 	if rows, err := d.queryTGTraderCoinRows(); err != nil {
 		// 兼容旧库：可能尚未创建 tg_traders 表
 		if !strings.Contains(strings.ToLower(err.Error()), "no such table") &&
@@ -2336,11 +2316,12 @@ func (d *Database) GetCustomCoins() []string {
 	} else {
 		for rows.Next() {
 			var tradingSymbols, customCoins string
-			var useDefaultCoins bool
-			if err := rows.Scan(&tradingSymbols, &customCoins, &useDefaultCoins); err != nil {
+			var useDefaultCoinsRaw interface{}
+			if err := rows.Scan(&tradingSymbols, &customCoins, &useDefaultCoinsRaw); err != nil {
 				log.Printf("⚠️  扫描TG交易员币种配置失败: %v", err)
 				continue
 			}
+			useDefaultCoins := normalizeBool(useDefaultCoinsRaw)
 			addCoins(tradingSymbols)
 			addCoins(customCoins)
 			if useDefaultCoins && strings.TrimSpace(tradingSymbols) == "" && strings.TrimSpace(customCoins) == "" {
@@ -2370,6 +2351,27 @@ func (d *Database) GetCustomCoins() []string {
 	}
 
 	return symbols
+}
+
+func normalizeBool(v interface{}) bool {
+	switch t := v.(type) {
+	case bool:
+		return t
+	case int64:
+		return t != 0
+	case int32:
+		return t != 0
+	case int:
+		return t != 0
+	case []byte:
+		s := strings.TrimSpace(strings.ToLower(string(t)))
+		return s == "true" || s == "1" || s == "t" || s == "yes" || s == "y"
+	case string:
+		s := strings.TrimSpace(strings.ToLower(t))
+		return s == "true" || s == "1" || s == "t" || s == "yes" || s == "y"
+	default:
+		return false
+	}
 }
 
 func parseCoinListLocal(raw string) []string {
@@ -2404,25 +2406,6 @@ func parseCoinListLocal(raw string) []string {
 		}
 	}
 	return out
-}
-
-func (d *Database) queryTraderCoinRows() (*sql.Rows, error) {
-	if d.usePostgreSQL {
-		return d.db.Query(`
-			SELECT
-				COALESCE(trading_symbols, '') as trading_symbols,
-				COALESCE(custom_coins, '') as custom_coins,
-				COALESCE(use_default_coins, TRUE) as use_default_coins
-			FROM traders
-		`)
-	}
-	return d.db.Query(`
-		SELECT
-			COALESCE(trading_symbols, '') as trading_symbols,
-			COALESCE(custom_coins, '') as custom_coins,
-			COALESCE(use_default_coins, 1) as use_default_coins
-		FROM traders
-	`)
 }
 
 func (d *Database) queryTGTraderCoinRows() (*sql.Rows, error) {
