@@ -2291,31 +2291,157 @@ func (d *Database) UpdateUserSignalSource(userID, coinPoolURL, oiTopURL string) 
 
 // GetCustomCoins 获取所有交易员自定义币种 / Get all trader-customized currencies
 func (d *Database) GetCustomCoins() []string {
-	var symbol string
 	var symbols []string
-	_ = d.db.QueryRow(`
-		SELECT GROUP_CONCAT(custom_coins , ',') as symbol
-		FROM main.traders where custom_coins != ''
-	`).Scan(&symbol)
-	// 检测用户是否未配置币种 - 兼容性
-	if symbol == "" {
+	needDefaultCoins := false
+
+	addCoins := func(raw string) {
+		for _, c := range parseCoinListLocal(raw) {
+			coin := market.Normalize(c)
+			if coin == "" {
+				continue
+			}
+			if !slices.Contains(symbols, coin) {
+				symbols = append(symbols, coin)
+			}
+		}
+	}
+
+	// 1) 普通交易员（web/api）
+	if rows, err := d.queryTraderCoinRows(); err != nil {
+		log.Printf("⚠️  获取交易员币种配置失败: %v", err)
+	} else {
+		for rows.Next() {
+			var tradingSymbols, customCoins string
+			var useDefaultCoins bool
+			if err := rows.Scan(&tradingSymbols, &customCoins, &useDefaultCoins); err != nil {
+				log.Printf("⚠️  扫描交易员币种配置失败: %v", err)
+				continue
+			}
+			addCoins(tradingSymbols)
+			addCoins(customCoins)
+			if useDefaultCoins && strings.TrimSpace(tradingSymbols) == "" && strings.TrimSpace(customCoins) == "" {
+				needDefaultCoins = true
+			}
+		}
+		_ = rows.Close()
+	}
+
+	// 2) TG 交易员（telegram）
+	if rows, err := d.queryTGTraderCoinRows(); err != nil {
+		// 兼容旧库：可能尚未创建 tg_traders 表
+		if !strings.Contains(strings.ToLower(err.Error()), "no such table") &&
+			!strings.Contains(strings.ToLower(err.Error()), "does not exist") {
+			log.Printf("⚠️  获取TG交易员币种配置失败: %v", err)
+		}
+	} else {
+		for rows.Next() {
+			var tradingSymbols, customCoins string
+			var useDefaultCoins bool
+			if err := rows.Scan(&tradingSymbols, &customCoins, &useDefaultCoins); err != nil {
+				log.Printf("⚠️  扫描TG交易员币种配置失败: %v", err)
+				continue
+			}
+			addCoins(tradingSymbols)
+			addCoins(customCoins)
+			if useDefaultCoins && strings.TrimSpace(tradingSymbols) == "" && strings.TrimSpace(customCoins) == "" {
+				needDefaultCoins = true
+			}
+		}
+		_ = rows.Close()
+	}
+
+	// 3) 默认币种：当没有任何自定义币种，或明确需要默认币种时才加载
+	if len(symbols) == 0 || needDefaultCoins {
 		symbolJSON, _ := d.GetSystemConfig("default_coins")
-		if err := json.Unmarshal([]byte(symbolJSON), &symbols); err != nil {
+		var defaultCoins []string
+		if err := json.Unmarshal([]byte(symbolJSON), &defaultCoins); err != nil {
 			log.Printf("⚠️  解析default_coins配置失败: %v，使用硬编码默认值", err)
-			symbols = []string{"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"}
+			defaultCoins = []string{"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"}
+		}
+		for _, c := range defaultCoins {
+			coin := market.Normalize(c)
+			if coin == "" {
+				continue
+			}
+			if !slices.Contains(symbols, coin) {
+				symbols = append(symbols, coin)
+			}
 		}
 	}
-	// filter Symbol
-	for _, s := range strings.Split(symbol, ",") {
-		if s == "" {
-			continue
-		}
-		coin := market.Normalize(s)
-		if !slices.Contains(symbols, coin) {
-			symbols = append(symbols, coin)
-		}
-	}
+
 	return symbols
+}
+
+func parseCoinListLocal(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+
+	// 优先尝试 JSON 数组
+	if strings.HasPrefix(raw, "[") {
+		var arr []string
+		if err := json.Unmarshal([]byte(raw), &arr); err == nil {
+			out := make([]string, 0, len(arr))
+			for _, v := range arr {
+				v = strings.TrimSpace(v)
+				if v != "" {
+					out = append(out, v)
+				}
+			}
+			return out
+		}
+	}
+
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\t' || r == ' '
+	})
+	out := make([]string, 0, len(fields))
+	for _, v := range fields {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (d *Database) queryTraderCoinRows() (*sql.Rows, error) {
+	if d.usePostgreSQL {
+		return d.db.Query(`
+			SELECT
+				COALESCE(trading_symbols, '') as trading_symbols,
+				COALESCE(custom_coins, '') as custom_coins,
+				COALESCE(use_default_coins, TRUE) as use_default_coins
+			FROM traders
+		`)
+	}
+	return d.db.Query(`
+		SELECT
+			COALESCE(trading_symbols, '') as trading_symbols,
+			COALESCE(custom_coins, '') as custom_coins,
+			COALESCE(use_default_coins, 1) as use_default_coins
+		FROM traders
+	`)
+}
+
+func (d *Database) queryTGTraderCoinRows() (*sql.Rows, error) {
+	if d.usePostgreSQL {
+		return d.db.Query(`
+			SELECT
+				COALESCE(trading_symbols, '') as trading_symbols,
+				COALESCE(custom_coins, '') as custom_coins,
+				COALESCE(use_default_coins, TRUE) as use_default_coins
+			FROM tg_traders
+		`)
+	}
+	return d.db.Query(`
+		SELECT
+			COALESCE(trading_symbols, '') as trading_symbols,
+			COALESCE(custom_coins, '') as custom_coins,
+			COALESCE(use_default_coins, 1) as use_default_coins
+		FROM tg_traders
+	`)
 }
 
 // Close 关闭数据库连接
