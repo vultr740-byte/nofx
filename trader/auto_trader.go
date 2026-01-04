@@ -617,7 +617,7 @@ func (at *AutoTrader) formatDecisionSummary(decisions []logger.DecisionAction) s
 		filtered = append(filtered, d)
 	}
 	if len(filtered) == 0 {
-		return ""
+		return "无操作"
 	}
 
 	// 优先展示新增开仓（open_long/open_short）；若不存在开仓，则展示其它非 hold/wait 操作
