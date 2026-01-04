@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -183,6 +184,39 @@ func (client *Client) CallWithMessages(systemPrompt, userPrompt string) (string,
 		}
 
 		lastErr = err
+
+		// DeepSeek reasoner 常见问题：只生成 reasoning_content，未生成最终 content（通常是 max_tokens 不够）
+		var roe *reasoningOnlyError
+		if errors.As(err, &roe) && client.Provider == ProviderDeepSeek && strings.EqualFold(strings.TrimSpace(client.Model), "deepseek-reasoner") {
+			before := client.MaxTokens
+			// 逐步提高 max_tokens，尽量在不无限膨胀的前提下拿到最终 content
+			const capTokens = 32000
+			next := before
+			switch {
+			case before < 16000:
+				next = 16000
+			case before < capTokens:
+				next = before * 2
+				if next > capTokens {
+					next = capTokens
+				}
+			}
+			if next > before {
+				client.MaxTokens = next
+				log.Printf("🔧 [MCP] DeepSeek %s 检测到仅 reasoning_content，自动提高 MaxTokens: %d -> %d (finish_reason=%s)", client.Model, before, next, roe.FinishReason)
+
+				// 若用户未显式设置超时，则随 token 上限同步放宽读取时间，避免再次超时
+				if os.Getenv("AI_TIMEOUT_SECONDS") == "" {
+					if client.Timeout < 10*time.Minute && next >= 16000 {
+						client.Timeout = 10 * time.Minute
+						log.Printf("🔧 [MCP] DeepSeek %s 自动提高 Timeout: %v", client.Model, client.Timeout)
+					}
+				}
+				// 立即进入下一轮重试（不等待），因为这类错误通常不是网络抖动
+				continue
+			}
+		}
+
 		// 如果不是网络错误，不重试
 		if !isRetryableError(err) {
 			return "", err
@@ -197,6 +231,22 @@ func (client *Client) CallWithMessages(systemPrompt, userPrompt string) (string,
 	}
 
 	return "", fmt.Errorf("重试%d次后仍然失败: %w", maxRetries, lastErr)
+}
+
+type reasoningOnlyError struct {
+	Provider       Provider
+	Model          string
+	MaxTokens      int
+	FinishReason   string
+	ReasoningBytes int
+}
+
+func (e *reasoningOnlyError) Error() string {
+	finish := e.FinishReason
+	if finish == "" {
+		finish = "unknown"
+	}
+	return fmt.Sprintf("流式响应无最终内容(content)，仅返回 reasoning_content；finish_reason=%s；可能是 max_tokens 太小导致未生成最终答案。建议增大 AI_MAX_TOKENS（当前 %d），或改用 deepseek-chat 以减少推理占用。", finish, e.MaxTokens)
 }
 
 // callOnce 单次调用AI API（内部使用）
@@ -334,6 +384,7 @@ func readStreamContent(resp *http.Response, provider Provider, model string, max
 
 	var contentSB strings.Builder
 	var reasoningSB strings.Builder
+	lastFinishReason := ""
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -348,6 +399,11 @@ func readStreamContent(resp *http.Response, provider Provider, model string, max
 		}
 
 		var chunk struct {
+			Error *struct {
+				Message string `json:"message"`
+				Type    string `json:"type"`
+				Code    string `json:"code"`
+			} `json:"error"`
 			Choices []struct {
 				Delta struct {
 					Content          string `json:"content"`
@@ -357,6 +413,7 @@ func readStreamContent(resp *http.Response, provider Provider, model string, max
 					Content          string `json:"content"`
 					ReasoningContent string `json:"reasoning_content"`
 				} `json:"message"`
+				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
 		}
 
@@ -364,7 +421,14 @@ func readStreamContent(resp *http.Response, provider Provider, model string, max
 			return "", fmt.Errorf("解析流式分片失败: %w", err)
 		}
 
+		if chunk.Error != nil && chunk.Error.Message != "" {
+			return "", fmt.Errorf("API流式错误: %s", chunk.Error.Message)
+		}
+
 		for _, choice := range chunk.Choices {
+			if choice.FinishReason != "" {
+				lastFinishReason = choice.FinishReason
+			}
 			if choice.Delta.ReasoningContent != "" {
 				reasoningSB.WriteString(choice.Delta.ReasoningContent)
 			} else if choice.Message.ReasoningContent != "" {
@@ -385,7 +449,13 @@ func readStreamContent(resp *http.Response, provider Provider, model string, max
 	result := contentSB.String()
 	if result == "" {
 		if provider == ProviderDeepSeek && strings.EqualFold(strings.TrimSpace(model), "deepseek-reasoner") && reasoningSB.Len() > 0 {
-			return "", fmt.Errorf("流式响应无最终内容(content)，仅返回 reasoning_content；可能是 max_tokens 太小导致未生成最终答案。建议增大 AI_MAX_TOKENS（当前 %d），或改用 deepseek-chat 以减少推理占用。", maxTokens)
+			return "", &reasoningOnlyError{
+				Provider:       provider,
+				Model:          model,
+				MaxTokens:      maxTokens,
+				FinishReason:   lastFinishReason,
+				ReasoningBytes: reasoningSB.Len(),
+			}
 		}
 		return "", fmt.Errorf("流式响应为空")
 	}

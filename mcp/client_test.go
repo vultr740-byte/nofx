@@ -67,4 +67,3 @@ func TestReadStreamContent_NonOKStatus_ReturnsBody(t *testing.T) {
 		t.Fatalf("expected body in error, got: %q", err.Error())
 	}
 }
-
