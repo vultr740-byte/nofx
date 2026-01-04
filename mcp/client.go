@@ -80,9 +80,15 @@ func (client *Client) SetDeepSeekAPIKey(apiKey string, customURL string, customM
 		client.Model = "deepseek-reasoner"
 		log.Printf("🔧 [MCP] DeepSeek 使用默认 Model: %s", client.Model)
 	}
-	// 打印 API Key 的前后各4位用于验证
-	if len(apiKey) > 8 {
-		log.Printf("🔧 [MCP] DeepSeek API Key: %s...%s", apiKey[:4], apiKey[len(apiKey)-4:])
+	// deepseek-reasoner 会额外产生 reasoning_content，且通常需要更多 max_tokens 才能输出最终 content
+	// 仅在用户未显式设置 AI_MAX_TOKENS 且仍为默认值时，提升默认 token 上限
+	if os.Getenv("AI_MAX_TOKENS") == "" && client.Model == "deepseek-reasoner" && client.MaxTokens == 2000 {
+		client.MaxTokens = 8000
+		log.Printf("🔧 [MCP] DeepSeek %s 自动提高 MaxTokens: %d", client.Model, client.MaxTokens)
+	}
+	// 避免在日志中泄露密钥内容（只记录长度用于排查）
+	if apiKey != "" {
+		log.Printf("🔧 [MCP] DeepSeek API Key 已设置 (len=%d)", len(apiKey))
 	}
 }
 
@@ -105,9 +111,9 @@ func (client *Client) SetQwenAPIKey(apiKey string, customURL string, customModel
 		client.Model = "qwen3-30b"
 		log.Printf("🔧 [MCP] Qwen 使用默认 Model: %s", client.Model)
 	}
-	// 打印 API Key 的前后各4位用于验证
-	if len(apiKey) > 8 {
-		log.Printf("🔧 [MCP] Qwen API Key: %s...%s", apiKey[:4], apiKey[len(apiKey)-4:])
+	// 避免在日志中泄露密钥内容（只记录长度用于排查）
+	if apiKey != "" {
+		log.Printf("🔧 [MCP] Qwen API Key 已设置 (len=%d)", len(apiKey))
 	}
 }
 
@@ -185,8 +191,8 @@ func (client *Client) callOnce(systemPrompt, userPrompt string) (string, error) 
 	log.Printf("   BaseURL: %s", client.BaseURL)
 	log.Printf("   Model: %s", client.Model)
 	log.Printf("   UseFullURL: %v", client.UseFullURL)
-	if len(client.APIKey) > 8 {
-		log.Printf("   API Key: %s...%s", client.APIKey[:4], client.APIKey[len(client.APIKey)-4:])
+	if client.APIKey != "" {
+		log.Printf("   API Key: (len=%d)", len(client.APIKey))
 	}
 
 	// 构建 messages 数组
@@ -262,7 +268,7 @@ func (client *Client) callOnce(systemPrompt, userPrompt string) (string, error) 
 	defer resp.Body.Close()
 
 	// 读取流式响应
-	content, err := readStreamContent(resp)
+	content, err := readStreamContent(resp, client.Provider, client.Model, client.MaxTokens)
 	if err != nil {
 		return "", err
 	}
@@ -293,7 +299,7 @@ func isRetryableError(err error) bool {
 }
 
 // readStreamContent 解析 OpenAI/DeepSeek 兼容的流式响应
-func readStreamContent(resp *http.Response) (string, error) {
+func readStreamContent(resp *http.Response, provider Provider, model string, maxTokens int) (string, error) {
 	defer resp.Body.Close()
 
 	// 提前处理非200状态码
@@ -304,11 +310,12 @@ func readStreamContent(resp *http.Response) (string, error) {
 
 	scanner := bufio.NewScanner(resp.Body)
 	// 增加单行大小，避免长增量被截断
-	const maxLine = 1024 * 1024
+	const maxLine = 8 * 1024 * 1024
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, maxLine)
 
-	var sb strings.Builder
+	var contentSB strings.Builder
+	var reasoningSB strings.Builder
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -325,10 +332,12 @@ func readStreamContent(resp *http.Response) (string, error) {
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content string `json:"content"`
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
 				} `json:"delta"`
 				Message struct {
-					Content string `json:"content"`
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
 				} `json:"message"`
 			} `json:"choices"`
 		}
@@ -338,10 +347,15 @@ func readStreamContent(resp *http.Response) (string, error) {
 		}
 
 		for _, choice := range chunk.Choices {
+			if choice.Delta.ReasoningContent != "" {
+				reasoningSB.WriteString(choice.Delta.ReasoningContent)
+			} else if choice.Message.ReasoningContent != "" {
+				reasoningSB.WriteString(choice.Message.ReasoningContent)
+			}
 			if choice.Delta.Content != "" {
-				sb.WriteString(choice.Delta.Content)
+				contentSB.WriteString(choice.Delta.Content)
 			} else if choice.Message.Content != "" {
-				sb.WriteString(choice.Message.Content)
+				contentSB.WriteString(choice.Message.Content)
 			}
 		}
 	}
@@ -350,8 +364,11 @@ func readStreamContent(resp *http.Response) (string, error) {
 		return "", fmt.Errorf("读取流式响应失败: %w", err)
 	}
 
-	result := sb.String()
+	result := contentSB.String()
 	if result == "" {
+		if provider == ProviderDeepSeek && strings.EqualFold(strings.TrimSpace(model), "deepseek-reasoner") && reasoningSB.Len() > 0 {
+			return "", fmt.Errorf("流式响应无最终内容(content)，仅返回 reasoning_content；可能是 max_tokens 太小导致未生成最终答案。建议增大 AI_MAX_TOKENS（当前 %d），或改用 deepseek-chat 以减少推理占用。", maxTokens)
+		}
 		return "", fmt.Errorf("流式响应为空")
 	}
 	return result, nil
