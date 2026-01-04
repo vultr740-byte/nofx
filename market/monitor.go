@@ -17,6 +17,7 @@ type WSMonitor struct {
 	alertsChan      chan Alert
 	klineDataMap3m  sync.Map // 存储每个交易对的K线历史数据
 	klineDataMap15m sync.Map // 存储每个交易对的15分钟K线历史数据
+	klineDataMap1h  sync.Map // 存储每个交易对的1小时K线历史数据
 	klineDataMap4h  sync.Map // 存储每个交易对的K线历史数据
 	tickerDataMap   sync.Map // 存储每个交易对的ticker数据
 	batchSize       int
@@ -35,6 +36,8 @@ func getKlineLimit(timeframe string) int {
 		return 20 // 3分钟数据：20根 = 1小时历史
 	case "15m":
 		return 50 // 15分钟数据：50根 ≈ 12.5小时历史
+	case "1h":
+		return 24 // 1小时数据：24根 = 24小时历史
 	case "4h":
 		return 21 // 4小时数据：21根 = 3.5天历史
 	default:
@@ -51,7 +54,7 @@ type SymbolStats struct {
 }
 
 var WSMonitorCli *WSMonitor
-var subKlineTime = []string{"3m", "15m", "4h"} // 管理订阅流的K线周期
+var subKlineTime = []string{"3m", "15m", "1h", "4h"} // 管理订阅流的K线周期
 
 func NewWSMonitor(batchSize int) *WSMonitor {
 	WSMonitorCli = &WSMonitor{
@@ -234,6 +237,8 @@ func (m *WSMonitor) getKlineDataMap(_time string) *sync.Map {
 		klineDataMap = &m.klineDataMap3m
 	} else if _time == "15m" {
 		klineDataMap = &m.klineDataMap15m
+	} else if _time == "1h" {
+		klineDataMap = &m.klineDataMap1h
 	} else if _time == "4h" {
 		klineDataMap = &m.klineDataMap4h
 	} else {

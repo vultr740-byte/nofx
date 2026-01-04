@@ -14,7 +14,7 @@ import (
 
 // Get 获取指定代币的市场数据
 func Get(symbol string) (*Data, error) {
-	var klines15m, klines4h []Kline
+	var klines1h, klines15m, klines4h []Kline
 	var err error
 	// 标准化symbol
 	symbol = Normalize(symbol)
@@ -28,6 +28,13 @@ func Get(symbol string) (*Data, error) {
 	klines4h, err = WSMonitorCli.GetCurrentKlines(symbol, "4h") // 多获取用于计算指标
 	if err != nil {
 		return nil, fmt.Errorf("获取4小时K线失败: %v", err)
+	}
+
+	// 获取1小时K线数据（结构共振用；失败不阻断整体数据）
+	klines1h, err = WSMonitorCli.GetCurrentKlines(symbol, "1h")
+	if err != nil {
+		log.Printf("⚠️ 获取1小时K线失败(%s): %v", symbol, err)
+		klines1h = nil
 	}
 
 	// 计算当前价格 (基于15分钟最新数据)
@@ -66,6 +73,9 @@ func Get(symbol string) (*Data, error) {
 	// 计算日内系列数据
 	intradayData := calculateIntradaySeries(klines15m)
 
+	// 计算1小时结构数据（仅收盘价序列）
+	hourlyData := calculateHourlyData(klines1h)
+
 	// 计算长期数据
 	longerTermData := calculateLongerTermData(klines4h)
 
@@ -78,6 +88,7 @@ func Get(symbol string) (*Data, error) {
 		OpenInterest:      oiData,
 		FundingRate:       fundingRate,
 		IntradaySeries:    intradayData,
+		HourlyContext:     hourlyData,
 		LongerTermContext: longerTermData,
 	}, nil
 }
@@ -295,6 +306,19 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 	return data
 }
 
+func calculateHourlyData(klines []Kline) *HourlyData {
+	if len(klines) == 0 {
+		return nil
+	}
+	data := &HourlyData{
+		ClosePrices: make([]float64, 0, len(klines)),
+	}
+	for _, k := range klines {
+		data.ClosePrices = append(data.ClosePrices, k.Close)
+	}
+	return data
+}
+
 // getOpenInterestData 获取OI数据（Binance 期货）
 func getOpenInterestData(symbol string) (*OIData, error) {
 	bnSymbol, ok := toBinanceSymbol(symbol)
@@ -442,6 +466,11 @@ func Format(data *Data) string {
 		// if len(data.IntradaySeries.RSI14Values) > 0 {
 		// 	sb.WriteString(fmt.Sprintf("RSI indicators (14‑Period): %s\n\n", formatFloatSlice(data.IntradaySeries.RSI14Values)))
 		// }
+	}
+
+	if data.HourlyContext != nil && len(data.HourlyContext.ClosePrices) > 0 {
+		sb.WriteString("Close prices (1h, oldest → latest):\n\n")
+		sb.WriteString(fmt.Sprintf("%s\n\n", formatFloatSlice(data.HourlyContext.ClosePrices)))
 	}
 
 	if data.LongerTermContext != nil {
