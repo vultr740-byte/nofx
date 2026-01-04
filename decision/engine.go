@@ -19,10 +19,11 @@ import (
 var (
 	// ✅ 安全的正則：精確匹配 ```json 代碼塊
 	// 使用反引號 + 拼接避免轉義問題
-	reJSONFence      = regexp.MustCompile(`(?is)` + "```json\\s*(\\[\\s*\\{.*?\\}\\s*\\])\\s*```")
+	reJSONFence      = regexp.MustCompile(`(?is)` + "```json\\s*(\\[\\s*(?:\\{.*?\\}\\s*(?:,\\s*\\{.*?\\}\\s*)*)?\\])\\s*```")
 	reJSONArray      = regexp.MustCompile(`(?is)\[\s*\{.*?\}\s*\]`)
 	reArrayHead      = regexp.MustCompile(`^\[\s*\{`)
 	reArrayOpenSpace = regexp.MustCompile(`^\[\s+\{`)
+	reEmptyArray     = regexp.MustCompile(`^\[\s*\]$`)
 	reInvisibleRunes = regexp.MustCompile("[\u200B\u200C\u200D\uFEFF]")
 
 	// 新增：XML标签提取（支持思维链中包含任何字符）
@@ -389,7 +390,7 @@ func buildSystemPrompt(accountEquity float64, btcEthLeverage, altcoinLeverage in
 	// 2. 硬约束（风险控制）- 动态生成
 	sb.WriteString("# 硬约束（风险控制）\n\n")
 	sb.WriteString(fmt.Sprintf("1. 单币仓位: 山寨%.0f-%.0f U | BTC/ETH %.0f-%.0f U\n",
-		accountEquity*0.8, accountEquity*1.5, accountEquity*5, accountEquity*10))
+		accountEquity*0.2, accountEquity*0.5, accountEquity*0.2, accountEquity*0.5))
 	sb.WriteString(fmt.Sprintf("2. 杠杆限制: **山寨币最大%dx杠杆** | **BTC/ETH最大%dx杠杆** (⚠️ 严格执行，不可超过)\n", altcoinLeverage, btcEthLeverage))
 	sb.WriteString("3. 保证金: 总使用率 ≤ 90%\n")
 	sb.WriteString("4. 开仓金额: 建议 **≥12 USDT** (交易所最小名义价值 10 USDT + 安全边际)\n\n")
@@ -776,6 +777,11 @@ func fixMissingQuotes(jsonStr string) string {
 // validateJSONFormat 验证 JSON 格式，检测常见错误
 func validateJSONFormat(jsonStr string) error {
 	trimmed := strings.TrimSpace(jsonStr)
+
+	// ✅ 允许空数组：表示“无操作/无决策”，属于正常响应
+	if reEmptyArray.MatchString(trimmed) {
+		return nil
+	}
 
 	// 允许 [ 和 { 之间存在任意空白（含零宽）
 	if !reArrayHead.MatchString(trimmed) {

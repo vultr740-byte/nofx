@@ -33,3 +33,28 @@ func TestValidateDecisionUsesMarketPriceForRiskReward(t *testing.T) {
 		t.Fatalf("expected missing tp/sl validation error, got %v", err)
 	}
 }
+
+func TestExtractDecisions_AllowsEmptyArray(t *testing.T) {
+	resp := "<reasoning>\n- no-op\n</reasoning>\n\n<decision>\n```json\n[]\n```\n</decision>"
+	decisions, err := extractDecisions(resp)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(decisions) != 0 {
+		t.Fatalf("expected 0 decisions, got %d", len(decisions))
+	}
+}
+
+func TestParseFullDecisionResponse_AllowsEmptyArray(t *testing.T) {
+	resp := "<reasoning>\n- no-op\n</reasoning>\n\n<decision>\n```json\n[]\n```\n</decision>"
+	decision, err := parseFullDecisionResponse(resp, 100, 5, 3, false)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if decision == nil {
+		t.Fatalf("expected decision, got nil")
+	}
+	if len(decision.Decisions) != 0 {
+		t.Fatalf("expected 0 decisions, got %d", len(decision.Decisions))
+	}
+}

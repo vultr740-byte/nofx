@@ -944,7 +944,8 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 	{
 		var b strings.Builder
 		b.Grow(4000)
-		fmt.Fprintf(&b, "%s AI决策周期: #%d\n\n", statusEmoji, processedRecord.CycleNumber)
+		fmt.Fprintf(&b, "%s %s\n", statusEmoji, html.EscapeString(title))
+		fmt.Fprintf(&b, "AI决策周期: #%d\n\n", processedRecord.CycleNumber)
 
 		if len(processedRecord.Decisions) > 0 {
 			// 动作名称映射（用于显示中文名称）
@@ -1015,7 +1016,11 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 			}
 		} else {
 			b.WriteString("📋 决策内容\n")
-			b.WriteString("• 无结构化决策（AI未输出 decision 标签/JSON）\n")
+			if strings.TrimSpace(processedRecord.DecisionJSON) == "[]" {
+				b.WriteString("• 无操作（AI返回空决策数组）\n")
+			} else {
+				b.WriteString("• 无结构化决策（AI未输出 decision 标签/JSON）\n")
+			}
 		}
 
 		messages = append(messages, b.String())
@@ -1562,9 +1567,16 @@ func (at *AutoTrader) runCycle() error {
 		record.InputPrompt = decodeAllEncodings(decision.UserPrompt)
 		record.CoTTrace = decodeAllEncodings(decision.CoTTrace)
 		record.RawAIResponse = decision.RawResponse
-		if len(decision.Decisions) > 0 {
+		if err == nil {
+			// ✅ 空数组 [] 属于正常决策（无操作），也应写入日志/Telegram
+			if decision.Decisions == nil {
+				record.DecisionJSON = "[]"
+			} else {
+				decisionJSON, _ := json.MarshalIndent(decision.Decisions, "", "  ")
+				record.DecisionJSON = decodeAllEncodings(string(decisionJSON))
+			}
+		} else if len(decision.Decisions) > 0 {
 			decisionJSON, _ := json.MarshalIndent(decision.Decisions, "", "  ")
-			// 确保JSON在存储时也通过统一解码（Unicode + HTML实体）
 			record.DecisionJSON = decodeAllEncodings(string(decisionJSON))
 		}
 	}
