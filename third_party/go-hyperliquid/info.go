@@ -107,7 +107,7 @@ func (i *Info) postTimeRangeRequest(
 	return resp, nil
 }
 
-func parseMetaResponse(resp []byte) (*Meta, error) {
+func ParseMetaResponse(resp []byte) (*Meta, error) {
 	var meta map[string]json.RawMessage
 	if err := json.Unmarshal(resp, &meta); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal meta response: %w", err)
@@ -174,7 +174,7 @@ func (i *Info) Meta(ctx context.Context, dex ...string) (*Meta, error) {
 		return nil, fmt.Errorf("failed to fetch meta: %w", err)
 	}
 
-	return parseMetaResponse(resp)
+	return ParseMetaResponse(resp)
 }
 
 func (i *Info) SpotMeta(ctx context.Context) (*SpotMeta, error) {
@@ -397,7 +397,7 @@ func (i *Info) MetaAndAssetCtxs(ctx context.Context) (*MetaAndAssetCtxs, error) 
 		return nil, fmt.Errorf("failed to marshal meta data: %w", err)
 	}
 
-	meta, err := parseMetaResponse(metaBytes)
+	meta, err := ParseMetaResponse(metaBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse meta: %w", err)
 	}

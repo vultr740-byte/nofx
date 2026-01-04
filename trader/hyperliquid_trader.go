@@ -23,131 +23,6 @@ import (
 	"github.com/sonirico/go-hyperliquid"
 )
 
-// 全局 Meta 缓存，避免并发初始化时重复拉取导致 429
-var (
-	cachedMeta  *hyperliquid.Meta
-	metaOnce    sync.Once
-	metaInitErr error
-)
-
-// 获取 Meta（带重试 + 全局缓存），失败时回退至 allPerpMetas 构造基础精度信息，避免 429 造成初始化中断。
-func getMetaCached(ctx context.Context, ex *hyperliquid.Exchange, testnet bool) (*hyperliquid.Meta, error) {
-	metaOnce.Do(func() {
-		// 1) 正常调用 SDK Meta（指数回退重试）
-		if meta, err := fetchMetaWithRetry(ctx, ex); err == nil && meta != nil {
-			cachedMeta = meta
-			metaInitErr = nil
-			return
-		} else {
-			metaInitErr = err
-		}
-
-		// 2) 回退：使用 allPerpMetas 构造精简 Meta（含 szDecimals），保障最少精度信息可用
-		if fallbackMeta, err := fetchMetaFromAllPerpMetas(testnet); err == nil && fallbackMeta != nil {
-			log.Printf("✅ Meta 回退成功：使用 allPerpMetas 构造精简精度信息，避免 429 阻塞初始化")
-			cachedMeta = fallbackMeta
-			metaInitErr = nil
-			return
-		} else {
-			log.Printf("❌ Meta 回退失败: %v", err)
-			metaInitErr = err
-		}
-	})
-	return cachedMeta, metaInitErr
-}
-
-// fetchMetaWithRetry 调用 SDK Meta，带指数退避
-func fetchMetaWithRetry(ctx context.Context, ex *hyperliquid.Exchange) (*hyperliquid.Meta, error) {
-	var lastErr error
-	backoff := 500 * time.Millisecond
-	for i := 0; i < 5; i++ {
-		meta, err := ex.Info().Meta(ctx)
-		if err == nil && meta != nil {
-			return meta, nil
-		}
-		lastErr = err
-		time.Sleep(backoff)
-		backoff *= 2
-	}
-	return nil, lastErr
-}
-
-// fetchMetaFromAllPerpMetas 使用 Info API 的 allPerpMetas 构造基础 Meta（仅需 szDecimals 等）
-func fetchMetaFromAllPerpMetas(testnet bool) (*hyperliquid.Meta, error) {
-	payload := []byte(`{"type":"allPerpMetas"}`)
-	client := &http.Client{Timeout: 8 * time.Second}
-
-	var lastErr error
-	backoff := 500 * time.Millisecond
-	for i := 0; i < 4; i++ {
-		req, err := http.NewRequest("POST", infoAPIURL(testnet), bytes.NewBuffer(payload))
-		if err != nil {
-			return nil, fmt.Errorf("创建 allPerpMetas 请求失败: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", "NOFX-Hyperliquid-MetaFallback")
-
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("调用 allPerpMetas 失败: %w", err)
-			time.Sleep(backoff)
-			backoff *= 2
-			continue
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = fmt.Errorf("读取 allPerpMetas 响应失败: %w", err)
-			time.Sleep(backoff)
-			backoff *= 2
-			continue
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf("allPerpMetas 返回状态码 %d: %s", resp.StatusCode, string(body))
-			time.Sleep(backoff)
-			backoff *= 2
-			continue
-		}
-
-		var metas []PerpMetaLite
-		if err := json.Unmarshal(body, &metas); err != nil {
-			lastErr = fmt.Errorf("解析 allPerpMetas 响应失败: %w", err)
-			time.Sleep(backoff)
-			backoff *= 2
-			continue
-		}
-
-		var universe []hyperliquid.AssetInfo
-		for _, m := range metas {
-			for _, asset := range m.Universe {
-				universe = append(universe, hyperliquid.AssetInfo{
-					Name:          asset.Name,
-					SzDecimals:    asset.SzDecimals,
-					MaxLeverage:   0,
-					MarginTableId: 0,
-					OnlyIsolated:  asset.OnlyIsolated,
-					IsDelisted:    false,
-				})
-			}
-		}
-		if len(universe) == 0 {
-			lastErr = fmt.Errorf("allPerpMetas 未返回资产数据")
-			time.Sleep(backoff)
-			backoff *= 2
-			continue
-		}
-
-		// marginTables 在此场景下不关键，可留空
-		return &hyperliquid.Meta{
-			Universe:     universe,
-			MarginTables: nil,
-		}, nil
-	}
-	return nil, lastErr
-}
-
 type perpMetaResponse struct {
 	Universe []struct {
 		Name string `json:"name"`
@@ -815,25 +690,24 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 
 	ctx := context.Background()
 
-	// 创建Exchange客户端（Exchange包含Info功能），增加panic防护避免网络/CloudFront异常导致崩溃
-	exchange, err := safeNewHyperliquidExchange(ctx, privateKey, apiURL, walletAddr)
+	// ✅ 初始化 Info 元数据（仅主 dex），全局复用，避免并发初始化时反复拉取导致 429
+	bootstrap, err := getHyperliquidBootstrapInfo(ctx, testnet)
+	if err != nil {
+		return nil, fmt.Errorf("获取 Hyperliquid meta/spotMeta 失败: %w", err)
+	}
+
+	// 创建Exchange客户端（Exchange包含Info功能），传入预取的 meta/spotMeta，避免 SDK 内部自动拉取失败导致 panic
+	exchange, err := safeNewHyperliquidExchange(ctx, privateKey, apiURL, walletAddr, bootstrap.meta, bootstrap.spotMeta)
 	if err != nil {
 		return nil, err
 	}
 
 	log.Printf("✓ Hyperliquid交易器初始化成功 (testnet=%v, wallet=%s)", testnet, walletAddr)
 
-	// 获取meta信息（包含精度等配置）
-	meta, err := getMetaCached(ctx, exchange, testnet)
-	if err != nil {
-		return nil, fmt.Errorf("获取meta信息失败: %w", err)
-	}
-
-	// 获取抵押资产映射与 spotMeta
-	dexCollateral, tokenByIndex, spotMeta, err := loadCollateralInfo(testnet)
-	if err != nil {
-		return nil, fmt.Errorf("获取抵押资产信息失败: %w", err)
-	}
+	meta := bootstrap.meta
+	dexCollateral := bootstrap.dexCollateral
+	tokenByIndex := bootstrap.tokenByIndex
+	spotMeta := bootstrap.spotMeta
 
 	// 🔍 Security check: Validate Agent wallet balance (should be close to 0)
 	// Only check if using separate Agent wallet (not when main wallet is used as agent)
@@ -891,11 +765,6 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 		minFillRatio:       0.95,
 	}
 
-	// 构建 asset 映射并同步到 SDK，防止 HIP-3 股票被映射到资产 0 (BTC)
-	if err := trader.ensureAssetMap(); err != nil {
-		log.Printf("⚠️ 构建资产映射失败: %v", err)
-	}
-
 	// 🔐 自动检查并授权 Builder（一次性）
 	// Builder 功能暂时禁用（主钱包私钥不可用于 API 授权）
 
@@ -903,7 +772,7 @@ func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool)
 }
 
 // safeNewHyperliquidExchange 包装 hyperliquid.NewExchange，防止内部panic导致进程崩溃
-func safeNewHyperliquidExchange(ctx context.Context, privateKey *ecdsa.PrivateKey, apiURL string, walletAddr string) (ex *hyperliquid.Exchange, err error) {
+func safeNewHyperliquidExchange(ctx context.Context, privateKey *ecdsa.PrivateKey, apiURL string, walletAddr string, meta *hyperliquid.Meta, spotMeta *hyperliquid.SpotMeta) (ex *hyperliquid.Exchange, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("初始化 Hyperliquid Exchange 失败（panic）: %v", r)
@@ -914,10 +783,10 @@ func safeNewHyperliquidExchange(ctx context.Context, privateKey *ecdsa.PrivateKe
 		ctx,
 		privateKey,
 		apiURL,
-		nil,        // Meta will be fetched automatically (后续补充HIP-3映射)
+		meta,
 		"",         // vault address (empty for personal account)
 		walletAddr, // wallet address
-		nil,        // SpotMeta will be fetched automatically
+		spotMeta,
 	)
 	return ex, nil
 }
@@ -1454,7 +1323,8 @@ func (t *HyperliquidTrader) SetLeverage(symbol string, leverage int) error {
 
 // loadCollateralInfo 拉取各 dex 的抵押资产映射及 spot token 信息
 func loadCollateralInfo(testnet bool) (map[string]int, map[int]hyperliquid.SpotTokenInfo, *hyperliquid.SpotMeta, error) {
-	dexes := []string{"", "xyz", "flx", "vntl", "hyna"}
+	// 仅加载主 dex，减少启动阶段 Info API 调用（非主 dex 暂不支持）
+	dexes := []string{""}
 	dexCollateral := make(map[string]int)
 
 	// fetch spot meta once
@@ -3396,10 +3266,19 @@ func (t *HyperliquidTrader) resolveCoin(symbol string, assetType string) (string
 	coin := convertSymbolToHyperliquid(symbol)
 	if strings.Contains(coin, ":") {
 		// 预先构建 assetId 映射，防止 SDK 将未知资产映射到 0(BTC)
-		if _, ok := t.assetMap[normalizeHip3Symbol(coin)]; !ok {
-			if err := t.ensureAssetMap(); err != nil {
-				log.Printf("⚠️ 无法更新资产映射: %v", err)
+		norm := normalizeHip3Symbol(coin)
+		var ensureErr error
+		if _, ok := t.assetMap[norm]; !ok {
+			ensureErr = t.ensureAssetMap()
+			if ensureErr != nil {
+				log.Printf("⚠️ 无法更新资产映射: %v", ensureErr)
 			}
+		}
+		if _, ok := t.assetMap[norm]; !ok {
+			if ensureErr != nil {
+				return "", fmt.Errorf("初始化 HIP-3 资产映射失败(%s): %w", coin, ensureErr)
+			}
+			return "", fmt.Errorf("HIP-3 资产映射缺失: %s", coin)
 		}
 		return coin, nil
 	}

@@ -66,8 +66,8 @@ func newHyperliquidWSManager(testnet bool) *hyperliquidWSManager {
 		return m
 	}
 
-	// 订阅默认 perp 及常见 dex 列表
-	dexes := []string{"", "xyz", "flx", "vntl", "hyna"}
+	// 仅订阅主 dex，减少不必要的订阅与数据量（非主 dex 暂不支持）
+	dexes := []string{""}
 	for _, dex := range dexes {
 		d := dex // capture
 		_, err := ws.AllMids(hyperliquid.AllMidsSubscriptionParams{Dex: optDexPtr(d)}, func(am hyperliquid.AllMids, err error) {

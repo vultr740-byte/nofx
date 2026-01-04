@@ -103,6 +103,9 @@ func (c *client) post(ctx context.Context, path string, payload any) ([]byte, er
 		if err := json.Unmarshal(body, &apiErr); err != nil {
 			return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 		}
+		if apiErr.Code == 0 && apiErr.Message == "" {
+			return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+		}
 		return nil, apiErr
 	}
 
