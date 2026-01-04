@@ -381,14 +381,59 @@ func isRetryableError(err error) bool {
 	return false
 }
 
+func truncateForLog(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	trimmed := strings.TrimSpace(s)
+	runes := []rune(trimmed)
+	if len(runes) <= maxRunes {
+		return trimmed
+	}
+	return string(runes[:maxRunes]) + "...(truncated)"
+}
+
+func getRequestIDHeader(resp *http.Response) string {
+	if resp == nil {
+		return ""
+	}
+	for _, key := range []string{
+		"X-Request-ID",
+		"X-Trace-ID",
+		"X-Amzn-RequestId",
+		"Request-Id",
+	} {
+		if v := strings.TrimSpace(resp.Header.Get(key)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // readStreamContent 解析 OpenAI/DeepSeek 兼容的流式响应
 func readStreamContent(resp *http.Response, provider Provider, model string, maxTokens int) (string, error) {
 	defer resp.Body.Close()
 
 	// 提前处理非200状态码
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("API返回错误 (status %d): %s", resp.StatusCode, string(body))
+		// 避免一次性读取超大 body（错误信息通常很短）
+		const maxErrBodyBytes = 64 * 1024
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBodyBytes+1))
+		truncated := len(raw) > maxErrBodyBytes
+		if truncated {
+			raw = raw[:maxErrBodyBytes]
+		}
+		body := strings.TrimSpace(string(raw))
+		if truncated {
+			body += "...(truncated)"
+		}
+
+		if reqID := getRequestIDHeader(resp); reqID != "" {
+			log.Printf("❌ [MCP] API返回错误 status=%d request_id=%s body=%s", resp.StatusCode, reqID, truncateForLog(body, 4096))
+		} else {
+			log.Printf("❌ [MCP] API返回错误 status=%d body=%s", resp.StatusCode, truncateForLog(body, 4096))
+		}
+		return "", fmt.Errorf("API返回错误 (status %d): %s", resp.StatusCode, body)
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -433,10 +478,12 @@ func readStreamContent(resp *http.Response, provider Provider, model string, max
 		}
 
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			log.Printf("❌ [MCP] 解析流式分片失败: %v | payload=%s", err, truncateForLog(payload, 2048))
 			return "", fmt.Errorf("解析流式分片失败: %w", err)
 		}
 
 		if chunk.Error != nil && chunk.Error.Message != "" {
+			log.Printf("❌ [MCP] API流式错误 type=%s code=%s message=%s", chunk.Error.Type, chunk.Error.Code, truncateForLog(chunk.Error.Message, 2048))
 			return "", fmt.Errorf("API流式错误: %s", chunk.Error.Message)
 		}
 
