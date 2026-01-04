@@ -28,7 +28,7 @@ func TestReadStreamContent_DeepSeekReasoner_ContentOnly(t *testing.T) {
 	}
 }
 
-func TestReadStreamContent_DeepSeekReasoner_ReasoningOnly_HintsMaxTokens(t *testing.T) {
+func TestReadStreamContent_DeepSeekReasoner_ReasoningOnly_ReturnsEmptyDecisionArray(t *testing.T) {
 	body := strings.Join([]string{
 		`data: {"choices":[{"delta":{"reasoning_content":"think...","content":""}}]}`,
 		`data: [DONE]`,
@@ -40,13 +40,15 @@ func TestReadStreamContent_DeepSeekReasoner_ReasoningOnly_HintsMaxTokens(t *test
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
 
-	_, err := readStreamContent(resp, ProviderDeepSeek, "deepseek-reasoner", 2000)
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	got, err := readStreamContent(resp, ProviderDeepSeek, "deepseek-reasoner", 2000)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	msg := err.Error()
-	if !strings.Contains(msg, "reasoning_content") || !strings.Contains(msg, "AI_MAX_TOKENS") {
-		t.Fatalf("unexpected error message: %q", msg)
+	if !strings.Contains(got, "think...") {
+		t.Fatalf("expected reasoning content in response, got: %q", got)
+	}
+	if !strings.Contains(got, "```json") || !strings.Contains(got, "[]") {
+		t.Fatalf("expected empty decision array in response, got: %q", got)
 	}
 }
 

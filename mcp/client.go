@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -169,7 +168,6 @@ func (client *Client) CallWithMessages(systemPrompt, userPrompt string) (string,
 	// 重试配置
 	maxRetries := 3
 	var lastErr error
-	fallbackToChatUsed := false
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		if attempt > 1 {
@@ -186,52 +184,6 @@ func (client *Client) CallWithMessages(systemPrompt, userPrompt string) (string,
 
 		lastErr = err
 
-		// DeepSeek reasoner 常见问题：只生成 reasoning_content，未生成最终 content（通常是 max_tokens 不够）
-		var roe *reasoningOnlyError
-		if errors.As(err, &roe) && client.Provider == ProviderDeepSeek && strings.EqualFold(strings.TrimSpace(client.Model), "deepseek-reasoner") {
-			before := client.MaxTokens
-			// 逐步提高 max_tokens，尽量在不无限膨胀的前提下拿到最终 content
-			const capTokens = 32000
-			next := before
-			switch {
-			case before < 16000:
-				next = 16000
-			case before < capTokens:
-				next = before * 2
-				if next > capTokens {
-					next = capTokens
-				}
-			}
-			if next > before {
-				client.MaxTokens = next
-				log.Printf("🔧 [MCP] DeepSeek %s 检测到仅 reasoning_content，自动提高 MaxTokens: %d -> %d (finish_reason=%s)", client.Model, before, next, roe.FinishReason)
-
-				// 若用户未显式设置超时，则随 token 上限同步放宽读取时间，避免再次超时
-				if os.Getenv("AI_TIMEOUT_SECONDS") == "" {
-					if client.Timeout < 10*time.Minute && next >= 16000 {
-						client.Timeout = 10 * time.Minute
-						log.Printf("🔧 [MCP] DeepSeek %s 自动提高 Timeout: %v", client.Model, client.Timeout)
-					}
-				}
-				// 立即进入下一轮重试（不等待），因为这类错误通常不是网络抖动
-				continue
-			}
-
-			// 已到达 token 上限仍无 content：最后兜底回退到 deepseek-chat
-			if !fallbackToChatUsed {
-				fallbackToChatUsed = true
-				originalModel := client.Model
-				client.Model = "deepseek-chat"
-				log.Printf("⚠️  [MCP] DeepSeek %s 仍未生成 content，回退模型: %s -> %s", originalModel, originalModel, client.Model)
-				fallbackResult, fallbackErr := client.callOnce(systemPrompt, userPrompt)
-				client.Model = originalModel
-				if fallbackErr == nil {
-					return fallbackResult, nil
-				}
-				lastErr = fmt.Errorf("reasoner无content且回退deepseek-chat失败: %w", fallbackErr)
-			}
-		}
-
 		// 如果不是网络错误，不重试
 		if !isRetryableError(err) {
 			return "", err
@@ -246,22 +198,6 @@ func (client *Client) CallWithMessages(systemPrompt, userPrompt string) (string,
 	}
 
 	return "", fmt.Errorf("重试%d次后仍然失败: %w", maxRetries, lastErr)
-}
-
-type reasoningOnlyError struct {
-	Provider       Provider
-	Model          string
-	MaxTokens      int
-	FinishReason   string
-	ReasoningBytes int
-}
-
-func (e *reasoningOnlyError) Error() string {
-	finish := e.FinishReason
-	if finish == "" {
-		finish = "unknown"
-	}
-	return fmt.Sprintf("流式响应无最终内容(content)，仅返回 reasoning_content；finish_reason=%s；可能是 max_tokens 太小导致未生成最终答案。建议增大 AI_MAX_TOKENS（当前 %d），或改用 deepseek-chat 以减少推理占用。", finish, e.MaxTokens)
 }
 
 // callOnce 单次调用AI API（内部使用）
@@ -510,14 +446,15 @@ func readStreamContent(resp *http.Response, provider Provider, model string, max
 
 	result := contentSB.String()
 	if result == "" {
+		// DeepSeek reasoner 可能只返回 reasoning_content（无最终 content）。
+		// 交易决策场景下，这通常等价于“无操作/无决策输出”，按空决策数组处理，避免无意义的 token 膨胀重试。
 		if provider == ProviderDeepSeek && strings.EqualFold(strings.TrimSpace(model), "deepseek-reasoner") && reasoningSB.Len() > 0 {
-			return "", &reasoningOnlyError{
-				Provider:       provider,
-				Model:          model,
-				MaxTokens:      maxTokens,
-				FinishReason:   lastFinishReason,
-				ReasoningBytes: reasoningSB.Len(),
+			log.Printf("⚠️  [MCP] DeepSeek %s 仅返回 reasoning_content (finish_reason=%s)，按无操作处理：返回空决策数组 []", model, lastFinishReason)
+			reasoning := strings.TrimSpace(reasoningSB.String())
+			if reasoning == "" {
+				return "[]", nil
 			}
+			return fmt.Sprintf("<reasoning>\n%s\n</reasoning>\n\n<decision>\n```json\n[]\n```\n</decision>", reasoning), nil
 		}
 		return "", fmt.Errorf("流式响应为空")
 	}
