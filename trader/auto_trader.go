@@ -933,19 +933,11 @@ func (at *AutoTrader) formatDecisionMessagesForTelegram(record *logger.DecisionR
 		statusEmoji = "✅"
 	}
 
-	// 决策摘要作为标题
-	decisionSummary := at.formatDecisionSummary(processedRecord.Decisions)
-	title := "AI决策报告"
-	if decisionSummary != "" {
-		title += " - " + decisionSummary
-	}
-
 	// 1) 决策周期 + 决策JSON + 执行结果（整合为一条）
 	{
 		var b strings.Builder
 		b.Grow(4000)
-		fmt.Fprintf(&b, "%s %s\n", statusEmoji, html.EscapeString(title))
-		fmt.Fprintf(&b, "AI决策周期: #%d\n\n", processedRecord.CycleNumber)
+		fmt.Fprintf(&b, "%s AI决策周期: #%d\n\n", statusEmoji, processedRecord.CycleNumber)
 
 		if len(processedRecord.Decisions) > 0 {
 			// 动作名称映射（用于显示中文名称）
