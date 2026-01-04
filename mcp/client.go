@@ -169,6 +169,7 @@ func (client *Client) CallWithMessages(systemPrompt, userPrompt string) (string,
 	// 重试配置
 	maxRetries := 3
 	var lastErr error
+	fallbackToChatUsed := false
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		if attempt > 1 {
@@ -214,6 +215,20 @@ func (client *Client) CallWithMessages(systemPrompt, userPrompt string) (string,
 				}
 				// 立即进入下一轮重试（不等待），因为这类错误通常不是网络抖动
 				continue
+			}
+
+			// 已到达 token 上限仍无 content：最后兜底回退到 deepseek-chat
+			if !fallbackToChatUsed {
+				fallbackToChatUsed = true
+				originalModel := client.Model
+				client.Model = "deepseek-chat"
+				log.Printf("⚠️  [MCP] DeepSeek %s 仍未生成 content，回退模型: %s -> %s", originalModel, originalModel, client.Model)
+				fallbackResult, fallbackErr := client.callOnce(systemPrompt, userPrompt)
+				client.Model = originalModel
+				if fallbackErr == nil {
+					return fallbackResult, nil
+				}
+				lastErr = fmt.Errorf("reasoner无content且回退deepseek-chat失败: %w", fallbackErr)
 			}
 		}
 
