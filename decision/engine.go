@@ -400,7 +400,7 @@ func buildSystemPrompt(accountEquity float64, btcEthLeverage, altcoinLeverage in
 	sb.WriteString("**必须使用XML标签 <reasoning> 和 <decision> 分隔内容，且先输出 <reasoning>（精简要点）再输出 <decision>（JSON）。不得省略或调换顺序。**\n\n")
 	sb.WriteString("## 输出顺序\n\n")
 	// sb.WriteString("1) 先输出 <reasoning>，只保留精简要点，避免长篇叙述。\n")
-	sb.WriteString("1) 先输出 <reasoning>，简明扼要地分析你的思考过程。\n")
+	sb.WriteString("1) 先输出 <reasoning>，简明扼要地分析你的思考过程（少于800字以内）。\n")
 	sb.WriteString("2) 再输出 <decision>，内含完整的 JSON 数组，立即闭合标签。\n\n")
 	sb.WriteString("## 示例格式（请按此顺序）\n\n")
 	sb.WriteString("<reasoning>\n")
