@@ -52,13 +52,14 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 		XValues: xTimes,
 		YValues: yVals,
 		Style: chart.Style{
-			StrokeColor: chart.ColorGreen,
-			StrokeWidth: 1.6,
+			StrokeColor: chart.ColorBlue,
+			StrokeWidth: 1.5,
 		},
 	}
 
-	// 可选的买入价标记（水平线）
+	// 可选的买入价标记（水平线 + 点）
 	var entrySeries *chart.ContinuousSeries
+	var entryPoint *chart.ContinuousSeries
 	if entryPrice > 0 {
 		x1 := float64(xTimes[0].Unix())
 		x2 := float64(xTimes[len(xTimes)-1].Unix())
@@ -72,6 +73,17 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 			YValues: []float64{entryPrice, entryPrice},
 			Name:    "Entry",
 		}
+		mid := float64(xTimes[len(xTimes)/2].Unix())
+		entryPoint = &chart.ContinuousSeries{
+			Style: chart.Style{
+				StrokeWidth: 0,
+				DotWidth:    6,
+				DotColor:    chart.ColorOrange,
+			},
+			XValues: []float64{mid},
+			YValues: []float64{entryPrice},
+			Name:    "Entry point",
+		}
 	}
 
 	graph := chart.Chart{
@@ -82,23 +94,12 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 				Right:  10,
 				Bottom: 20,
 			},
-			FillColor: chart.ColorBlack,
-		},
-		Canvas: chart.Style{
-			FillColor: chart.ColorBlack,
 		},
 		XAxis: chart.XAxis{
 			ValueFormatter: chart.TimeValueFormatterWithFormat("01-02 15:04"),
-			Style: chart.Style{
-				StrokeColor: chart.ColorAlternateGray,
-				FontColor:   chart.ColorAlternateGray,
-			},
 		},
 		YAxis: chart.YAxis{
-			Style: chart.Style{
-				StrokeColor: chart.ColorAlternateGray,
-				FontColor:   chart.ColorAlternateGray,
-			},
+			Style: chart.Style{},
 		},
 		Series: []chart.Series{
 			priceSeries,
@@ -107,12 +108,13 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 
 	if entrySeries != nil {
 		graph.Series = append(graph.Series, entrySeries)
+		if entryPoint != nil {
+			graph.Series = append(graph.Series, entryPoint)
+		}
 	}
 
 	graph.Elements = []chart.Renderable{
-		chart.Legend(&graph, chart.Style{
-			FontColor: chart.ColorWhite,
-		}),
+		chart.Legend(&graph),
 	}
 
 	var buf bytes.Buffer
