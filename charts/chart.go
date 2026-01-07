@@ -52,8 +52,8 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 		XValues: xTimes,
 		YValues: yVals,
 		Style: chart.Style{
-			StrokeColor: chart.ColorBlue,
-			StrokeWidth: 1.5,
+			StrokeColor: chart.ColorGreen,
+			StrokeWidth: 1.6,
 		},
 	}
 
@@ -84,17 +84,20 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 			},
 			FillColor: chart.ColorBlack,
 		},
+		Canvas: chart.Style{
+			FillColor: chart.ColorBlack,
+		},
 		XAxis: chart.XAxis{
 			ValueFormatter: chart.TimeValueFormatterWithFormat("01-02 15:04"),
 			Style: chart.Style{
 				StrokeColor: chart.ColorAlternateGray,
-				FontColor:   chart.ColorWhite,
+				FontColor:   chart.ColorAlternateGray,
 			},
 		},
 		YAxis: chart.YAxis{
 			Style: chart.Style{
 				StrokeColor: chart.ColorAlternateGray,
-				FontColor:   chart.ColorWhite,
+				FontColor:   chart.ColorAlternateGray,
 			},
 		},
 		Series: []chart.Series{

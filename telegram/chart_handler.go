@@ -40,12 +40,23 @@ func (tbm *TelegramBotManager) handleChart(update tgbotapi.Update) {
 	}
 
 	// 可选：从持仓获取买入价
-    var entryPrice float64
-    if at, err := tbm.tgTraderMgr.GetRunningTrader(telegramID); err == nil && at != nil {
-        if posEntry := GetEntryPriceFromTrader(at, symbol); posEntry > 0 {
-            entryPrice = posEntry
-        }
-    }
+	var entryPrice float64
+	// 优先运行中的交易员
+	if at, err := tbm.tgTraderMgr.GetRunningTrader(telegramID); err == nil && at != nil {
+		if posEntry := GetEntryPriceFromTrader(at, symbol); posEntry > 0 {
+			entryPrice = posEntry
+		}
+	}
+	// 回退：直接查账户持仓（即便未运行）
+	if entryPrice == 0 {
+		if agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID); err == nil {
+			if _, positions, err := tbm.hlService.GetPositionsWithData(agentKey, walletAddr, tbm.testnet); err == nil {
+				if ep := findEntryPriceInPositions(positions, symbol); ep > 0 {
+					entryPrice = ep
+				}
+			}
+		}
+	}
 
 	tbm.sendMessage(chatID, fmt.Sprintf("🔄 正在生成 %s %s K线图...", symbol, interval))
 
@@ -70,4 +81,19 @@ func (tbm *TelegramBotManager) handleChart(update tgbotapi.Update) {
 		log.Printf("发送图表失败: %v", err)
 		tbm.sendMessage(chatID, "❌ 发送图表失败")
 	}
+}
+
+// findEntryPriceInPositions 在 positions 列表中匹配 symbol，并返回 entryPrice
+func findEntryPriceInPositions(positions []map[string]interface{}, symbol string) float64 {
+	target := normalizeSymbol(symbol)
+	for _, pos := range positions {
+		sym, _ := pos["symbol"].(string)
+		if !symbolMatch(sym, target) {
+			continue
+		}
+		if ep, ok := pos["entryPrice"].(float64); ok {
+			return ep
+		}
+	}
+	return 0
 }
