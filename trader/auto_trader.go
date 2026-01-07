@@ -2838,7 +2838,7 @@ func (at *AutoTrader) GetPositions() ([]map[string]interface{}, error) {
 			pnlPct = (unrealizedPnl / marginUsed) * 100
 		}
 
-		result = append(result, map[string]interface{}{
+		row := map[string]interface{}{
 			"symbol":             symbol,
 			"side":               side,
 			"entry_price":        entryPrice,
@@ -2849,7 +2849,30 @@ func (at *AutoTrader) GetPositions() ([]map[string]interface{}, error) {
 			"unrealized_pnl_pct": pnlPct,
 			"liquidation_price":  liquidationPrice,
 			"margin_used":        marginUsed,
-		})
+		}
+
+		// 透传止损/止盈（如果底层交易所支持并返回）
+		var stopLoss float64
+		if v, ok := pos["stopLoss"].(float64); ok {
+			stopLoss = v
+		} else if v, ok := pos["stop_loss"].(float64); ok {
+			stopLoss = v
+		}
+		if stopLoss > 0 {
+			row["stop_loss"] = stopLoss
+		}
+
+		var takeProfit float64
+		if v, ok := pos["takeProfit"].(float64); ok {
+			takeProfit = v
+		} else if v, ok := pos["take_profit"].(float64); ok {
+			takeProfit = v
+		}
+		if takeProfit > 0 {
+			row["take_profit"] = takeProfit
+		}
+
+		result = append(result, row)
 	}
 
 	return result, nil

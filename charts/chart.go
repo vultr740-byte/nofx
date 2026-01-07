@@ -23,16 +23,15 @@ func NewGenerator() *Generator {
 	return &Generator{api: market.NewAPIClient()}
 }
 
-// BuildKlinePNG 生成指定交易对的K线图，entryPrice 可选（<=0 表示不标注）。
+// BuildKlinePNG 生成指定交易对的价格走势图，并可选叠加入场/止损/止盈水平线（<=0 表示不展示）。
 // interval: Binance 间隔（如 15m/1h），limit: K线数量。
-func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, limit int, entryPrice float64, entrySide string) ([]byte, error) {
+func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, limit int, entryPrice float64, stopLoss float64, takeProfit float64) ([]byte, error) {
 	if limit <= 0 {
 		limit = 150
 	}
 	if interval == "" {
 		interval = "15m"
 	}
-	entrySide = strings.ToLower(strings.TrimSpace(entrySide))
 
 	// 拉取 K 线（无 ctx 支持的原有接口，这里忽略 ctx 取消；接口超时由 client 控制）
 	klines, err := g.api.GetKlines(symbol, interval, limit)
@@ -58,39 +57,23 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 	text := drawing.ColorFromHex("9FB0C3")      // 坐标/标题文字
 	priceLine := drawing.ColorFromHex("4C78FF") // 价格线
 
-	longColor := drawing.ColorFromHex("00C853")
-	shortColor := drawing.ColorFromHex("FF5252")
-	entryColor := drawing.ColorFromHex("FFB300")
-	if entrySide == "long" {
-		entryColor = longColor
-	} else if entrySide == "short" {
-		entryColor = shortColor
-	}
+	entryColor := drawing.ColorFromHex("FFB300")      // 入场线（橙黄）
+	stopLossColor := drawing.ColorFromHex("FF5252")   // 止损线（红）
+	takeProfitColor := drawing.ColorFromHex("00C853") // 止盈线（绿）
 
-	// 计算范围并增加边距（确保标注不贴边）
+	// 计算价格范围并增加边距（Y 轴只按价格走势计算；其它水平线超出范围则不展示）
 	minY, maxY := yVals[0], yVals[0]
 	for _, v := range yVals[1:] {
 		minY = math.Min(minY, v)
 		maxY = math.Max(maxY, v)
-	}
-	if entryPrice > 0 {
-		minY = math.Min(minY, entryPrice)
-		maxY = math.Max(maxY, entryPrice)
 	}
 	yPad := (maxY - minY) * 0.08
 	if yPad <= 0 {
 		yPad = math.Max(1, math.Abs(maxY)*0.01)
 	}
 
-	xMin := chart.TimeToFloat64(xTimes[0])
-	xMax := chart.TimeToFloat64(xTimes[len(xTimes)-1])
-	step := 15 * time.Minute
-	if len(xTimes) >= 2 {
-		if d := xTimes[1].Sub(xTimes[0]); d > 0 {
-			step = d
-		}
-	}
-	xPad := float64(step * 3) // 右侧留出 3 根K线的空间，放标注气泡
+	yMin := minY - yPad
+	yMax := maxY + yPad
 
 	priceSeries := chart.TimeSeries{
 		Name:    "Price",
@@ -102,57 +85,27 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 		},
 	}
 
-	// 可选的入场价标记（水平线 + 点 + 气泡标注）
-	var entryLine *chart.TimeSeries
-	var entryDot *chart.TimeSeries
-	var entryLabel *chart.AnnotationSeries
-	if entryPrice > 0 {
-		entryLine = &chart.TimeSeries{
-			Name:    "Entry",
+	// 可选的水平线标记（入场 / 止损 / 止盈）：只有落在 Y 轴范围内才展示
+	addLevelLine := func(level float64, color drawing.Color) *chart.TimeSeries {
+		if level <= 0 {
+			return nil
+		}
+		if level < yMin || level > yMax {
+			return nil
+		}
+		return &chart.TimeSeries{
 			XValues: []time.Time{xTimes[0], xTimes[len(xTimes)-1]},
-			YValues: []float64{entryPrice, entryPrice},
+			YValues: []float64{level, level},
 			Style: chart.Style{
-				StrokeColor:     entryColor,
+				StrokeColor:     color,
 				StrokeWidth:     1.0,
 				StrokeDashArray: []float64{6, 6},
 			},
 		}
-		entryDot = &chart.TimeSeries{
-			Name:    "Entry point",
-			XValues: []time.Time{xTimes[len(xTimes)-1]},
-			YValues: []float64{entryPrice},
-			Style: chart.Style{
-				StrokeWidth: chart.Disabled,
-				DotWidth:    5,
-				DotColor:    entryColor,
-			},
-		}
-
-		sideText := ""
-		if entrySide == "long" {
-			sideText = " (L)"
-		} else if entrySide == "short" {
-			sideText = " (S)"
-		}
-
-		label := fmt.Sprintf("ENTRY %.4f%s", entryPrice, sideText)
-		entryLabel = &chart.AnnotationSeries{
-			Style: chart.Style{
-				FillColor:   plotBg,
-				StrokeColor: entryColor,
-				StrokeWidth: 1.0,
-				FontColor:   entryColor,
-				FontSize:    11,
-			},
-			Annotations: []chart.Value2{
-				{
-					XValue: chart.TimeToFloat64(xTimes[len(xTimes)-1]),
-					YValue: entryPrice,
-					Label:  label,
-				},
-			},
-		}
 	}
+	entryLine := addLevelLine(entryPrice, entryColor)
+	stopLossLine := addLevelLine(stopLoss, stopLossColor)
+	takeProfitLine := addLevelLine(takeProfit, takeProfitColor)
 
 	timeFmt := "01-02 15:04"
 	if strings.HasSuffix(interval, "m") {
@@ -180,10 +133,6 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 			FillColor: plotBg,
 		},
 		XAxis: chart.XAxis{
-			Range: &chart.ContinuousRange{
-				Min: xMin,
-				Max: xMax + xPad,
-			},
 			ValueFormatter: chart.TimeValueFormatterWithFormat(timeFmt),
 			Style: chart.Style{
 				StrokeColor: grid,
@@ -197,8 +146,8 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 		},
 		YAxis: chart.YAxis{
 			Range: &chart.ContinuousRange{
-				Min: minY - yPad,
-				Max: maxY + yPad,
+				Min: yMin,
+				Max: yMax,
 			},
 			Style: chart.Style{
 				StrokeColor: grid,
@@ -213,18 +162,18 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 		Series: []chart.Series{priceSeries},
 	}
 
-	if entryLine != nil || entryDot != nil || entryLabel != nil {
+	if entryLine != nil || stopLossLine != nil || takeProfitLine != nil {
 		series := make([]chart.Series, 0, 4)
 		if entryLine != nil {
 			series = append(series, *entryLine)
 		}
-		series = append(series, priceSeries)
-		if entryDot != nil {
-			series = append(series, *entryDot)
+		if stopLossLine != nil {
+			series = append(series, *stopLossLine)
 		}
-		if entryLabel != nil {
-			series = append(series, *entryLabel)
+		if takeProfitLine != nil {
+			series = append(series, *takeProfitLine)
 		}
+		series = append(series, priceSeries) // 价格线放最后，覆盖在水平线之上
 		graph.Series = series
 	}
 
