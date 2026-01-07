@@ -85,7 +85,7 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 			FillColor: chart.ColorBlack,
 		},
 		XAxis: chart.XAxis{
-			ValueFormatter: chart.TimeDateValueFormatter,
+			ValueFormatter: chart.TimeValueFormatterWithFormat("01-02 15:04"),
 			Style: chart.Style{
 				StrokeColor: chart.ColorAlternateGray,
 				FontColor:   chart.ColorWhite,
