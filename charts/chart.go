@@ -4,20 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net/url"
-	"os"
-	"runtime"
 	"time"
 
-	"github.com/chromedp/chromedp"
-	echarts "github.com/go-echarts/go-echarts/v2/charts"
-	"github.com/go-echarts/go-echarts/v2/components"
-	"github.com/go-echarts/go-echarts/v2/opts"
+	"github.com/wcharczuk/go-chart/v2"
 
 	"nofx/market"
 )
 
-// Generator 负责拉取K线并生成带买入标记的价格走势图（PNG）。
+// Generator 负责拉取K线并生成带买入标记的价格走势图（PNG），无需浏览器依赖。
 type Generator struct {
 	api *market.APIClient
 }
@@ -26,7 +20,8 @@ func NewGenerator() *Generator {
 	return &Generator{api: market.NewAPIClient()}
 }
 
-// BuildKlinePNG 生成指定交易对的K线图，entryPrice 为可选买入价（<=0 表示不标注）。
+// BuildKlinePNG 生成指定交易对的K线图，entryPrice 可选（<=0 表示不标注）。
+// interval: Binance 间隔（如 15m/1h），limit: K线数量。
 func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, limit int, entryPrice float64) ([]byte, error) {
 	if limit <= 0 {
 		limit = 150
@@ -35,6 +30,7 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 		interval = "15m"
 	}
 
+	// 拉取 K 线（无 ctx 支持的原有接口，这里忽略 ctx 取消；接口超时由 client 控制）
 	klines, err := g.api.GetKlines(symbol, interval, limit)
 	if err != nil {
 		return nil, fmt.Errorf("拉取K线失败: %w", err)
@@ -43,98 +39,72 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 		return nil, fmt.Errorf("未获取到K线数据")
 	}
 
-	xAxis := make([]string, 0, len(klines))
-	series := make([]opts.KlineData, 0, len(klines))
+	xVals := make([]float64, 0, len(klines))
+	yVals := make([]float64, 0, len(klines))
 	for _, k := range klines {
-		xAxis = append(xAxis, time.UnixMilli(k.OpenTime).Format("01-02 15:04"))
-		series = append(series, opts.KlineData{Value: [4]float64{k.Open, k.Close, k.Low, k.High}})
+		t := float64(time.UnixMilli(k.OpenTime).Unix())
+		xVals = append(xVals, t)
+		yVals = append(yVals, k.Close)
 	}
 
-	kline := echarts.NewKLine()
-	kline.SetGlobalOptions(
-		echarts.WithInitializationOpts(opts.Initialization{ChartID: "kline", Width: "900px", Height: "500px"}),
-		echarts.WithTitleOpts(opts.Title{Title: fmt.Sprintf("%s %s", symbol, interval)}),
-		echarts.WithTooltipOpts(opts.Tooltip{Show: opts.Bool(true), Trigger: "axis"}),
-		echarts.WithXAxisOpts(opts.XAxis{SplitNumber: 20}),
-		echarts.WithYAxisOpts(opts.YAxis{Scale: opts.Bool(true)}),
-		echarts.WithDataZoomOpts(opts.DataZoom{Type: "inside"}, opts.DataZoom{Type: "slider"}),
-	)
-
-	seriesOpts := []echarts.SeriesOpts{
-		echarts.WithItemStyleOpts(opts.ItemStyle{Color: "#26a69a", Color0: "#ef5350"}),
+	priceSeries := chart.ContinuousSeries{
+		Name:    fmt.Sprintf("%s %s", symbol, interval),
+		XValues: xVals,
+		YValues: yVals,
+		Style: chart.Style{
+			StrokeColor: chart.ColorBlue,
+			StrokeWidth: 1.5,
+		},
 	}
 
+	// 可选的买入价标记（水平线）
+	var entrySeries *chart.ContinuousSeries
 	if entryPrice > 0 {
-		seriesOpts = append(seriesOpts,
-			echarts.WithMarkLineStyleOpts(opts.MarkLineStyle{LineStyle: &opts.LineStyle{Color: "#ff9800", Width: 1.2, Type: "dashed"}}),
-			echarts.WithMarkLineNameYAxisItemOpts(opts.MarkLineNameYAxisItem{YAxis: entryPrice, Name: "Entry"}),
-		)
+		x1 := xVals[0]
+		x2 := xVals[len(xVals)-1]
+		entrySeries = &chart.ContinuousSeries{
+			Style: chart.Style{
+				StrokeColor:     chart.ColorOrange,
+				StrokeWidth:     1.0,
+				StrokeDashArray: []float64{5, 5},
+			},
+			XValues: []float64{x1, x2},
+			YValues: []float64{entryPrice, entryPrice},
+			Name:    "Entry",
+		}
 	}
 
-	kline.SetXAxis(xAxis).AddSeries("kline", series, seriesOpts...)
-
-	page := components.NewPage()
-	page.AddCharts(kline)
-
-	var htmlBuf bytes.Buffer
-	if err := page.Render(&htmlBuf); err != nil {
-		return nil, fmt.Errorf("渲染HTML失败: %w", err)
+	graph := chart.Chart{
+		Background: chart.Style{
+			Padding: chart.Box{
+				Top:    20,
+				Left:   10,
+				Right:  10,
+				Bottom: 20,
+			},
+		},
+		XAxis: chart.XAxis{
+			ValueFormatter: chart.TimeDateValueFormatter,
+		},
+		YAxis: chart.YAxis{
+			Style: chart.Style{},
+		},
+		Series: []chart.Series{
+			priceSeries,
+		},
 	}
 
-	png, err := renderHTMLToPNG(ctx, htmlBuf.String())
-	if err != nil {
-		return nil, fmt.Errorf("渲染图表截图失败: %w", err)
+	if entrySeries != nil {
+		graph.Series = append(graph.Series, entrySeries)
 	}
 
-	return png, nil
-}
-
-// renderHTMLToPNG 使用 chromedp 将内联 HTML 渲染为 PNG。
-func renderHTMLToPNG(ctx context.Context, html string) ([]byte, error) {
-	execPath := findChromePath()
-
-	allocOpts := []chromedp.ExecAllocatorOption{
-		chromedp.Headless,
-		chromedp.NoSandbox,
-		chromedp.DisableGPU,
-		chromedp.Flag("hide-scrollbars", true),
-		chromedp.Flag("mute-audio", true),
-	}
-	if execPath != "" {
-		allocOpts = append(allocOpts, chromedp.ExecPath(execPath))
+	graph.Elements = []chart.Renderable{
+		chart.Legend(&graph),
 	}
 
-	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx, allocOpts...)
-	defer allocCancel()
-
-	c, cancel := chromedp.NewContext(allocCtx)
-	defer cancel()
-
-	dataURL := "data:text/html;charset=utf-8," + url.QueryEscape(html)
-	var buf []byte
-	err := chromedp.Run(c,
-		chromedp.Navigate(dataURL),
-		chromedp.EmulateViewport(900, 520),
-		chromedp.Sleep(2*time.Second),
-		chromedp.FullScreenshot(&buf, 90),
-	)
-	if err != nil {
-		return nil, err
+	var buf bytes.Buffer
+	if err := graph.Render(chart.PNG, &buf); err != nil {
+		return nil, fmt.Errorf("渲染图表失败: %w", err)
 	}
-	return buf, nil
-}
-
-// findChromePath 尝试找到本地 Chrome 可执行路径；找不到时返回空字符串让 chromedp 自行寻找。
-func findChromePath() string {
-	if p := os.Getenv("CHROME_PATH"); p != "" {
-		return p
-	}
-	switch runtime.GOOS {
-	case "darwin":
-		return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-	case "linux":
-		return "/usr/bin/google-chrome"
-	default:
-		return ""
-	}
+	return buf.Bytes(), nil
 }
