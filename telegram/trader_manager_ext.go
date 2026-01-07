@@ -28,26 +28,41 @@ func (ttm *TelegramTraderManager) GetRunningTrader(telegramID int64) (*trader.Au
 	return nil, fmt.Errorf("未找到运行中的交易员")
 }
 
-// GetEntryPriceFromTrader 获取指定 symbol 的持仓均价（若存在持仓）
-func GetEntryPriceFromTrader(at *trader.AutoTrader, symbol string) float64 {
+// GetPositionFromTrader 获取指定 symbol 的持仓信息（若存在持仓）
+func GetPositionFromTrader(at *trader.AutoTrader, symbol string) (entryPrice float64, side string) {
 	if at == nil {
-		return 0
+		return 0, ""
 	}
 	target := normalizeSymbol(symbol)
 	positions, err := at.GetPositions()
 	if err != nil {
-		return 0
+		return 0, ""
 	}
 	for _, pos := range positions {
 		sym, _ := pos["symbol"].(string)
 		if !symbolMatch(sym, target) {
 			continue
 		}
-		if ep, ok := pos["entryPrice"].(float64); ok {
-			return ep
+		// AutoTrader.GetPositions() 返回 snake_case；部分交易器/历史实现可能返回驼峰字段
+		if v, ok := pos["entry_price"].(float64); ok {
+			entryPrice = v
+		} else if v, ok := pos["entryPrice"].(float64); ok {
+			entryPrice = v
+		} else if v, ok := pos["avgPrice"].(float64); ok {
+			entryPrice = v
 		}
+		if v, ok := pos["side"].(string); ok {
+			side = strings.ToLower(strings.TrimSpace(v))
+		}
+		return entryPrice, side
 	}
-	return 0
+	return 0, ""
+}
+
+// GetEntryPriceFromTrader 获取指定 symbol 的持仓均价（若存在持仓）
+func GetEntryPriceFromTrader(at *trader.AutoTrader, symbol string) float64 {
+	ep, _ := GetPositionFromTrader(at, symbol)
+	return ep
 }
 
 func normalizeSymbol(sym string) string {
