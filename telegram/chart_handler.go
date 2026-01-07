@@ -91,7 +91,14 @@ func findEntryPriceInPositions(positions []map[string]interface{}, symbol string
 		if !symbolMatch(sym, target) {
 			continue
 		}
+		// 常见字段兼容
 		if ep, ok := pos["entryPrice"].(float64); ok {
+			return ep
+		}
+		if ep, ok := pos["avgPrice"].(float64); ok {
+			return ep
+		}
+		if ep, ok := pos["entry_px"].(float64); ok {
 			return ep
 		}
 	}

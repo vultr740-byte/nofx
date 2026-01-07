@@ -54,6 +54,11 @@ func normalizeSymbol(sym string) string {
 	s := strings.ToUpper(strings.TrimSpace(sym))
 	s = strings.TrimSuffix(s, "USDT")
 	s = strings.TrimSuffix(s, "USDC")
+	// 对于 HIP-3，去掉前缀，只保留资产名用于匹配 Binance 符号
+	if strings.Contains(s, ":") {
+		parts := strings.SplitN(s, ":", 2)
+		s = parts[len(parts)-1]
+	}
 	return s
 }
 
@@ -62,5 +67,5 @@ func symbolMatch(posSym, target string) bool {
 		return false
 	}
 	p := normalizeSymbol(posSym)
-	return p == target
+	return p == target || p+"USDT" == target || p+"USDC" == target
 }
