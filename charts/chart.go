@@ -61,11 +61,11 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 	stopLossColor := drawing.ColorFromHex("FF5252")   // 止损线（红）
 	takeProfitColor := drawing.ColorFromHex("00C853") // 止盈线（绿）
 
-	// 计算价格范围并增加边距（Y 轴只按价格走势计算；其它水平线超出范围则不展示）
-	minY, maxY := yVals[0], yVals[0]
-	for _, v := range yVals[1:] {
-		minY = math.Min(minY, v)
-		maxY = math.Max(maxY, v)
+	// 计算价格范围并增加边距（Y 轴按 K 线 high/low 计算；其它水平线超出范围则不展示）
+	minY, maxY := klines[0].Low, klines[0].High
+	for _, k := range klines[1:] {
+		minY = math.Min(minY, k.Low)
+		maxY = math.Max(maxY, k.High)
 	}
 	yPad := (maxY - minY) * 0.08
 	if yPad <= 0 {

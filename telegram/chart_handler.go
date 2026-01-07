@@ -54,7 +54,7 @@ func (tbm *TelegramBotManager) handleChart(update tgbotapi.Update) {
 		}
 	}
 	// 回退：直接查账户持仓（即便未运行）
-	if entryPrice == 0 || stopLoss == 0 || takeProfit == 0 {
+	if entryPrice == 0 || (stopLoss == 0 && takeProfit == 0) {
 		if agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID); err == nil {
 			if _, positions, err := tbm.hlService.GetPositionsWithData(agentKey, walletAddr, tbm.testnet); err == nil {
 				if ep, side, sl, tp := findPositionInPositions(positions, symbol); ep > 0 || sl > 0 || tp > 0 {
