@@ -39,17 +39,17 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 		return nil, fmt.Errorf("未获取到K线数据")
 	}
 
-	xVals := make([]float64, 0, len(klines))
+	xTimes := make([]time.Time, 0, len(klines))
 	yVals := make([]float64, 0, len(klines))
 	for _, k := range klines {
-		t := float64(time.UnixMilli(k.OpenTime).Unix())
-		xVals = append(xVals, t)
+		t := time.UnixMilli(k.OpenTime)
+		xTimes = append(xTimes, t)
 		yVals = append(yVals, k.Close)
 	}
 
-	priceSeries := chart.ContinuousSeries{
+	priceSeries := chart.TimeSeries{
 		Name:    fmt.Sprintf("%s %s", symbol, interval),
-		XValues: xVals,
+		XValues: xTimes,
 		YValues: yVals,
 		Style: chart.Style{
 			StrokeColor: chart.ColorBlue,
@@ -60,8 +60,8 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 	// 可选的买入价标记（水平线）
 	var entrySeries *chart.ContinuousSeries
 	if entryPrice > 0 {
-		x1 := xVals[0]
-		x2 := xVals[len(xVals)-1]
+		x1 := float64(xTimes[0].Unix())
+		x2 := float64(xTimes[len(xTimes)-1].Unix())
 		entrySeries = &chart.ContinuousSeries{
 			Style: chart.Style{
 				StrokeColor:     chart.ColorOrange,
@@ -82,12 +82,20 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 				Right:  10,
 				Bottom: 20,
 			},
+			FillColor: chart.ColorBlack,
 		},
 		XAxis: chart.XAxis{
 			ValueFormatter: chart.TimeDateValueFormatter,
+			Style: chart.Style{
+				StrokeColor: chart.ColorAlternateGray,
+				FontColor:   chart.ColorWhite,
+			},
 		},
 		YAxis: chart.YAxis{
-			Style: chart.Style{},
+			Style: chart.Style{
+				StrokeColor: chart.ColorAlternateGray,
+				FontColor:   chart.ColorWhite,
+			},
 		},
 		Series: []chart.Series{
 			priceSeries,
@@ -99,7 +107,9 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 	}
 
 	graph.Elements = []chart.Renderable{
-		chart.Legend(&graph),
+		chart.Legend(&graph, chart.Style{
+			FontColor: chart.ColorWhite,
+		}),
 	}
 
 	var buf bytes.Buffer

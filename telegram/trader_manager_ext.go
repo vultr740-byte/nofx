@@ -33,13 +33,14 @@ func GetEntryPriceFromTrader(at *trader.AutoTrader, symbol string) float64 {
 	if at == nil {
 		return 0
 	}
+	target := normalizeSymbol(symbol)
 	positions, err := at.GetPositions()
 	if err != nil {
 		return 0
 	}
 	for _, pos := range positions {
 		sym, _ := pos["symbol"].(string)
-		if !strings.EqualFold(sym, symbol) {
+		if !symbolMatch(sym, target) {
 			continue
 		}
 		if ep, ok := pos["entryPrice"].(float64); ok {
@@ -47,4 +48,19 @@ func GetEntryPriceFromTrader(at *trader.AutoTrader, symbol string) float64 {
 		}
 	}
 	return 0
+}
+
+func normalizeSymbol(sym string) string {
+	s := strings.ToUpper(strings.TrimSpace(sym))
+	s = strings.TrimSuffix(s, "USDT")
+	s = strings.TrimSuffix(s, "USDC")
+	return s
+}
+
+func symbolMatch(posSym, target string) bool {
+	if target == "" {
+		return false
+	}
+	p := normalizeSymbol(posSym)
+	return p == target
 }
