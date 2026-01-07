@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,6 +32,13 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 	}
 	if interval == "" {
 		interval = "15m"
+	}
+
+	formatPriceLabel := func(v float64) string {
+		s := fmt.Sprintf("%.4f", v)
+		s = strings.TrimRight(s, "0")
+		s = strings.TrimRight(s, ".")
+		return s
 	}
 
 	// 拉取 K 线（无 ctx 支持的原有接口，这里忽略 ctx 取消；接口超时由 client 控制）
@@ -107,6 +115,21 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 	stopLossLine := addLevelLine(stopLoss, stopLossColor)
 	takeProfitLine := addLevelLine(takeProfit, takeProfitColor)
 
+	type levelLabel struct {
+		value float64
+		color drawing.Color
+	}
+	labels := make([]levelLabel, 0, 3)
+	if entryLine != nil {
+		labels = append(labels, levelLabel{value: entryPrice, color: entryColor})
+	}
+	if stopLossLine != nil {
+		labels = append(labels, levelLabel{value: stopLoss, color: stopLossColor})
+	}
+	if takeProfitLine != nil {
+		labels = append(labels, levelLabel{value: takeProfit, color: takeProfitColor})
+	}
+
 	timeFmt := "01-02 15:04"
 	if strings.HasSuffix(interval, "m") {
 		timeFmt = "15:04"
@@ -175,6 +198,71 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 		}
 		series = append(series, priceSeries) // 价格线放最后，覆盖在水平线之上
 		graph.Series = series
+	}
+
+	if len(labels) > 0 {
+		graph.Elements = append(graph.Elements, func(r chart.Renderer, canvasBox chart.Box, defaults chart.Style) {
+			yr := yMax - yMin
+			if yr <= 0 {
+				return
+			}
+
+			baseStyle := chart.Style{FontSize: 11}.InheritFrom(defaults)
+			baseStyle.WriteTextOptionsToRenderer(r)
+			defer r.ResetStyle()
+
+			type drawLabel struct {
+				y     int
+				text  string
+				color drawing.Color
+			}
+
+			var drawn []drawLabel
+			for _, l := range labels {
+				lineRatio := (l.value - yMin) / yr
+				lineY := canvasBox.Bottom - int(lineRatio*float64(canvasBox.Height()))
+
+				text := formatPriceLabel(l.value)
+				tb := r.MeasureText(text)
+				halfH := tb.Height() >> 1
+
+				drawn = append(drawn, drawLabel{
+					y:     lineY + halfH,
+					text:  text,
+					color: l.color,
+				})
+			}
+
+			// 避免标签垂直重叠：按 y 排序后向下错开，必要时整体上移
+			sort.Slice(drawn, func(i, j int) bool { return drawn[i].y < drawn[j].y })
+			minGap := r.MeasureText("0").Height() + 4
+			for i := 1; i < len(drawn); i++ {
+				if drawn[i].y-drawn[i-1].y < minGap {
+					drawn[i].y = drawn[i-1].y + minGap
+				}
+			}
+			yMaxAllowed := canvasBox.Bottom - 2
+			if overflow := drawn[len(drawn)-1].y - yMaxAllowed; overflow > 0 {
+				for i := range drawn {
+					drawn[i].y -= overflow
+				}
+			}
+			yMinAllowed := canvasBox.Top + minGap
+			if underflow := yMinAllowed - drawn[0].y; underflow > 0 {
+				for i := range drawn {
+					drawn[i].y += underflow
+				}
+			}
+
+			// 右侧对齐绘制（不额外扩展 X 轴范围）
+			xMargin := 6
+			for _, dl := range drawn {
+				tb := r.MeasureText(dl.text)
+				x := canvasBox.Right - xMargin - tb.Width()
+				r.SetFontColor(dl.color)
+				r.Text(dl.text, x, dl.y)
+			}
+		})
 	}
 
 	var buf bytes.Buffer
