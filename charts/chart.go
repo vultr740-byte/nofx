@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"runtime"
 	"time"
 
 	"github.com/chromedp/chromedp"
@@ -89,7 +91,23 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 
 // renderHTMLToPNG 使用 chromedp 将内联 HTML 渲染为 PNG。
 func renderHTMLToPNG(ctx context.Context, html string) ([]byte, error) {
-	c, cancel := chromedp.NewContext(ctx)
+	execPath := findChromePath()
+
+	allocOpts := []chromedp.ExecAllocatorOption{
+		chromedp.Headless,
+		chromedp.NoSandbox,
+		chromedp.DisableGPU,
+		chromedp.Flag("hide-scrollbars", true),
+		chromedp.Flag("mute-audio", true),
+	}
+	if execPath != "" {
+		allocOpts = append(allocOpts, chromedp.ExecPath(execPath))
+	}
+
+	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx, allocOpts...)
+	defer allocCancel()
+
+	c, cancel := chromedp.NewContext(allocCtx)
 	defer cancel()
 
 	dataURL := "data:text/html;charset=utf-8," + url.QueryEscape(html)
@@ -104,4 +122,19 @@ func renderHTMLToPNG(ctx context.Context, html string) ([]byte, error) {
 		return nil, err
 	}
 	return buf, nil
+}
+
+// findChromePath 尝试找到本地 Chrome 可执行路径；找不到时返回空字符串让 chromedp 自行寻找。
+func findChromePath() string {
+	if p := os.Getenv("CHROME_PATH"); p != "" {
+		return p
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+	case "linux":
+		return "/usr/bin/google-chrome"
+	default:
+		return ""
+	}
 }
