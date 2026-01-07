@@ -223,6 +223,8 @@ func (tbm *TelegramBotManager) handleCommand(update tgbotapi.Update) {
 		tbm.handleBalance(update)
 	case "positions":
 		tbm.handlePositions(update)
+	case "chart":
+		tbm.handleChart(update)
 	case "stocks":
 		tbm.handleStocks(update)
 	case "orders":
@@ -1289,6 +1291,10 @@ func (tbm *TelegramBotManager) setupCommands() {
 		{
 			Command:     "positions",
 			Description: "💹 当前持仓",
+		},
+		{
+			Command:     "chart",
+			Description: "📈 查看资产K线图",
 		},
 		{
 			Command:     "orders",
