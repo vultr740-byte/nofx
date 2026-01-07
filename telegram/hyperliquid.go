@@ -131,6 +131,10 @@ func NewHyperliquidService() *HyperliquidService {
 
 // FetchBalance 获取原始余额信息，供外层业务复用
 func (s *HyperliquidService) FetchBalance(agentKey, walletAddr string, testnet bool) (map[string]interface{}, error) {
+	// 优先用 WS 缓存，避免 /balance 在启动阶段触发 HTTP 429
+	trader.AcquireHyperliquidUserWS(testnet, walletAddr)
+	defer trader.ReleaseHyperliquidUserWS(testnet, walletAddr)
+
 	// 创建 Hyperliquid 交易器
 	trader, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
 	if err != nil {
@@ -159,6 +163,10 @@ func (s *HyperliquidService) GetBalance(agentKey, walletAddr string, testnet boo
 
 // GetBalanceWithAutoTransfer 仅在明确请求（如 /balance 命令）时自动将现货划转至合约
 func (s *HyperliquidService) GetBalanceWithAutoTransfer(agentKey, walletAddr string, testnet bool) (string, error) {
+	// 优先用 WS 缓存，避免 /balance 在启动阶段触发 HTTP 429
+	trader.AcquireHyperliquidUserWS(testnet, walletAddr)
+	defer trader.ReleaseHyperliquidUserWS(testnet, walletAddr)
+
 	// 创建 Hyperliquid 交易器
 	trader, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
 	if err != nil {
@@ -202,6 +210,9 @@ func (s *HyperliquidService) GetBalanceWithAutoTransfer(agentKey, walletAddr str
 
 // GetPositions 获取持仓并格式化为 Telegram 消息
 func (s *HyperliquidService) GetPositions(agentKey, walletAddr string, testnet bool) (string, error) {
+	trader.AcquireHyperliquidUserWS(testnet, walletAddr)
+	defer trader.ReleaseHyperliquidUserWS(testnet, walletAddr)
+
 	// 创建 Hyperliquid 交易器
 	trader, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
 	if err != nil {
@@ -236,6 +247,9 @@ func (s *HyperliquidService) GetPositionsWithData(agentKey, walletAddr string, t
 			err = fmt.Errorf("获取持仓失败: %v", r)
 		}
 	}()
+
+	trader.AcquireHyperliquidUserWS(testnet, walletAddr)
+	defer trader.ReleaseHyperliquidUserWS(testnet, walletAddr)
 
 	// 创建 Hyperliquid 交易器
 	trader, newErr := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)

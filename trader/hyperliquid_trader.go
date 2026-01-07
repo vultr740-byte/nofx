@@ -800,19 +800,34 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 
 	logf("🔄 正在调用Hyperliquid API获取账户余额...")
 
-	const wsTTL = 2 * time.Second
+	const (
+		wsTTL  = 15 * time.Second // 优先使用 WS 数据，避免启动瞬间/多账号并发时触发 HTTP 429
+		wsWait = 5 * time.Second  // 启动后等待 WS 首帧再回退 HTTP
+	)
 
 	// ✅ Step 1: 查询 Spot 现货账户余额
 	var spotUSDCBalance float64 = 0.0
 	var spotUSDCHold float64 = 0.0
+	spotFromWS := false
 	if ws := getWSManager(t.testnet); ws != nil {
 		if total, hold, ok := ws.getSpotUSDCWithHold(wsTTL, t.walletAddr); ok {
 			spotUSDCBalance = total
 			spotUSDCHold = hold
 			logf("✅ 使用 WS webData2 现货余额: %.2f USDC (≤ %.0fs)", spotUSDCBalance, wsTTL.Seconds())
+			spotFromWS = true
+		} else if ws.waitForSpotState(t.walletAddr, wsWait) {
+			if total, hold, ok := ws.getSpotUSDCWithHold(wsTTL, t.walletAddr); ok {
+				spotUSDCBalance = total
+				spotUSDCHold = hold
+				logf("✅ 使用 WS webData2 现货余额(等待≤%.0fs): %.2f USDC", wsWait.Seconds(), spotUSDCBalance)
+				spotFromWS = true
+			}
 		}
 	}
-	if spotUSDCBalance == 0 {
+	if !spotFromWS {
+		if err := hyperliquidInfoLimiter.Wait(t.ctx); err != nil {
+			logf("⚠️ 等待 Hyperliquid info 限流失败(spot): %v", err)
+		}
 		spotState, err := t.exchange.Info().SpotUserState(t.ctx, t.walletAddr)
 		if err != nil {
 			logf("⚠️ 查询 Spot 余额失败（可能无现货资产）: %v", err)
@@ -857,27 +872,67 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 			summaryType = "WS MarginSummary"
 			summary = state.MarginSummary
 		}
+
+		if summary == nil && ws.waitForPerpState(t.walletAddr, wsWait) {
+			if state, ok := ws.getPerpClearinghouseState(wsTTL, t.walletAddr, ""); ok && state.MarginSummary != nil {
+				logf("✅ 使用 WS 缓存的 clearinghouseState (等待≤%.0fs)", wsWait.Seconds())
+				accountValue, _ = strconv.ParseFloat(state.MarginSummary.AccountValue, 64)
+				totalMarginUsed, _ = strconv.ParseFloat(state.MarginSummary.TotalMarginUsed, 64)
+				totalNtlPos, _ = strconv.ParseFloat(state.MarginSummary.TotalNtlPos, 64)
+				for _, assetPos := range state.AssetPositions {
+					unrealizedPnl, _ := strconv.ParseFloat(assetPos.Position.UnrealizedPnl, 64)
+					totalUnrealizedPnl += unrealizedPnl
+				}
+				availableBalance, _ = strconv.ParseFloat(state.Withdrawable, 64)
+				summaryType = "WS MarginSummary"
+				summary = state.MarginSummary
+			}
+		}
 	}
 
 	// 回退 HTTP
 	if summary == nil {
+		if err := hyperliquidInfoLimiter.Wait(t.ctx); err != nil {
+			logf("⚠️ 等待 Hyperliquid info 限流失败(perp): %v", err)
+		}
 		accountState, err := t.exchange.Info().UserState(t.ctx, t.walletAddr)
 		if err != nil {
-			logf("❌ Hyperliquid Perpetuals API调用失败: %v", err)
-			return nil, fmt.Errorf("获取账户信息失败: %w", err)
+			// 429/网络波动时，尽量使用更宽松 TTL 的 WS 缓存兜底，避免启动阶段直接失败。
+			if ws := getWSManager(t.testnet); ws != nil {
+				const staleTTL = 2 * time.Minute
+				if state, ok := ws.getPerpClearinghouseState(staleTTL, t.walletAddr, ""); ok && state.MarginSummary != nil {
+					logf("⚠️ HTTP UserState 失败，使用 WS 兜底缓存 (≤ %.0fs): %v", staleTTL.Seconds(), err)
+					accountValue, _ = strconv.ParseFloat(state.MarginSummary.AccountValue, 64)
+					totalMarginUsed, _ = strconv.ParseFloat(state.MarginSummary.TotalMarginUsed, 64)
+					totalNtlPos, _ = strconv.ParseFloat(state.MarginSummary.TotalNtlPos, 64)
+					for _, assetPos := range state.AssetPositions {
+						unrealizedPnl, _ := strconv.ParseFloat(assetPos.Position.UnrealizedPnl, 64)
+						totalUnrealizedPnl += unrealizedPnl
+					}
+					availableBalance, _ = strconv.ParseFloat(state.Withdrawable, 64)
+					summaryType = "WS MarginSummary (stale)"
+					summary = state.MarginSummary
+				}
+			}
+			if summary == nil {
+				logf("❌ Hyperliquid Perpetuals API调用失败: %v", err)
+				return nil, fmt.Errorf("获取账户信息失败: %w", err)
+			}
 		}
-		accountValue, _ = strconv.ParseFloat(accountState.MarginSummary.AccountValue, 64)
-		totalMarginUsed, _ = strconv.ParseFloat(accountState.MarginSummary.TotalMarginUsed, 64)
-		totalNtlPos, _ = strconv.ParseFloat(accountState.MarginSummary.TotalNtlPos, 64)
-		for _, assetPos := range accountState.AssetPositions {
-			unrealizedPnl, _ := strconv.ParseFloat(assetPos.Position.UnrealizedPnl, 64)
-			totalUnrealizedPnl += unrealizedPnl
+		if summary == nil {
+			accountValue, _ = strconv.ParseFloat(accountState.MarginSummary.AccountValue, 64)
+			totalMarginUsed, _ = strconv.ParseFloat(accountState.MarginSummary.TotalMarginUsed, 64)
+			totalNtlPos, _ = strconv.ParseFloat(accountState.MarginSummary.TotalNtlPos, 64)
+			for _, assetPos := range accountState.AssetPositions {
+				unrealizedPnl, _ := strconv.ParseFloat(assetPos.Position.UnrealizedPnl, 64)
+				totalUnrealizedPnl += unrealizedPnl
+			}
+			if accountState.Withdrawable != "" {
+				availableBalance, _ = strconv.ParseFloat(accountState.Withdrawable, 64)
+			}
+			summaryType = "HTTP MarginSummary"
+			summary = accountState.MarginSummary
 		}
-		if accountState.Withdrawable != "" {
-			availableBalance, _ = strconv.ParseFloat(accountState.Withdrawable, 64)
-		}
-		summaryType = "HTTP MarginSummary"
-		summary = accountState.MarginSummary
 	}
 
 	// 解析余额信息（MarginSummary字段都是string）
@@ -983,15 +1038,18 @@ func (t *HyperliquidTrader) fetchUserStateWithDex(dex string) (*hyperliquid.User
 
 	reqBody, _ := json.Marshal(payload)
 
-	req, err := http.NewRequest("POST", infoAPIURL(t.testnet), bytes.NewBuffer(reqBody))
+	if err := hyperliquidInfoLimiter.Wait(t.ctx); err != nil {
+		return nil, fmt.Errorf("等待 Hyperliquid info 限流失败(dex=%s): %w", dex, err)
+	}
+
+	req, err := http.NewRequestWithContext(t.ctx, "POST", infoAPIURL(t.testnet), bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "NOFX-Hyperliquid-Positions")
 
-	client := &http.Client{Timeout: 8 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := hyperliquidInfoHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求失败(dex=%s): %w", dex, err)
 	}
@@ -1015,33 +1073,67 @@ func (t *HyperliquidTrader) fetchUserStateWithDex(dex string) (*hyperliquid.User
 
 // GetPositions 获取所有持仓
 func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
-	// 获取账户状态（默认 perp + 各 HIP-3 dex）
-	dexes := []string{"", "xyz", "flx", "vntl", "hyna"}
+	// 优先使用 WS allDexsClearinghouseState 缓存拿持仓，避免启动/多账号并发时触发 HTTP 429。
+	const (
+		wsTTL  = 15 * time.Second
+		wsWait = 5 * time.Second
+	)
+
 	var allPositions []hyperliquid.AssetPosition
-	for _, dex := range dexes {
-		state, err := t.fetchUserStateWithDex(dex)
-		if err != nil {
-			log.Printf("⚠️ 获取持仓失败(dex=%s): %v", dex, err)
-			continue
+	usedWS := false
+	if ws := getWSManager(t.testnet); ws != nil {
+		if states, ok := ws.getAllPerpClearinghouseStates(wsTTL, t.walletAddr); ok {
+			usedWS = true
+			for dex, st := range states {
+				if len(st.AssetPositions) > 0 {
+					log.Printf("🔍 [DEBUG] (WS) dex=%s 返回 %d 个资产持仓", dex, len(st.AssetPositions))
+				}
+				allPositions = append(allPositions, st.AssetPositions...)
+			}
+		} else if ws.waitForPerpState(t.walletAddr, wsWait) {
+			if states, ok := ws.getAllPerpClearinghouseStates(wsTTL, t.walletAddr); ok {
+				usedWS = true
+				for dex, st := range states {
+					if len(st.AssetPositions) > 0 {
+						log.Printf("🔍 [DEBUG] (WS) dex=%s 返回 %d 个资产持仓", dex, len(st.AssetPositions))
+					}
+					allPositions = append(allPositions, st.AssetPositions...)
+				}
+			}
 		}
-		if len(state.AssetPositions) > 0 {
-			log.Printf("🔍 [DEBUG] dex=%s 返回 %d 个资产持仓", dex, len(state.AssetPositions))
-		}
-		allPositions = append(allPositions, state.AssetPositions...)
 	}
+
+	// WS 未就绪才回退 HTTP（仅主 dex，避免 HIP-3 dex 扇出导致 429）
+	if !usedWS {
+		dexes := []string{""}
+		for _, dex := range dexes {
+			state, err := t.fetchUserStateWithDex(dex)
+			if err != nil {
+				log.Printf("⚠️ 获取持仓失败(dex=%s): %v", dex, err)
+				continue
+			}
+			if len(state.AssetPositions) > 0 {
+				log.Printf("🔍 [DEBUG] dex=%s 返回 %d 个资产持仓", dex, len(state.AssetPositions))
+			}
+			allPositions = append(allPositions, state.AssetPositions...)
+		}
+	}
+
 	if len(allPositions) == 0 {
-		log.Printf("🔍 [DEBUG] 未获取到任何持仓（所有 dex 返回空）")
+		log.Printf("🔍 [DEBUG] 未获取到任何持仓（WS=%t）", usedWS)
+		return []map[string]interface{}{}, nil
 	}
 
 	// 预先获取触发类挂单，用于止盈/止损信息
-	frontendOrders, err := t.exchange.Info().FrontendOpenOrders(t.ctx, t.walletAddr)
+	const ordersTTL = 3 * time.Second
+	frontendOrders, err := t.getFrontendOpenOrdersCached(ordersTTL)
 	if err != nil {
 		log.Printf("⚠️ 获取前端挂单失败，止盈止损信息将缺失: %v", err)
 		frontendOrders = nil
 	}
 
 	// 额外获取普通挂单，用于兜底（部分 reduce-only 限价单没有触发标记）
-	openOrders, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
+	openOrders, err := t.getOpenOrdersCached(ordersTTL)
 	if err != nil {
 		log.Printf("⚠️ 获取 OpenOrders 失败，无法兜底识别 reduce-only 限价单: %v", err)
 		openOrders = nil

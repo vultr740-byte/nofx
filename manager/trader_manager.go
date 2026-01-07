@@ -421,17 +421,41 @@ func (tm *TraderManager) GetTraderIDs() []string {
 
 // StartAll 启动所有trader
 func (tm *TraderManager) StartAll() {
+	// 复制快照，避免持锁启动（启动期间会阻塞很久）
 	tm.mu.RLock()
-	defer tm.mu.RUnlock()
+	type item struct {
+		id string
+		at *trader.AutoTrader
+	}
+	items := make([]item, 0, len(tm.traders))
+	for id, t := range tm.traders {
+		items = append(items, item{id: id, at: t})
+	}
+	tm.mu.RUnlock()
+
+	sort.Slice(items, func(i, j int) bool { return items[i].id < items[j].id })
 
 	log.Println("🚀 启动所有Trader...")
-	for id, t := range tm.traders {
-		go func(traderID string, at *trader.AutoTrader) {
+
+	// Hyperliquid 启动阶段容易触发 /info 429；这里做保守的“错峰启动”，减少并发尖峰。
+	const hyperliquidStartGap = 2 * time.Second
+	hlIdx := 0
+	for _, it := range items {
+		delay := time.Duration(0)
+		if strings.EqualFold(strings.TrimSpace(it.at.GetExchange()), "hyperliquid") {
+			delay = time.Duration(hlIdx) * hyperliquidStartGap
+			hlIdx++
+		}
+
+		go func(at *trader.AutoTrader, delay time.Duration) {
+			if delay > 0 {
+				time.Sleep(delay)
+			}
 			log.Printf("▶️  启动 %s...", at.GetName())
 			if err := at.Run(); err != nil {
 				log.Printf("❌ %s 运行错误: %v", at.GetName(), err)
 			}
-		}(id, t)
+		}(it.at, delay)
 	}
 }
 

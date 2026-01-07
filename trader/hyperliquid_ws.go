@@ -304,6 +304,56 @@ func (m *hyperliquidWSManager) acquireUserWS(user string) {
 	close(ch)
 }
 
+// waitForSpotState 等待指定用户收到 spotState 的首条 WS 快照（或超时）。
+func (m *hyperliquidWSManager) waitForSpotState(user string, timeout time.Duration) bool {
+	if m == nil {
+		return false
+	}
+	userLower := strings.ToLower(strings.TrimSpace(user))
+	if userLower == "" {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		m.userMu.Lock()
+		st := m.users[userLower]
+		ready := st != nil && !st.spotUpdatedAt.IsZero()
+		m.userMu.Unlock()
+		if ready {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// waitForPerpState 等待指定用户收到 perp (allDexsClearinghouseState) 的首条 WS 快照（或超时）。
+func (m *hyperliquidWSManager) waitForPerpState(user string, timeout time.Duration) bool {
+	if m == nil {
+		return false
+	}
+	userLower := strings.ToLower(strings.TrimSpace(user))
+	if userLower == "" {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		m.userMu.Lock()
+		st := m.users[userLower]
+		ready := st != nil && !st.perpUpdatedAt.IsZero() && len(st.perpByDex) > 0
+		m.userMu.Unlock()
+		if ready {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // releaseUserWS 在 refcount 归零时关闭订阅并清理缓存。
 func (m *hyperliquidWSManager) releaseUserWS(user string) {
 	if m == nil {
@@ -422,6 +472,39 @@ func (m *hyperliquidWSManager) getPerpClearinghouseState(ttl time.Duration, user
 	return &s, true
 }
 
+// getAllPerpClearinghouseStates 返回指定用户的 Perp clearinghouseState 缓存（全 dex），在 TTL 内有效。
+func (m *hyperliquidWSManager) getAllPerpClearinghouseStates(ttl time.Duration, user string) (map[string]hyperliquid.ClearinghouseState, bool) {
+	if m == nil {
+		return nil, false
+	}
+	userLower := strings.ToLower(strings.TrimSpace(user))
+	if userLower == "" {
+		return nil, false
+	}
+
+	m.userMu.Lock()
+	st := m.users[userLower]
+	var ts time.Time
+	var src map[string]hyperliquid.ClearinghouseState
+	if st != nil {
+		ts = st.perpUpdatedAt
+		src = st.perpByDex
+	}
+	m.userMu.Unlock()
+	if st == nil || ts.IsZero() || time.Since(ts) > ttl {
+		return nil, false
+	}
+	if len(src) == 0 {
+		return nil, false
+	}
+
+	out := make(map[string]hyperliquid.ClearinghouseState, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out, true
+}
+
 var (
 	wsManagerMainnet *hyperliquidWSManager
 	wsManagerTestnet *hyperliquidWSManager
@@ -449,4 +532,18 @@ func optDexPtr(dex string) *string {
 		return nil
 	}
 	return &dex
+}
+
+// AcquireHyperliquidUserWS 确保指定钱包已建立 user WS 订阅（webData2 + allDexsClearinghouseState）。
+func AcquireHyperliquidUserWS(testnet bool, walletAddr string) {
+	if ws := getWSManager(testnet); ws != nil {
+		ws.acquireUserWS(walletAddr)
+	}
+}
+
+// ReleaseHyperliquidUserWS 释放指定钱包的 user WS 订阅（refcount 归零时关闭）。
+func ReleaseHyperliquidUserWS(testnet bool, walletAddr string) {
+	if ws := getWSManager(testnet); ws != nil {
+		ws.releaseUserWS(walletAddr)
+	}
 }
