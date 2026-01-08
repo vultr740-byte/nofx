@@ -19,7 +19,8 @@ func (tbm *TelegramBotManager) handleChart(update tgbotapi.Update) {
 	telegramID := update.Message.From.ID
 
 	// 权限校验
-	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
+	userAny, userErr := tbm.db.GetTGUserByTelegramID(telegramID)
+	if userErr != nil {
 		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
 		return
 	}
@@ -27,6 +28,18 @@ func (tbm *TelegramBotManager) handleChart(update tgbotapi.Update) {
 		tbm.sendMessage(chatID, "❌ 请先使用 /start 完成账号初始化")
 		return
 	}
+
+	// 推断用户时区（优先使用 DB 存储的 language_code，再尝试 Telegram 的语言，最终回退 UTC）
+	lang := ""
+	if userMap, ok := userAny.(map[string]interface{}); ok {
+		if lc, ok := userMap["language_code"].(string); ok {
+			lang = lc
+		}
+	}
+	if lang == "" && update.Message != nil && update.Message.From != nil {
+		lang = update.Message.From.LanguageCode
+	}
+	loc := inferLocationFromLanguage(lang)
 
 	// 解析参数
 	args := strings.Fields(strings.TrimSpace(update.Message.CommandArguments()))
@@ -96,7 +109,7 @@ func (tbm *TelegramBotManager) handleChart(update tgbotapi.Update) {
 	defer cancel()
 
 	gen := charts.NewGenerator()
-	png, err := gen.BuildKlinePNG(ctx, bnSymbol, interval, 150, entryPrice, stopLoss, takeProfit)
+	png, err := gen.BuildKlinePNG(ctx, bnSymbol, interval, 150, entryPrice, stopLoss, takeProfit, loc)
 	if err != nil {
 		log.Printf("生成图表失败: %v", err)
 		tbm.sendMessage(chatID, fmt.Sprintf("❌ 生成图表失败: %v", err))

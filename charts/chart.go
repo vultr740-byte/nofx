@@ -26,12 +26,15 @@ func NewGenerator() *Generator {
 
 // BuildKlinePNG 生成指定交易对的价格走势图，并可选叠加入场/止损/止盈水平线（<=0 表示不展示）。
 // interval: Binance 间隔（如 15m/1h），limit: K线数量。
-func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, limit int, entryPrice float64, stopLoss float64, takeProfit float64) ([]byte, error) {
+func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, limit int, entryPrice float64, stopLoss float64, takeProfit float64, loc *time.Location) ([]byte, error) {
 	if limit <= 0 {
 		limit = 150
 	}
 	if interval == "" {
 		interval = "15m"
+	}
+	if loc == nil {
+		loc = time.UTC
 	}
 
 	bnSymbol, ok := market.ToBinanceSymbol(symbol)
@@ -66,7 +69,7 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 	xTimes := make([]time.Time, 0, len(klines))
 	yVals := make([]float64, 0, len(klines))
 	for _, k := range klines {
-		t := time.UnixMilli(k.OpenTime)
+		t := time.UnixMilli(k.OpenTime).In(loc)
 		xTimes = append(xTimes, t)
 		yVals = append(yVals, k.Close)
 	}

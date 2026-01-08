@@ -1294,7 +1294,7 @@ func (tbm *TelegramBotManager) setupCommands() {
 		},
 		{
 			Command:     "chart",
-			Description: "📈 查看资产K线图",
+			Description: "📈 查看K线",
 		},
 		{
 			Command:     "orders",
