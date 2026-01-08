@@ -552,6 +552,12 @@ func Normalize(symbol string) string {
 	return strings.ToUpper(symbol)
 }
 
+// ToBinanceSymbol 将内部符号转换为 Binance 期货/现货使用的交易对格式。
+// 例如：BTC -> BTCUSDT；BTCUSDT -> BTCUSDT。
+func ToBinanceSymbol(symbol string) (string, bool) {
+	return toBinanceSymbol(symbol)
+}
+
 // toBinanceSymbol 将内部符号转换为 Binance 期货/现货使用的交易对格式。
 // 规则：
 // - 已含 USDT/USDC/BUSD/USD 后缀则直接返回（去除中划线）

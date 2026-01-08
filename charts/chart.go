@@ -34,6 +34,19 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 		interval = "15m"
 	}
 
+	bnSymbol, ok := market.ToBinanceSymbol(symbol)
+	if !ok {
+		return nil, fmt.Errorf("不支持的币种/交易对: %s", symbol)
+	}
+
+	displaySymbol := bnSymbol
+	for _, suffix := range []string{"USDT", "USDC", "BUSD", "USD"} {
+		if strings.HasSuffix(displaySymbol, suffix) {
+			displaySymbol = strings.TrimSuffix(displaySymbol, suffix)
+			break
+		}
+	}
+
 	formatPriceLabel := func(v float64) string {
 		s := fmt.Sprintf("%.4f", v)
 		s = strings.TrimRight(s, "0")
@@ -42,7 +55,7 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 	}
 
 	// 拉取 K 线（无 ctx 支持的原有接口，这里忽略 ctx 取消；接口超时由 client 控制）
-	klines, err := g.api.GetKlines(symbol, interval, limit)
+	klines, err := g.api.GetKlines(bnSymbol, interval, limit)
 	if err != nil {
 		return nil, fmt.Errorf("拉取K线失败: %w", err)
 	}
@@ -136,7 +149,7 @@ func (g *Generator) BuildKlinePNG(ctx context.Context, symbol, interval string, 
 	}
 
 	graph := chart.Chart{
-		Title: fmt.Sprintf("%s %s", symbol, interval),
+		Title: fmt.Sprintf("%s %s", displaySymbol, interval),
 		TitleStyle: chart.Style{
 			FontColor: text,
 			FontSize:  14,

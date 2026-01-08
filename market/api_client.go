@@ -48,6 +48,11 @@ func (c *APIClient) GetExchangeInfo() (*ExchangeInfo, error) {
 }
 
 func (c *APIClient) GetKlines(symbol, interval string, limit int) ([]Kline, error) {
+	bnSymbol, ok := toBinanceSymbol(symbol)
+	if !ok {
+		return nil, fmt.Errorf("unsupported binance symbol: %s", symbol)
+	}
+
 	url := fmt.Sprintf("%s/fapi/v1/klines", baseURL)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -55,7 +60,7 @@ func (c *APIClient) GetKlines(symbol, interval string, limit int) ([]Kline, erro
 	}
 
 	q := req.URL.Query()
-	q.Add("symbol", symbol)
+	q.Add("symbol", bnSymbol)
 	q.Add("interval", interval)
 	q.Add("limit", strconv.Itoa(limit))
 	req.URL.RawQuery = q.Encode()

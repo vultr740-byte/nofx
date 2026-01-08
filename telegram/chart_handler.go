@@ -10,6 +10,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"nofx/charts"
+	"nofx/market"
 )
 
 // handleChart 处理 /chart 命令，格式：/chart SYMBOL [interval]
@@ -30,10 +31,24 @@ func (tbm *TelegramBotManager) handleChart(update tgbotapi.Update) {
 	// 解析参数
 	args := strings.Fields(strings.TrimSpace(update.Message.CommandArguments()))
 	if len(args) == 0 {
-		tbm.sendMessage(chatID, "用法: /chart BTCUSDT [interval]，例如 /chart BTCUSDT 15m")
+		tbm.sendMessage(chatID, "用法: /chart BTC [interval]，例如 /chart BTC 15m")
 		return
 	}
-	symbol := strings.ToUpper(args[0])
+
+	rawSymbol := strings.ToUpper(strings.TrimSpace(args[0]))
+	bnSymbol, ok := market.ToBinanceSymbol(rawSymbol)
+	if !ok {
+		tbm.sendMessage(chatID, "❌ 不支持的币种/交易对（目前仅支持 Binance 可交易的加密资产），示例：/chart BTC 15m")
+		return
+	}
+	asset := bnSymbol
+	for _, suffix := range []string{"USDT", "USDC", "BUSD", "USD"} {
+		if strings.HasSuffix(asset, suffix) {
+			asset = strings.TrimSuffix(asset, suffix)
+			break
+		}
+	}
+
 	interval := "15m"
 	if len(args) >= 2 {
 		interval = strings.ToLower(args[1])
@@ -46,7 +61,7 @@ func (tbm *TelegramBotManager) handleChart(update tgbotapi.Update) {
 	var takeProfit float64
 	// 优先运行中的交易员
 	if at, err := tbm.tgTraderMgr.GetRunningTrader(telegramID); err == nil && at != nil {
-		if ep, side, sl, tp := GetPositionLevelsFromTrader(at, symbol); ep > 0 || sl > 0 || tp > 0 {
+		if ep, side, sl, tp := GetPositionLevelsFromTrader(at, bnSymbol); ep > 0 || sl > 0 || tp > 0 {
 			entryPrice = ep
 			entrySide = side
 			stopLoss = sl
@@ -57,7 +72,7 @@ func (tbm *TelegramBotManager) handleChart(update tgbotapi.Update) {
 	if entryPrice == 0 || (stopLoss == 0 && takeProfit == 0) {
 		if agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID); err == nil {
 			if _, positions, err := tbm.hlService.GetPositionsWithData(agentKey, walletAddr, tbm.testnet); err == nil {
-				if ep, side, sl, tp := findPositionInPositions(positions, symbol); ep > 0 || sl > 0 || tp > 0 {
+				if ep, side, sl, tp := findPositionInPositions(positions, bnSymbol); ep > 0 || sl > 0 || tp > 0 {
 					if entryPrice == 0 {
 						entryPrice = ep
 					}
@@ -75,22 +90,22 @@ func (tbm *TelegramBotManager) handleChart(update tgbotapi.Update) {
 		}
 	}
 
-	tbm.sendMessage(chatID, fmt.Sprintf("🔄 正在生成 %s %s 价格走势图...", symbol, interval))
+	tbm.sendMessage(chatID, fmt.Sprintf("🔄 正在生成 %s %s 价格走势图...", asset, interval))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	gen := charts.NewGenerator()
-	png, err := gen.BuildKlinePNG(ctx, symbol, interval, 150, entryPrice, stopLoss, takeProfit)
+	png, err := gen.BuildKlinePNG(ctx, bnSymbol, interval, 150, entryPrice, stopLoss, takeProfit)
 	if err != nil {
 		log.Printf("生成图表失败: %v", err)
 		tbm.sendMessage(chatID, fmt.Sprintf("❌ 生成图表失败: %v", err))
 		return
 	}
 
-	photo := tgbotapi.FileBytes{Bytes: png, Name: fmt.Sprintf("%s_%s.png", symbol, interval)}
+	photo := tgbotapi.FileBytes{Bytes: png, Name: fmt.Sprintf("%s_%s.png", asset, interval)}
 	msg := tgbotapi.NewPhoto(chatID, photo)
-	msg.Caption = fmt.Sprintf("%s %s 价格走势", symbol, interval)
+	msg.Caption = fmt.Sprintf("%s %s 价格走势", asset, interval)
 	if entryPrice > 0 {
 		msg.Caption += fmt.Sprintf("\n入场价: %.4f%s", entryPrice, sideText(entrySide))
 	}
