@@ -2072,14 +2072,24 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, act
 	posKey := decision.Symbol + "_long"
 	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
+	// 使用实际持仓数量设置 TP/SL（避免 IOC 部分成交/精度量化导致的残留仓位 dust）
+	tpSlQuantity := quantity
+	if q, ok := at.getActualPositionSize(decision.Symbol, "long"); ok && q > 0 {
+		tpSlQuantity = q
+		actionRecord.Quantity = q
+		log.Printf("  📏 TP/SL 使用实际持仓数量: %.8f (原请求: %.8f)", tpSlQuantity, quantity)
+	} else {
+		log.Printf("  ⚠️ 未获取到实际持仓数量，TP/SL 回退使用请求数量: %.8f", quantity)
+	}
+
 	if !at.config.DisableRiskControls {
 		if decision.StopLoss > 0 {
-			if err := at.trader.SetStopLoss(formattedSymbol, "LONG", quantity, decision.StopLoss); err != nil {
+			if err := at.trader.SetStopLoss(formattedSymbol, "LONG", tpSlQuantity, decision.StopLoss); err != nil {
 				log.Printf("  ⚠ 设置止损失败: %v", err)
 			}
 		}
 		if decision.TakeProfit > 0 {
-			if err := at.trader.SetTakeProfit(formattedSymbol, "LONG", quantity, decision.TakeProfit); err != nil {
+			if err := at.trader.SetTakeProfit(formattedSymbol, "LONG", tpSlQuantity, decision.TakeProfit); err != nil {
 				log.Printf("  ⚠ 设置止盈失败: %v", err)
 			}
 		}
@@ -2168,14 +2178,24 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, ac
 	posKey := decision.Symbol + "_short"
 	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
+	// 使用实际持仓数量设置 TP/SL（避免 IOC 部分成交/精度量化导致的残留仓位 dust）
+	tpSlQuantity := quantity
+	if q, ok := at.getActualPositionSize(decision.Symbol, "short"); ok && q > 0 {
+		tpSlQuantity = q
+		actionRecord.Quantity = q
+		log.Printf("  📏 TP/SL 使用实际持仓数量: %.8f (原请求: %.8f)", tpSlQuantity, quantity)
+	} else {
+		log.Printf("  ⚠️ 未获取到实际持仓数量，TP/SL 回退使用请求数量: %.8f", quantity)
+	}
+
 	if !at.config.DisableRiskControls {
 		if decision.StopLoss > 0 {
-			if err := at.trader.SetStopLoss(formattedSymbol, "SHORT", quantity, decision.StopLoss); err != nil {
+			if err := at.trader.SetStopLoss(formattedSymbol, "SHORT", tpSlQuantity, decision.StopLoss); err != nil {
 				log.Printf("  ⚠ 设置止损失败: %v", err)
 			}
 		}
 		if decision.TakeProfit > 0 {
-			if err := at.trader.SetTakeProfit(formattedSymbol, "SHORT", quantity, decision.TakeProfit); err != nil {
+			if err := at.trader.SetTakeProfit(formattedSymbol, "SHORT", tpSlQuantity, decision.TakeProfit); err != nil {
 				log.Printf("  ⚠ 设置止盈失败: %v", err)
 			}
 		}
@@ -3021,6 +3041,39 @@ func matchPositionSymbol(posSymbol, targetSymbol string) bool {
 		}
 	}
 	return false
+}
+
+// getActualPositionSize 获取当前实际持仓数量（绝对值），用于设置 TP/SL size。
+// 主要用于规避：IOC 部分成交、以及 float64 精度量化导致的 “少一档” 产生 dust。
+func (at *AutoTrader) getActualPositionSize(symbol string, side string) (float64, bool) {
+	const (
+		maxAttempts  = 2
+		attemptDelay = 300 * time.Millisecond
+	)
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		positions, err := at.trader.GetPositions()
+		if err == nil {
+			for _, pos := range positions {
+				posSymbol, _ := pos["symbol"].(string)
+				posSide, _ := pos["side"].(string)
+				if !matchPositionSymbol(posSymbol, symbol) {
+					continue
+				}
+				if side != "" && strings.ToLower(posSide) != strings.ToLower(side) {
+					continue
+				}
+				if q, ok := pos["positionAmt"].(float64); ok && q > 0 {
+					return q, true
+				}
+			}
+		}
+		if attempt < maxAttempts-1 {
+			time.Sleep(attemptDelay)
+		}
+	}
+
+	return 0, false
 }
 
 // 启动回撤监控

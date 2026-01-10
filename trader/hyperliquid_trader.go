@@ -2736,8 +2736,11 @@ func (t *HyperliquidTrader) SetStopLoss(symbol string, positionSide string, quan
 	isBuy := positionSide == "SHORT" // 空仓止损=买入，多仓止损=卖出
 	slCloid := t.buildCloid(symbol, "sl")
 
-	// ⚠️ 关键：根据币种精度要求，四舍五入数量
-	roundedQuantity := t.roundToSzDecimals(coin, quantity)
+	// ⚠️ 关键：数量吸附到最近 tick，避免 float64 误差导致少一档（留下 dust）
+	roundedQuantity := t.roundToSzDecimalsNearest(coin, quantity)
+	if roundedQuantity <= 0 {
+		return fmt.Errorf("设置止损失败: 无效数量(%.8f)", roundedQuantity)
+	}
 
 	// ⚠️ 关键：价格精度处理
 	roundedStopPrice := t.roundPriceForCoin(coin, stopPrice, false)
@@ -2775,8 +2778,11 @@ func (t *HyperliquidTrader) SetTakeProfit(symbol string, positionSide string, qu
 
 	isBuy := positionSide == "SHORT" // 空仓止盈=买入，多仓止盈=卖出
 
-	// ⚠️ 关键：根据币种精度要求，四舍五入数量
-	roundedQuantity := t.roundToSzDecimals(coin, quantity)
+	// ⚠️ 关键：数量吸附到最近 tick，避免 float64 误差导致少一档（留下 dust）
+	roundedQuantity := t.roundToSzDecimalsNearest(coin, quantity)
+	if roundedQuantity <= 0 {
+		return fmt.Errorf("设置止盈失败: 无效数量(%.8f)", roundedQuantity)
+	}
 
 	// ⚠️ 关键：价格精度处理
 	roundedTakeProfitPrice := t.roundPriceForCoin(coin, takeProfitPrice, false)
@@ -2884,31 +2890,65 @@ func (t *HyperliquidTrader) GetAllAssets() ([]interface{}, error) {
 	return result, nil
 }
 
-// roundToSzDecimals 将数量四舍五入到正确的精度
-func (t *HyperliquidTrader) roundToSzDecimals(coin string, quantity float64) float64 {
-	szDecimals := t.getSzDecimals(coin)
+type szQuantizeMode int
 
-	// 计算倍数（10^szDecimals）
-	multiplier := 1.0
-	for i := 0; i < szDecimals; i++ {
-		multiplier *= 10.0
+const (
+	szQuantizeModeFloor szQuantizeMode = iota
+	szQuantizeModeCeil
+	szQuantizeModeRoundNearest
+)
+
+// quantizeSz 将数量量化到 szDecimals 对应的步长，并处理浮点误差：
+// 例如 0.0048 在 float64 表达为 0.00479999...，直接 floor 会误变成 0.0047。
+func (t *HyperliquidTrader) quantizeSz(coin string, quantity float64, mode szQuantizeMode) float64 {
+	szDecimals := t.getSzDecimals(coin)
+	if quantity == 0 {
+		return 0
 	}
 
-	// 截断到步长，避免向上取整导致无效数量
-	return math.Floor(quantity*multiplier) / multiplier
+	sign := 1.0
+	if quantity < 0 {
+		sign = -1.0
+		quantity = -quantity
+	}
+
+	multiplier := math.Pow10(szDecimals)
+	ticks := quantity * multiplier
+
+	// 对“非常接近整数 tick”的情况做吸附，避免 float64 误差导致 off-by-one。
+	nearest := math.Round(ticks)
+	const tickEps = 1e-9
+	if math.Abs(ticks-nearest) <= tickEps {
+		ticks = nearest
+	} else {
+		switch mode {
+		case szQuantizeModeFloor:
+			ticks = math.Floor(ticks)
+		case szQuantizeModeCeil:
+			ticks = math.Ceil(ticks)
+		case szQuantizeModeRoundNearest:
+			ticks = math.Round(ticks)
+		default:
+			ticks = math.Floor(ticks)
+		}
+	}
+
+	return sign * (ticks / multiplier)
 }
 
-// roundToSzDecimalsCeil 将数量向上取整到步长，避免平仓时截断留下残余
+// roundToSzDecimals 将数量向下量化到步长（并对接近整数 tick 的情况做吸附）。
+func (t *HyperliquidTrader) roundToSzDecimals(coin string, quantity float64) float64 {
+	return t.quantizeSz(coin, quantity, szQuantizeModeFloor)
+}
+
+// roundToSzDecimalsCeil 将数量向上量化到步长，避免平仓时截断留下残余。
 func (t *HyperliquidTrader) roundToSzDecimalsCeil(coin string, quantity float64) float64 {
-	szDecimals := t.getSzDecimals(coin)
+	return t.quantizeSz(coin, quantity, szQuantizeModeCeil)
+}
 
-	// 计算倍数（10^szDecimals）
-	multiplier := 1.0
-	for i := 0; i < szDecimals; i++ {
-		multiplier *= 10.0
-	}
-
-	return math.Ceil(quantity*multiplier) / multiplier
+// roundToSzDecimalsNearest 将数量吸附到最近的 tick（用户指定部分数量时也按最近 tick 处理）。
+func (t *HyperliquidTrader) roundToSzDecimalsNearest(coin string, quantity float64) float64 {
+	return t.quantizeSz(coin, quantity, szQuantizeModeRoundNearest)
 }
 
 // getPxDecimals 计算价格允许的小数位（遵循官方 Tick & Lot 规则）并标记来源
