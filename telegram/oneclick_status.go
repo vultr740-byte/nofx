@@ -49,7 +49,7 @@ func (tbm *TelegramBotManager) handleDepositStatus(update tgbotapi.Update) {
 		}
 	}
 
-	tbm.sendOneClickDepositStatus(chatID, depositAddress, depositMemo)
+	tbm.sendOneClickDepositStatus(chatID, telegramID, depositAddress, depositMemo)
 }
 
 func (tbm *TelegramBotManager) handleDepositStatusLastCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
@@ -72,10 +72,10 @@ func (tbm *TelegramBotManager) handleDepositStatusLastCallback(callback *tgbotap
 		return
 	}
 
-	tbm.sendOneClickDepositStatus(chatID, depositAddress, depositMemo)
+	tbm.sendOneClickDepositStatus(chatID, telegramID, depositAddress, depositMemo)
 }
 
-func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, depositAddress string, depositMemo string) {
+func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, telegramID int64, depositAddress string, depositMemo string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -158,4 +158,16 @@ func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, depositAd
 		esc(amountOut),
 	)
 	tbm.sendMessage(chatID, msg)
+
+	// 自动触发一次 Arbitrum -> Hyperliquid 充值（避免用户还要再点 /balance）
+	if statusUpper == "SUCCESS" {
+		if tbm.arbService == nil {
+			return
+		}
+		agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID)
+		if err != nil {
+			return
+		}
+		go tbm.tryAutoBridge(telegramID, chatID, agentKey, walletAddr)
+	}
 }
