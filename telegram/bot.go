@@ -934,12 +934,6 @@ func (tbm *TelegramBotManager) handleRegularMessage(update tgbotapi.Update) {
 		return
 	}
 
-	// 处理跨链充值流程
-	if session.State == StateDepositInputAmount || session.State == StateDepositInputRefund {
-		tbm.handleOneClickDepositInput(update, session)
-		return
-	}
-
 	if session.State != StateIdle {
 		prevState := session.State
 
@@ -2529,10 +2523,8 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleDepositChainPageCallback(callback, chatID, telegramID, parts)
 	case "deposit_chain":
 		tbm.handleDepositChainSelectCallback(callback, chatID, telegramID, parts)
-	case "deposit_refund_same":
-		tbm.handleDepositRefundSameCallback(callback, chatID, telegramID)
-	case "deposit_quote_confirm":
-		tbm.handleDepositQuoteConfirmCallback(callback, chatID, telegramID)
+	case "deposit_status_last":
+		tbm.handleDepositStatusLastCallback(callback, chatID, telegramID)
 	case "deposit_cancel":
 		tbm.handleDepositCancelCallback(callback, chatID, telegramID)
 	default:

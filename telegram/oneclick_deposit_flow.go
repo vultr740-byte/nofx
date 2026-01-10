@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"math/big"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,29 +16,14 @@ import (
 const (
 	oneClickParamWalletAddr       = "oneclick_wallet_addr"
 	oneClickParamOriginChain      = "oneclick_origin_chain"
-	oneClickParamOriginAsset      = "oneclick_origin_asset"
-	oneClickParamOriginDecimals   = "oneclick_origin_decimals"
 	oneClickParamDestinationAsset = "oneclick_destination_asset"
-	oneClickParamAmountHuman      = "oneclick_amount_human"
-	oneClickParamAmountBase       = "oneclick_amount_base"
-	oneClickParamRefundTo         = "oneclick_refund_to"
-	oneClickParamDepositMode      = "oneclick_deposit_mode"
-	oneClickParamDryOutFmt        = "oneclick_dry_amount_out_fmt"
-	oneClickParamDryTimeEstimate  = "oneclick_dry_time_estimate"
+
+	oneClickParamLastDepositAddress = "oneclick_last_deposit_addr"
+	oneClickParamLastDepositMemo    = "oneclick_last_deposit_memo"
+	oneClickParamLastDepositChain   = "oneclick_last_deposit_chain"
 )
 
-var oneClickAmountRe = regexp.MustCompile(`(?i)([0-9]+(?:\\.[0-9]+)?)`)
-
-type oneClickOutBelowMinError struct {
-	AmountOut string
-}
-
-func (e oneClickOutBelowMinError) Error() string {
-	if strings.TrimSpace(e.AmountOut) == "" {
-		return "预计到账不足 20 USDC"
-	}
-	return fmt.Sprintf("预计到账不足 20 USDC（%s）", strings.TrimSpace(e.AmountOut))
-}
+const oneClickMinDepositUSDC = "20"
 
 func chainDisplayName(chain string) string {
 	switch strings.ToLower(strings.TrimSpace(chain)) {
@@ -119,6 +103,9 @@ func (tbm *TelegramBotManager) sendOneClickChainSelection(chatID int64, telegram
 
 	chains := make([]string, 0, len(chainToToken))
 	for chain := range chainToToken {
+		if !isEVMChain(chain) {
+			continue
+		}
 		// Arbitrum 作为目标链，仍允许选择，但 UI 上建议直充
 		chains = append(chains, chain)
 	}
@@ -177,6 +164,10 @@ func (tbm *TelegramBotManager) sendOneClickChainSelection(chatID int64, telegram
 	msg := fmt.Sprintf(`🌐 跨链充值 USDC（NEAR Intents 1Click）
 
 请选择你要转出 USDC 的来源网络。
+
+说明：
+• 目前仅支持 EVM 网络（如 Ethereum/Base/OP/Polygon/BSC/Avalanche 等）
+• 暂不支持 Solana/Stellar/NEAR/Sui 等非 EVM 网络
 
 最终到账网络：Arbitrum（自动充值到 Hyperliquid 仍需 /balance 触发）
 页码：%d/%d`, page+1, totalPages)
@@ -258,14 +249,9 @@ func (tbm *TelegramBotManager) handleDepositCrossChainCallback(callback *tgbotap
 
 	// 清理上一次残留参数
 	delete(params, oneClickParamOriginChain)
-	delete(params, oneClickParamOriginAsset)
-	delete(params, oneClickParamOriginDecimals)
-	delete(params, oneClickParamAmountHuman)
-	delete(params, oneClickParamAmountBase)
-	delete(params, oneClickParamRefundTo)
-	delete(params, oneClickParamDepositMode)
-	delete(params, oneClickParamDryOutFmt)
-	delete(params, oneClickParamDryTimeEstimate)
+	delete(params, oneClickParamLastDepositChain)
+	delete(params, oneClickParamLastDepositAddress)
+	delete(params, oneClickParamLastDepositMemo)
 
 	session.State = StateIdle
 	sessionMgr.UpdateSessionState(telegramID, StateIdle)
@@ -285,7 +271,7 @@ func (tbm *TelegramBotManager) handleDepositChainPageCallback(callback *tgbotapi
 }
 
 func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
-	tbm.answerCallbackQuery(callback.ID, "请输入金额")
+	tbm.answerCallbackQuery(callback.ID, "⏳ 生成充值地址中...")
 	if len(parts) < 3 {
 		tbm.sendMessage(chatID, "❌ 网络参数错误")
 		return
@@ -295,6 +281,11 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
 	session := sessionMgr.GetOrCreateSession(telegramID)
 	params := tbm.ensureSessionParams(session)
+
+	if !isEVMChain(originChain) {
+		tbm.sendMessage(chatID, "❌ 当前仅支持 EVM 网络的 USDC 跨链充值，请重新选择")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -321,108 +312,37 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 		return
 	}
 
-	params[oneClickParamOriginChain] = originChain
-	params[oneClickParamOriginAsset] = originTok.AssetID
-	params[oneClickParamOriginDecimals] = originTok.Decimals
-
-	// 切换链后重置后续参数
-	delete(params, oneClickParamAmountHuman)
-	delete(params, oneClickParamAmountBase)
-	delete(params, oneClickParamRefundTo)
-	delete(params, oneClickParamDepositMode)
-	delete(params, oneClickParamDryOutFmt)
-	delete(params, oneClickParamDryTimeEstimate)
-
-	session.State = StateDepositInputAmount
-	sessionMgr.UpdateSessionState(telegramID, StateDepositInputAmount)
-	sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
-
-	tbm.sendMessage(chatID, fmt.Sprintf(`✅ 已选择来源网络：%s
-
-请输入充值金额（USDC），例如 50 或 50.5。
-
-提示：
-• 跨链存在费用，建议最终到账 ≥ 20 USDC
-• 输入 cancel 可取消`, esc(chainDisplayName(originChain))))
-}
-
-func (tbm *TelegramBotManager) handleDepositRefundSameCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
-	tbm.answerCallbackQuery(callback.ID, "使用钱包地址")
-
-	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
-	session := sessionMgr.GetOrCreateSession(telegramID)
-	params := tbm.ensureSessionParams(session)
 	walletAddr, _ := params[oneClickParamWalletAddr].(string)
-	if walletAddr == "" {
-		tbm.sendMessage(chatID, "❌ 未找到钱包地址，请重新使用 /deposit")
-		return
-	}
-
-	params[oneClickParamRefundTo] = walletAddr
-
-	if err := tbm.previewOneClickQuote(chatID, telegramID, session); err != nil {
-		if below, ok := err.(oneClickOutBelowMinError); ok {
-			session.State = StateDepositInputAmount
-			sessionMgr.UpdateSessionState(telegramID, StateDepositInputAmount)
-			sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
-			tbm.sendMessage(chatID, fmt.Sprintf("⚠️ %s\n\n请提高充值金额后重试（例如 21+）。", esc(below.Error())))
+	if strings.TrimSpace(walletAddr) == "" {
+		_, extractedWallet, err := tbm.extractAgentKeyAndWallet(telegramID)
+		if err != nil {
+			tbm.sendMessage(chatID, "❌ 获取钱包地址失败，请稍后重试")
 			return
 		}
-		tbm.sendMessage(chatID, fmt.Sprintf("❌ 获取报价失败: %s", esc(err)))
-		return
+		walletAddr = extractedWallet
+		params[oneClickParamWalletAddr] = walletAddr
 	}
 
-	session.State = StateDepositConfirmX
-	sessionMgr.UpdateSessionState(telegramID, StateDepositConfirmX)
-	sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
-}
-
-func (tbm *TelegramBotManager) handleDepositQuoteConfirmCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
-	tbm.answerCallbackQuery(callback.ID, "⏳ 生成中...")
-
-	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
-	session := sessionMgr.GetOrCreateSession(telegramID)
-	params := tbm.ensureSessionParams(session)
-
-	originChain, _ := params[oneClickParamOriginChain].(string)
-	originAsset, _ := params[oneClickParamOriginAsset].(string)
-	destAsset, _ := params[oneClickParamDestinationAsset].(string)
-	amountHuman, _ := params[oneClickParamAmountHuman].(string)
-	amountBase, _ := params[oneClickParamAmountBase].(string)
-	refundTo, _ := params[oneClickParamRefundTo].(string)
-	walletAddr, _ := params[oneClickParamWalletAddr].(string)
-
-	if originAsset == "" || destAsset == "" || amountBase == "" || refundTo == "" || walletAddr == "" {
-		tbm.sendMessage(chatID, "❌ 缺少参数，请重新使用 /deposit")
-		sessionMgr.ClearSession(telegramID)
+	amountBase, err := decimalToBaseUnits(oneClickMinDepositUSDC, originTok.Decimals)
+	if err != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 生成最小充值金额失败: %s", esc(err)))
 		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	swapType := "EXACT_INPUT"
-	if tbm.oneClickUseFlexInputSwap {
-		swapType = "FLEX_INPUT"
 	}
 
 	req := oneClickQuoteRequest{
 		Dry:               false,
-		SwapType:          swapType,
+		SwapType:          "FLEX_INPUT",
 		SlippageTolerance: tbm.oneClickSlippageBps,
-		OriginAsset:       originAsset,
+		OriginAsset:       originTok.AssetID,
 		DepositType:       "ORIGIN_CHAIN",
 		DestinationAsset:  destAsset,
 		Amount:            amountBase,
-		RefundTo:          refundTo,
+		RefundTo:          walletAddr,
 		RefundType:        "ORIGIN_CHAIN",
 		Recipient:         walletAddr,
 		RecipientType:     "DESTINATION_CHAIN",
 		Deadline:          time.Now().UTC().Add(tbm.oneClickDeadline).Format(time.RFC3339),
 		QuoteWaitingTime:  tbm.oneClickQuoteWaitMs,
-	}
-	if mode, ok := params[oneClickParamDepositMode].(string); ok && strings.TrimSpace(mode) != "" {
-		req.DepositMode = strings.TrimSpace(mode)
 	}
 
 	resp, err := tbm.oneClick.RequestQuote(ctx, req)
@@ -438,6 +358,15 @@ func (tbm *TelegramBotManager) handleDepositQuoteConfirmCallback(callback *tgbot
 		return
 	}
 
+	params[oneClickParamOriginChain] = originChain
+	params[oneClickParamLastDepositChain] = originChain
+	params[oneClickParamLastDepositAddress] = depositAddr
+	params[oneClickParamLastDepositMemo] = depositMemo
+
+	session.State = StateIdle
+	sessionMgr.UpdateSessionState(telegramID, StateIdle)
+	sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
+
 	memoLine := ""
 	if depositMemo != "" {
 		memoLine = fmt.Sprintf("\n充值 Memo:\n<code>%s</code>", esc(depositMemo))
@@ -446,243 +375,48 @@ func (tbm *TelegramBotManager) handleDepositQuoteConfirmCallback(callback *tgbot
 	msg := fmt.Sprintf(`✅ 跨链充值地址已生成
 
 来源网络：%s
-充值金额：%s USDC
+最小充值：%s USDC
 
-请将 USDC 转账到以下地址：
+请从【%s】网络将 USDC 转账到以下地址：
 <code>%s</code>%s
 
 最终收款地址（Arbitrum）：
 <code>%s</code>
 
-📦 查询状态：
-/deposit_status %s%s
-
 💡 到账后执行 /balance，可触发自动充值到 Hyperliquid（若已启用）。`,
 		esc(chainDisplayName(originChain)),
-		esc(amountHuman),
+		esc(oneClickMinDepositUSDC),
+		esc(chainDisplayName(originChain)),
 		esc(depositAddr),
 		memoLine,
 		esc(walletAddr),
-		esc(depositAddr),
-		func() string {
-			if depositMemo == "" {
-				return ""
-			}
-			return " " + esc(depositMemo)
-		}(),
-	)
-	tbm.sendMessage(chatID, msg)
-
-	sessionMgr.ClearSession(telegramID)
-}
-
-func (tbm *TelegramBotManager) handleDepositCancelCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
-	tbm.answerCallbackQuery(callback.ID, "已取消")
-	tbm.tgTraderMgr.GetSessionManager().ClearSession(telegramID)
-	tbm.sendMessage(chatID, "❌ 已取消")
-}
-
-func (tbm *TelegramBotManager) handleOneClickDepositInput(update tgbotapi.Update, session *UserSession) {
-	chatID := update.Message.Chat.ID
-	telegramID := update.Message.From.ID
-	input := strings.TrimSpace(update.Message.Text)
-
-	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
-
-	if strings.EqualFold(input, "cancel") || input == "取消" {
-		sessionMgr.ClearSession(telegramID)
-		tbm.sendMessage(chatID, "❌ 已取消跨链充值")
-		return
-	}
-
-	params := tbm.ensureSessionParams(session)
-
-	switch session.State {
-	case StateDepositInputAmount:
-		originDecimalsAny, ok := params[oneClickParamOriginDecimals]
-		if !ok {
-			sessionMgr.ClearSession(telegramID)
-			tbm.sendMessage(chatID, "❌ 会话已过期，请重新使用 /deposit")
-			return
-		}
-		originDecimals, _ := originDecimalsAny.(int)
-		if originDecimals == 0 {
-			// 兼容 json.Number 或 float64
-			if f, ok := originDecimalsAny.(float64); ok {
-				originDecimals = int(f)
-			}
-		}
-
-		num := oneClickAmountRe.FindStringSubmatch(input)
-		if len(num) < 2 {
-			tbm.sendMessage(chatID, "❌ 未识别到金额，请输入例如 50 或 50.5（USDC）。输入 cancel 取消。")
-			return
-		}
-		amountHuman := num[1]
-		amountBase, err := decimalToBaseUnits(amountHuman, originDecimals)
-		if err != nil {
-			tbm.sendMessage(chatID, fmt.Sprintf("❌ 金额格式错误: %s", esc(err)))
-			return
-		}
-
-		params[oneClickParamAmountHuman] = amountHuman
-		params[oneClickParamAmountBase] = amountBase
-
-		session.State = StateDepositInputRefund
-		sessionMgr.UpdateSessionState(telegramID, StateDepositInputRefund)
-		sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
-
-		originChain, _ := params[oneClickParamOriginChain].(string)
-		walletAddr, _ := params[oneClickParamWalletAddr].(string)
-		if isEVMChain(originChain) && walletAddr != "" {
-			text := fmt.Sprintf(`请输入退款地址（仅在 swap 失败时退款到此地址）
-
-• 来源网络：%s
-• 你也可以点击按钮使用你的钱包地址作为退款地址
-• 输入 cancel 可取消`, esc(chainDisplayName(originChain)))
-
-			keyboard := tgbotapi.NewInlineKeyboardMarkup(
-				tgbotapi.NewInlineKeyboardRow(
-					tgbotapi.NewInlineKeyboardButtonData("使用我的钱包地址", fmt.Sprintf("deposit_refund_same|%d", telegramID)),
-				),
-				tgbotapi.NewInlineKeyboardRow(
-					tgbotapi.NewInlineKeyboardButtonData("❌ 取消", fmt.Sprintf("deposit_cancel|%d", telegramID)),
-				),
-			)
-			tbm.sendMessageWithInlineKeyboard(chatID, text, keyboard)
-			return
-		}
-
-		tbm.sendMessage(chatID, fmt.Sprintf(`请输入退款地址（仅在 swap 失败时退款到此地址）
-
-• 来源网络：%s
-• 输入 cancel 可取消`, esc(chainDisplayName(originChain))))
-
-	case StateDepositInputRefund:
-		walletAddr, _ := params[oneClickParamWalletAddr].(string)
-		if strings.EqualFold(input, "same") || strings.EqualFold(input, "同钱包") {
-			if walletAddr == "" {
-				tbm.sendMessage(chatID, "❌ 未找到钱包地址，请重新使用 /deposit")
-				return
-			}
-			input = walletAddr
-		}
-		params[oneClickParamRefundTo] = input
-
-		// 获取 dry quote 预览
-		if err := tbm.previewOneClickQuote(chatID, telegramID, session); err != nil {
-			if below, ok := err.(oneClickOutBelowMinError); ok {
-				session.State = StateDepositInputAmount
-				sessionMgr.UpdateSessionState(telegramID, StateDepositInputAmount)
-				sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
-				tbm.sendMessage(chatID, fmt.Sprintf("⚠️ %s\n\n请提高充值金额后重试（例如 21+）。", esc(below.Error())))
-				return
-			}
-			tbm.sendMessage(chatID, fmt.Sprintf("❌ 获取报价失败: %s", esc(err)))
-			// 回退到输入退款地址，方便用户修正
-			session.State = StateDepositInputRefund
-			sessionMgr.UpdateSessionState(telegramID, StateDepositInputRefund)
-			sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
-			return
-		}
-
-		session.State = StateDepositConfirmX
-		sessionMgr.UpdateSessionState(telegramID, StateDepositConfirmX)
-		sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
-
-	default:
-		sessionMgr.ClearSession(telegramID)
-		tbm.sendMessage(chatID, "❌ 会话已过期，请重新使用 /deposit")
-	}
-}
-
-func (tbm *TelegramBotManager) previewOneClickQuote(chatID int64, telegramID int64, session *UserSession) error {
-	params := tbm.ensureSessionParams(session)
-	originChain, _ := params[oneClickParamOriginChain].(string)
-	originAsset, _ := params[oneClickParamOriginAsset].(string)
-	destAsset, _ := params[oneClickParamDestinationAsset].(string)
-	amountHuman, _ := params[oneClickParamAmountHuman].(string)
-	amountBase, _ := params[oneClickParamAmountBase].(string)
-	refundTo, _ := params[oneClickParamRefundTo].(string)
-	walletAddr, _ := params[oneClickParamWalletAddr].(string)
-
-	if originAsset == "" || destAsset == "" || amountBase == "" || refundTo == "" || walletAddr == "" {
-		return fmt.Errorf("缺少参数，请重新使用 /deposit")
-	}
-
-	tbm.sendMessage(chatID, "🔄 正在获取跨链充值报价，请稍候...")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	swapType := "EXACT_INPUT"
-	if tbm.oneClickUseFlexInputSwap {
-		swapType = "FLEX_INPUT"
-	}
-
-	req := oneClickQuoteRequest{
-		Dry:               true,
-		SwapType:          swapType,
-		SlippageTolerance: tbm.oneClickSlippageBps,
-		OriginAsset:       originAsset,
-		DepositType:       "ORIGIN_CHAIN",
-		DestinationAsset:  destAsset,
-		Amount:            amountBase,
-		RefundTo:          refundTo,
-		RefundType:        "ORIGIN_CHAIN",
-		Recipient:         walletAddr,
-		RecipientType:     "DESTINATION_CHAIN",
-		Deadline:          time.Now().UTC().Add(tbm.oneClickDeadline).Format(time.RFC3339),
-		QuoteWaitingTime:  tbm.oneClickQuoteWaitMs,
-	}
-
-	if mode, ok := params[oneClickParamDepositMode].(string); ok && strings.TrimSpace(mode) != "" {
-		req.DepositMode = strings.TrimSpace(mode)
-	}
-
-	resp, err := tbm.oneClick.RequestQuote(ctx, req)
-	if err != nil {
-		return err
-	}
-
-	// 保存服务端最终使用的 depositMode，避免后续 confirm 再次踩到 stellar 的 MEMO 约束
-	if strings.TrimSpace(resp.QuoteRequest.DepositMode) != "" {
-		params[oneClickParamDepositMode] = resp.QuoteRequest.DepositMode
-	}
-	params[oneClickParamDryOutFmt] = resp.Quote.AmountOutFmt
-	params[oneClickParamDryTimeEstimate] = resp.Quote.TimeEstimateSec
-
-	// 若预计到账不足 20 USDC，提示用户提高金额（避免 Hyperliquid 最小充值限制）
-	if outOk, outRat := parseDecimal(resp.Quote.AmountOutFmt); outOk {
-		if outRat.Cmp(big.NewRat(20, 1)) < 0 {
-			return oneClickOutBelowMinError{AmountOut: resp.Quote.AmountOutFmt}
-		}
-	}
-
-	msg := fmt.Sprintf(`📌 跨链充值报价（USDC → Arbitrum USDC）
-
-来源网络：%s
-充值金额：%s USDC
-预计到账：%s USDC
-预计耗时：~%ds
-
-是否生成专属充值地址？`,
-		esc(chainDisplayName(originChain)),
-		esc(amountHuman),
-		esc(resp.Quote.AmountOutFmt),
-		resp.Quote.TimeEstimateSec,
 	)
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✅ 生成充值地址", fmt.Sprintf("deposit_quote_confirm|%d", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("📦 查看状态", fmt.Sprintf("deposit_status_last|%d", telegramID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("❌ 取消", fmt.Sprintf("deposit_cancel|%d", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("🔄 重新选择网络", fmt.Sprintf("deposit_xchain|%d", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("❌ 关闭", fmt.Sprintf("deposit_cancel|%d", telegramID)),
 		),
 	)
 	tbm.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
-	return nil
+}
+
+func (tbm *TelegramBotManager) handleDepositCancelCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	tbm.answerCallbackQuery(callback.ID, "已关闭")
+
+	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
+	session := sessionMgr.GetOrCreateSession(telegramID)
+	params := tbm.ensureSessionParams(session)
+	delete(params, oneClickParamOriginChain)
+
+	session.State = StateIdle
+	sessionMgr.UpdateSessionState(telegramID, StateIdle)
+	sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
+
+	tbm.sendMessage(chatID, "✅ 已关闭")
 }
 
 func decimalToBaseUnits(amount string, decimals int) (string, error) {
@@ -758,8 +492,7 @@ func (tbm *TelegramBotManager) logOneClickParams(prefix string, params map[strin
 		return
 	}
 	chain, _ := params[oneClickParamOriginChain].(string)
-	originAsset, _ := params[oneClickParamOriginAsset].(string)
 	destAsset, _ := params[oneClickParamDestinationAsset].(string)
-	amount, _ := params[oneClickParamAmountHuman].(string)
-	log.Printf("🔎 [%s] oneclick params: chain=%s origin=%s dest=%s amount=%s", prefix, chain, originAsset, destAsset, amount)
+	lastDeposit, _ := params[oneClickParamLastDepositAddress].(string)
+	log.Printf("🔎 [%s] oneclick params: chain=%s dest=%s lastDeposit=%s", prefix, chain, destAsset, lastDeposit)
 }

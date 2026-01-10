@@ -89,6 +89,16 @@ type oneClickStatusResponse struct {
 	Status        string                `json:"status"`
 	UpdatedAt     string                `json:"updatedAt"`
 	QuoteResponse oneClickQuoteResponse `json:"quoteResponse"`
+	SwapDetails   oneClickSwapDetails   `json:"swapDetails"`
+}
+
+type oneClickSwapDetails struct {
+	DepositedAmount          string `json:"depositedAmount"`
+	DepositedAmountFormatted string `json:"depositedAmountFormatted"`
+	AmountOut                string `json:"amountOut"`
+	AmountOutFormatted       string `json:"amountOutFormatted"`
+	RefundedAmount           string `json:"refundedAmount"`
+	RefundedAmountFormatted  string `json:"refundedAmountFormatted"`
 }
 
 func NewOneClickService(baseURL string, jwt string) *OneClickService {
