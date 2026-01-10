@@ -376,31 +376,13 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 	}
 
 	validityBlock := ""
-	validityLines := ""
-	if inactiveStr != "" {
-		state := "未知"
-		if t, ok := parseRFC3339Time(inactiveStr); ok {
-			if d := time.Until(t); d <= 0 {
-				state = "已冷却（处理可能更慢）"
-			} else {
-				state = "剩余 " + formatDurationCN(d)
-			}
+	if raw, t, ok := pickSoonerTime(deadlineStr, inactiveStr); ok {
+		remain := formatDurationCN(time.Until(t))
+		if remain == "已过期" {
+			validityBlock = fmt.Sprintf("\n\n🚫 <b>地址已失效</b>\n最迟转账时间：<code>%s</code>\n请重新使用 /deposit 生成新地址（不要再向旧地址转账）。", esc(raw))
+		} else {
+			validityBlock = fmt.Sprintf("\n\n🚨 <b>请尽快完成转账</b>\n最迟转账时间：<code>%s</code>（剩余 %s）\n超时请重新 /deposit 生成新地址。", esc(raw), esc(remain))
 		}
-		validityLines += fmt.Sprintf("\n• 冷却时间：%s（%s）", esc(inactiveStr), esc(state))
-	}
-	if deadlineStr != "" {
-		state := "未知"
-		if t, ok := parseRFC3339Time(deadlineStr); ok {
-			if d := time.Until(t); d <= 0 {
-				state = "已失效（请勿转账）"
-			} else {
-				state = "剩余 " + formatDurationCN(d)
-			}
-		}
-		validityLines += fmt.Sprintf("\n• 失效时间：%s（%s）", esc(deadlineStr), esc(state))
-	}
-	if validityLines != "" {
-		validityBlock = "\n\n⏳ 有效期：" + validityLines
 	}
 
 	msg := fmt.Sprintf(`✅ 跨链充值地址已生成

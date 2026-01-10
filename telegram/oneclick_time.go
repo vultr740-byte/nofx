@@ -20,6 +20,28 @@ func parseRFC3339Time(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+func pickSoonerTime(deadlineStr string, inactiveStr string) (string, time.Time, bool) {
+	deadlineStr = strings.TrimSpace(deadlineStr)
+	inactiveStr = strings.TrimSpace(inactiveStr)
+
+	deadlineT, okD := parseRFC3339Time(deadlineStr)
+	inactiveT, okI := parseRFC3339Time(inactiveStr)
+
+	switch {
+	case okD && okI:
+		if deadlineT.Before(inactiveT) || deadlineT.Equal(inactiveT) {
+			return deadlineStr, deadlineT, true
+		}
+		return inactiveStr, inactiveT, true
+	case okD:
+		return deadlineStr, deadlineT, true
+	case okI:
+		return inactiveStr, inactiveT, true
+	default:
+		return "", time.Time{}, false
+	}
+}
+
 func formatDurationCN(d time.Duration) string {
 	if d <= 0 {
 		return "已过期"
