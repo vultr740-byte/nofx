@@ -22,28 +22,33 @@ import (
 
 // TelegramBotManager Telegram Bot 管理器
 type TelegramBotManager struct {
-	bot           *tgbotapi.BotAPI
-	db            config.DatabaseInterface
-	hlService     *HyperliquidService
-	arbService    *ArbitrumService
-	debug         bool
-	testnet       bool
-	traderMgr     *manager.TraderManager
-	tgTraderMgr   *TelegramTraderManager
-	configWizard  *ConfigWizard
-	nlParser      *NLParser
-	cmdValidator  *CommandValidator
-	debugMu       sync.Mutex
-	stockCatCache map[int64][]StockCategory
-	ordersCache   map[int64][]OrderHistoryItem
-	gasSponsorKey string
-	gasSponsorWei *big.Int
-	gasProcMu     sync.Mutex
-	gasProcessing map[string]struct{}
-	mediaTextMu   sync.Mutex
-	mediaText     map[string]cachedMediaText
-	forwardMu     sync.Mutex
-	forwardSeen   map[string]time.Time
+	bot                      *tgbotapi.BotAPI
+	db                       config.DatabaseInterface
+	hlService                *HyperliquidService
+	arbService               *ArbitrumService
+	oneClick                 *OneClickService
+	debug                    bool
+	testnet                  bool
+	traderMgr                *manager.TraderManager
+	tgTraderMgr              *TelegramTraderManager
+	configWizard             *ConfigWizard
+	nlParser                 *NLParser
+	cmdValidator             *CommandValidator
+	debugMu                  sync.Mutex
+	stockCatCache            map[int64][]StockCategory
+	ordersCache              map[int64][]OrderHistoryItem
+	gasSponsorKey            string
+	gasSponsorWei            *big.Int
+	oneClickSlippageBps      int
+	oneClickDeadline         time.Duration
+	oneClickQuoteWaitMs      int
+	oneClickUseFlexInputSwap bool
+	gasProcMu                sync.Mutex
+	gasProcessing            map[string]struct{}
+	mediaTextMu              sync.Mutex
+	mediaText                map[string]cachedMediaText
+	forwardMu                sync.Mutex
+	forwardSeen              map[string]time.Time
 }
 
 func esc(v interface{}) string {
@@ -130,6 +135,26 @@ func NewTelegramBotManager(cfg *config.TelegramBotConfig, db config.DatabaseInte
 		ordersCache:   make(map[int64][]OrderHistoryItem),
 		gasSponsorKey: cfg.GasPayerPrivateKey,
 		gasProcessing: make(map[string]struct{}),
+		oneClick:      NewOneClickService(cfg.OneClickBaseURL, cfg.OneClickJWT),
+		oneClickSlippageBps: func() int {
+			if cfg.OneClickSlippageBps > 0 {
+				return cfg.OneClickSlippageBps
+			}
+			return 100
+		}(),
+		oneClickDeadline: func() time.Duration {
+			if cfg.OneClickDeadlineMinutes > 0 {
+				return time.Duration(cfg.OneClickDeadlineMinutes) * time.Minute
+			}
+			return 24 * time.Hour
+		}(),
+		oneClickQuoteWaitMs: func() int {
+			if cfg.OneClickQuoteWaitTimeMs > 0 {
+				return cfg.OneClickQuoteWaitTimeMs
+			}
+			return 3000
+		}(),
+		oneClickUseFlexInputSwap: cfg.OneClickUseFlexInputSwap,
 	}
 
 	if cfg.GasSponsorshipETH > 0 {
@@ -231,6 +256,8 @@ func (tbm *TelegramBotManager) handleCommand(update tgbotapi.Update) {
 		tbm.handleOrders(update)
 	case "deposit":
 		tbm.handleDeposit(update)
+	case "deposit_status":
+		tbm.handleDepositStatus(update)
 	case "create_trader":
 		tbm.handleCreateTrader(update)
 	case "start_trader":
@@ -308,6 +335,7 @@ func (tbm *TelegramBotManager) handleHelp(update tgbotapi.Update) {
 /balance - 查看您的账户余额（现货 + 合约）
 /positions - 查看当前持仓信息
 /deposit - 获取 USDC 充值地址
+/deposit_status - 查询跨链充值状态（需提供 depositAddress）
 /leaderboard - 查看交易员盈利排行榜
 
 🤖 AI Agent 管理:
@@ -720,21 +748,24 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 		return
 	}
 
-	// 生成充值消息（使用与首次创建相同的地址展示格式，方便复制）
-	depositMsg := fmt.Sprintf(`🏦 Hyperliquid 充值地址（Arbitrum 网络）
+	msg := fmt.Sprintf(`💳 USDC 充值
 
-<code>%s</code>（点击复制）
+你的钱包地址（最终收款地址）:
+<code>%s</code>
 
-📋 充值说明:
-• 网络: Arbitrum One
-• 最小充值: 20 USDC
-• 到账时间: 通常 2-5 分钟
+请选择充值方式:
+• Arbitrum 直充：从 Arbitrum USDC 直接转账到上面的地址
+• 跨链充值：从其他链的 USDC 跨链到 Arbitrum（NEAR Intents 1Click）`,
+		esc(walletAddr),
+	)
 
-⚠️ 注意事项:
-• 仅支持 Arbitrum 网络转账
-• 充值后可在 /balance 查看余额`, esc(walletAddr))
-
-	tbm.sendMessage(chatID, depositMsg)
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🟦 Arbitrum 直充", fmt.Sprintf("deposit_arb|%d", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("🌐 跨链充值 USDC", fmt.Sprintf("deposit_xchain|%d", telegramID)),
+		),
+	)
+	tbm.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
 }
 
 // handleMenu 处理 /menu 命令
@@ -900,6 +931,12 @@ func (tbm *TelegramBotManager) handleRegularMessage(update tgbotapi.Update) {
 	// 处理自定义 Prompt 编辑
 	if session.State == StateEditingCustomPrompt {
 		tbm.handleCustomPromptInput(update, session)
+		return
+	}
+
+	// 处理跨链充值流程
+	if session.State == StateDepositInputAmount || session.State == StateDepositInputRefund {
+		tbm.handleOneClickDepositInput(update, session)
 		return
 	}
 
@@ -1283,6 +1320,10 @@ func (tbm *TelegramBotManager) setupCommands() {
 		{
 			Command:     "deposit",
 			Description: "💳 充值",
+		},
+		{
+			Command:     "deposit_status",
+			Description: "📦 充值状态",
 		},
 		{
 			Command:     "balance",
@@ -2480,6 +2521,20 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleStocksCategoryCallback(callback, chatID, telegramID, parts)
 	case "orders_recent":
 		tbm.handleOrdersRecentCallback(callback, chatID, telegramID, parts)
+	case "deposit_arb":
+		tbm.handleDepositArbitrumCallback(callback, chatID, telegramID)
+	case "deposit_xchain":
+		tbm.handleDepositCrossChainCallback(callback, chatID, telegramID)
+	case "deposit_chain_page":
+		tbm.handleDepositChainPageCallback(callback, chatID, telegramID, parts)
+	case "deposit_chain":
+		tbm.handleDepositChainSelectCallback(callback, chatID, telegramID, parts)
+	case "deposit_refund_same":
+		tbm.handleDepositRefundSameCallback(callback, chatID, telegramID)
+	case "deposit_quote_confirm":
+		tbm.handleDepositQuoteConfirmCallback(callback, chatID, telegramID)
+	case "deposit_cancel":
+		tbm.handleDepositCancelCallback(callback, chatID, telegramID)
 	default:
 		log.Printf("❌ 未知动作: %s", action)
 		tbm.answerCallbackQuery(callback.ID, "未知操作")

@@ -17,6 +17,13 @@ type TelegramBotConfig struct {
 	ArbitrumRPCURL     string  `json:"arbitrum_rpc_url"`
 	ArbitrumChainID    int64   `json:"arbitrum_chain_id"`
 	ArbitrumUSDC       string  `json:"arbitrum_usdc"`
+
+	OneClickBaseURL          string `json:"oneclick_base_url"`
+	OneClickJWT              string `json:"oneclick_jwt"`
+	OneClickSlippageBps      int    `json:"oneclick_slippage_bps"`
+	OneClickDeadlineMinutes  int    `json:"oneclick_deadline_minutes"`
+	OneClickQuoteWaitTimeMs  int    `json:"oneclick_quote_wait_time_ms"`
+	OneClickUseFlexInputSwap bool   `json:"oneclick_use_flex_input_swap"`
 }
 
 // LoadTelegramBotConfig 加载 Telegram Bot 配置
@@ -31,6 +38,13 @@ func LoadTelegramBotConfig() *TelegramBotConfig {
 		ArbitrumRPCURL:     getEnvOrDefault("ARBITRUM_RPC_URL", ""),
 		ArbitrumChainID:    getEnvOrDefaultInt64("ARBITRUM_CHAIN_ID", 42161),
 		ArbitrumUSDC:       getEnvOrDefault("ARBITRUM_USDC", ""),
+
+		OneClickBaseURL:          getEnvOrDefault("ONECLICK_BASE_URL", "https://1click.chaindefuser.com"),
+		OneClickJWT:              getEnvOrDefault("ONECLICK_JWT", ""),
+		OneClickSlippageBps:      int(getEnvOrDefaultInt64("ONECLICK_SLIPPAGE_BPS", 100)),
+		OneClickDeadlineMinutes:  int(getEnvOrDefaultInt64("ONECLICK_DEADLINE_MINUTES", 24*60)),
+		OneClickQuoteWaitTimeMs:  int(getEnvOrDefaultInt64("ONECLICK_QUOTE_WAIT_TIME_MS", 3000)),
+		OneClickUseFlexInputSwap: getEnvOrDefault("ONECLICK_USE_FLEX_INPUT_SWAP", "true") == "true",
 	}
 
 	if config.Enabled && config.BotToken == "" {

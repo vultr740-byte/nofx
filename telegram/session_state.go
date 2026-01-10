@@ -24,6 +24,11 @@ const (
 	StateConfirm             SessionState = "confirm"               // 确认配置
 	StateQuickSetup          SessionState = "quick_setup"           // 快速配置（选择风险级别）
 	StateEditingCustomPrompt SessionState = "editing_custom_prompt" // 编辑自定义 Prompt
+
+	// 跨链充值（NEAR Intents 1Click）
+	StateDepositInputAmount SessionState = "deposit_input_amount" // 输入充值金额
+	StateDepositInputRefund SessionState = "deposit_input_refund" // 输入退款地址
+	StateDepositConfirmX    SessionState = "deposit_confirm"      // 确认生成充值地址
 )
 
 // PromptTemplate 提示词模板配置

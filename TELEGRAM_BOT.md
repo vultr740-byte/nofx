@@ -10,7 +10,8 @@ NOFX Telegram Bot 是一个基于 Telegram 的 Hyperliquid 交易机器人，提
 - **💰 余额查询**: 使用 `/balance` 查看现货和合约余额
 - **📊 持仓查询**: 使用 `/positions` 查看当前持仓信息
 - **🔑 动态配置 AI 密钥**: 在 `/settings` 中更新 AI API KEY
-- **💳 充值地址**: 使用 `/deposit` 获取 USDC 充值地址
+- **💳 充值**: 使用 `/deposit` 获取充值入口（Arbitrum 直充 / 跨链充值 USDC）
+- **📦 充值状态**: 使用 `/deposit_status` 查询跨链充值进度
 - **🔒 安全可靠**: 使用 Agent Wallet 模式，保障资金安全
 
 ## 🛠️ 配置步骤
@@ -54,7 +55,8 @@ docker compose up -d
 | `/help` | 帮助信息 | 显示所有可用命令 |
 | `/balance` | 余额查询 | 查看现货和合约余额 |
 | `/positions` | 持仓查询 | 查看当前持仓信息 |
-| `/deposit` | 充值地址 | 获取 USDC 充值地址 |
+| `/deposit` | 充值 | 获取充值入口（Arbitrum 直充 / 跨链充值 USDC） |
+| `/deposit_status` | 充值状态 | 查询跨链充值状态：`/deposit_status <depositAddress> [depositMemo]` |
 | `/settings` | ⚙️ 设置 | 导出 Agent 私钥等操作 |
 
 ### 使用流程
@@ -93,12 +95,22 @@ docker compose up -d
 
 ## 💰 充值说明
 
-### 支持网络
+### 支持方式
 
-- **网络**: Arbitrum One
-- **币种**: USDC
-- **最小充值**: 20 USDC
-- **到账时间**: 通常 2-5 分钟
+#### 方式 1：Arbitrum 直充
+
+直接从 Arbitrum 网络转 USDC 到你的钱包地址（`/deposit` 可复制）。
+
+#### 方式 2：跨链充值（NEAR Intents 1Click）
+
+如果你的 USDC 在其他网络，可以通过 `/deposit` 选择来源网络与金额，系统会生成一个“专属充值地址（可能需要 Memo）”，你把 USDC 转到该地址后，1Click 会自动跨链把 USDC 发送到你在 Arbitrum 的收款地址。
+
+你可以用 `/deposit_status` 查询进度；显示“成功”后，再执行 `/balance` 触发自动充值到 Hyperliquid（若已启用）。
+
+### 最小充值
+
+- Hyperliquid 最小充值：**20 USDC**
+- 跨链充值会产生费用/滑点，建议输入金额略高于 20 USDC，确保最终 Arbitrum 到账 ≥ 20 USDC。
 
 ### 充值步骤
 
