@@ -358,6 +358,9 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 		return
 	}
 
+	deadlineStr := strings.TrimSpace(resp.Quote.Deadline)
+	inactiveStr := strings.TrimSpace(resp.Quote.TimeWhenInactive)
+
 	params[oneClickParamOriginChain] = originChain
 	params[oneClickParamLastDepositChain] = originChain
 	params[oneClickParamLastDepositAddress] = depositAddr
@@ -372,6 +375,34 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 		memoLine = fmt.Sprintf("\n充值 Memo:\n<code>%s</code>", esc(depositMemo))
 	}
 
+	validityBlock := ""
+	validityLines := ""
+	if inactiveStr != "" {
+		state := "未知"
+		if t, ok := parseRFC3339Time(inactiveStr); ok {
+			if d := time.Until(t); d <= 0 {
+				state = "已冷却（处理可能更慢）"
+			} else {
+				state = "剩余 " + formatDurationCN(d)
+			}
+		}
+		validityLines += fmt.Sprintf("\n• 冷却时间：%s（%s）", esc(inactiveStr), esc(state))
+	}
+	if deadlineStr != "" {
+		state := "未知"
+		if t, ok := parseRFC3339Time(deadlineStr); ok {
+			if d := time.Until(t); d <= 0 {
+				state = "已失效（请勿转账）"
+			} else {
+				state = "剩余 " + formatDurationCN(d)
+			}
+		}
+		validityLines += fmt.Sprintf("\n• 失效时间：%s（%s）", esc(deadlineStr), esc(state))
+	}
+	if validityLines != "" {
+		validityBlock = "\n\n⏳ 有效期：" + validityLines
+	}
+
 	msg := fmt.Sprintf(`✅ 跨链充值地址已生成
 
 来源网络：%s
@@ -379,6 +410,7 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 
 请从【%s】网络将 USDC 转账到以下地址：
 <code>%s</code>%s
+%s
 
 最终收款地址（Arbitrum）：
 <code>%s</code>
@@ -389,6 +421,7 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 		esc(chainDisplayName(originChain)),
 		esc(depositAddr),
 		memoLine,
+		validityBlock,
 		esc(walletAddr),
 	)
 
