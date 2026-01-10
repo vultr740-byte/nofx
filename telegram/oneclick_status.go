@@ -98,8 +98,11 @@ func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, depositAd
 		amountOut = strings.TrimSpace(statusResp.QuoteResponse.Quote.AmountOutFmt)
 	}
 
-	if ok, r := parseDecimal(depositedAmt); ok && r.Cmp(big.NewRat(20, 1)) < 0 {
-		msg := fmt.Sprintf(`📦 跨链充值状态
+	statusUpper := strings.ToUpper(strings.TrimSpace(statusResp.Status))
+	isPendingOrIncomplete := statusUpper == "PENDING_DEPOSIT" || statusUpper == "INCOMPLETE_DEPOSIT" || statusUpper == "KNOWN_DEPOSIT_TX"
+	if isPendingOrIncomplete {
+		if ok, r := parseDecimal(depositedAmt); ok && r.Cmp(big.NewRat(20, 1)) < 0 {
+			msg := fmt.Sprintf(`📦 跨链充值状态
 
 状态：%s
 更新时间：%s
@@ -107,13 +110,14 @@ func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, depositAd
 已充值：%s USDC（未达到最小充值 %s USDC）
 
 💡 你可以继续向同一地址补充充值，达到最小充值后会自动开始处理。`,
-			esc(tbm.oneClickStatusText(statusResp.Status)),
-			esc(statusResp.UpdatedAt),
-			esc(depositedAmt),
-			esc(oneClickMinDepositUSDC),
-		)
-		tbm.sendMessage(chatID, msg)
-		return
+				esc(tbm.oneClickStatusText(statusResp.Status)),
+				esc(statusResp.UpdatedAt),
+				esc(depositedAmt),
+				esc(oneClickMinDepositUSDC),
+			)
+			tbm.sendMessage(chatID, msg)
+			return
+		}
 	}
 
 	msg := fmt.Sprintf(`📦 跨链充值状态
