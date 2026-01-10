@@ -141,7 +141,7 @@ func (s *OneClickService) GetTokens(ctx context.Context) ([]oneClickToken, error
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var apiErr oneClickErrorResponse
 		_ = json.Unmarshal(body, &apiErr)
 		if apiErr.Message != "" {
@@ -252,7 +252,7 @@ func (s *OneClickService) requestQuoteOnce(ctx context.Context, req oneClickQuot
 	defer httpResp.Body.Close()
 
 	body, _ := io.ReadAll(httpResp.Body)
-	if httpResp.StatusCode != http.StatusOK {
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		var apiErr oneClickErrorResponse
 		_ = json.Unmarshal(body, &apiErr)
 		if apiErr.Message != "" {
@@ -293,7 +293,7 @@ func (s *OneClickService) GetStatus(ctx context.Context, depositAddress string, 
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var apiErr oneClickErrorResponse
 		_ = json.Unmarshal(body, &apiErr)
 		if apiErr.Message != "" {
