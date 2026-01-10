@@ -114,7 +114,11 @@ func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, telegramI
 	statusUpper := strings.ToUpper(strings.TrimSpace(statusResp.Status))
 	isPendingOrIncomplete := statusUpper == "PENDING_DEPOSIT" || statusUpper == "INCOMPLETE_DEPOSIT" || statusUpper == "KNOWN_DEPOSIT_TX"
 	if isPendingOrIncomplete {
-		if ok, r := parseDecimal(depositedAmt); ok && r.Cmp(big.NewRat(20, 1)) < 0 {
+		minRat := new(big.Rat).SetInt64(1)
+		if ok, v := parseDecimal(oneClickMinDepositUSDC); ok {
+			minRat = v
+		}
+		if ok, r := parseDecimal(depositedAmt); ok && r.Cmp(minRat) < 0 {
 			msg := fmt.Sprintf(`📦 跨链充值状态
 
 %s

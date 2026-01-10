@@ -23,7 +23,7 @@ const (
 	oneClickParamLastDepositChain   = "oneclick_last_deposit_chain"
 )
 
-const oneClickMinDepositUSDC = "20"
+const oneClickMinDepositUSDC = "1"
 
 func chainDisplayName(chain string) string {
 	switch strings.ToLower(strings.TrimSpace(chain)) {
