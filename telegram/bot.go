@@ -755,7 +755,7 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 
 请选择充值方式:
 • Arbitrum 直充：从 Arbitrum USDC 直接转账到上面的地址
-• 跨链充值：从其他链的 USDC 跨链到 Arbitrum（NEAR Intents 1Click）`,
+• 跨链充值：从其他网络（EVM/Solana/Sui）的 USDC 跨链到 Arbitrum（NEAR Intents 1Click）`,
 		esc(walletAddr),
 	)
 

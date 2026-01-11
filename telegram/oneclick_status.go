@@ -101,6 +101,25 @@ func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, telegramI
 		amountOut = strings.TrimSpace(statusResp.QuoteResponse.Quote.AmountOutFmt)
 	}
 
+	minDeposit := oneClickMinDepositUSDC
+	if v := strings.TrimSpace(statusResp.QuoteResponse.Quote.MinAmountIn); v != "" {
+		decimals := 6
+		originAssetID := strings.TrimSpace(originAsset)
+		if originAssetID != "" {
+			if toks, err := tbm.oneClick.GetTokens(ctx); err == nil {
+				for _, tok := range toks {
+					if strings.TrimSpace(tok.AssetID) == originAssetID {
+						decimals = tok.Decimals
+						break
+					}
+				}
+			}
+		}
+		if s, err := baseUnitsToDecimal(v, decimals); err == nil && strings.TrimSpace(s) != "" {
+			minDeposit = strings.TrimSpace(s)
+		}
+	}
+
 	validityBanner := ""
 	if raw, t, ok := pickSoonerTime(deadlineStr, inactiveStr); ok {
 		remain := formatDurationCN(time.Until(t))
@@ -115,7 +134,7 @@ func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, telegramI
 	isPendingOrIncomplete := statusUpper == "PENDING_DEPOSIT" || statusUpper == "INCOMPLETE_DEPOSIT" || statusUpper == "KNOWN_DEPOSIT_TX"
 	if isPendingOrIncomplete {
 		minRat := new(big.Rat).SetInt64(1)
-		if ok, v := parseDecimal(oneClickMinDepositUSDC); ok {
+		if ok, v := parseDecimal(minDeposit); ok {
 			minRat = v
 		}
 		if ok, r := parseDecimal(depositedAmt); ok && r.Cmp(minRat) < 0 {
@@ -132,7 +151,7 @@ func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, telegramI
 				esc(tbm.oneClickStatusText(statusResp.Status)),
 				esc(statusResp.UpdatedAt),
 				esc(depositedAmt),
-				esc(oneClickMinDepositUSDC),
+				esc(minDeposit),
 			)
 			tbm.sendMessage(chatID, msg)
 			return

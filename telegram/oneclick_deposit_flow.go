@@ -25,6 +25,21 @@ const (
 
 const oneClickMinDepositUSDC = "1"
 
+// 链优先级：按“资金体量/主流程度”优先展示（可按运营反馈继续微调）。
+var oneClickChainLiquidityRank = map[string]int{
+	"eth":    0,
+	"arb":    1,
+	"sol":    2,
+	"sui":    3,
+	"base":   4,
+	"op":     5,
+	"pol":    6,
+	"bsc":    7,
+	"avax":   8,
+	"gnosis": 9,
+	// 其余链默认靠后（按字母排序兜底）
+}
+
 func chainDisplayName(chain string) string {
 	switch strings.ToLower(strings.TrimSpace(chain)) {
 	case "eth":
@@ -63,9 +78,29 @@ func chainDisplayName(chain string) string {
 	}
 }
 
+func chainLiquidityPriority(chain string) int {
+	c := strings.ToLower(strings.TrimSpace(chain))
+	if v, ok := oneClickChainLiquidityRank[c]; ok {
+		return v
+	}
+	return 1000
+}
+
 func isEVMChain(chain string) bool {
 	switch strings.ToLower(strings.TrimSpace(chain)) {
 	case "eth", "arb", "base", "op", "pol", "bsc", "avax", "gnosis", "bera", "xlayer", "monad", "adi":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSupportedOneClickOriginChain(chain string) bool {
+	if isEVMChain(chain) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(chain)) {
+	case "sol", "sui":
 		return true
 	default:
 		return false
@@ -103,13 +138,22 @@ func (tbm *TelegramBotManager) sendOneClickChainSelection(chatID int64, telegram
 
 	chains := make([]string, 0, len(chainToToken))
 	for chain := range chainToToken {
-		if !isEVMChain(chain) {
+		if !isSupportedOneClickOriginChain(chain) {
 			continue
 		}
 		// Arbitrum 作为目标链，仍允许选择，但 UI 上建议直充
 		chains = append(chains, chain)
 	}
-	sort.Strings(chains)
+	sort.SliceStable(chains, func(i, j int) bool {
+		ci := strings.ToLower(strings.TrimSpace(chains[i]))
+		cj := strings.ToLower(strings.TrimSpace(chains[j]))
+		pi := chainLiquidityPriority(ci)
+		pj := chainLiquidityPriority(cj)
+		if pi != pj {
+			return pi < pj
+		}
+		return ci < cj
+	})
 
 	const pageSize = 10
 	if page < 0 {
@@ -166,8 +210,9 @@ func (tbm *TelegramBotManager) sendOneClickChainSelection(chatID int64, telegram
 请选择你要转出 USDC 的来源网络。
 
 说明：
-• 目前仅支持 EVM 网络（如 Ethereum/Base/OP/Polygon/BSC/Avalanche 等）
-• 暂不支持 Solana/Stellar/NEAR/Sui 等非 EVM 网络
+• 支持 EVM 网络（如 Ethereum/Arbitrum/Base/OP/Polygon/BSC/Avalanche 等）
+• 也支持 Solana / Sui（非 EVM）
+• 暂不支持 Stellar/NEAR 等其它非 EVM 网络
 
 最终到账网络：Arbitrum（自动充值到 Hyperliquid 仍需 /balance 触发）
 页码：%d/%d`, page+1, totalPages)
@@ -282,8 +327,8 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 	session := sessionMgr.GetOrCreateSession(telegramID)
 	params := tbm.ensureSessionParams(session)
 
-	if !isEVMChain(originChain) {
-		tbm.sendMessage(chatID, "❌ 当前仅支持 EVM 网络的 USDC 跨链充值，请重新选择")
+	if !isSupportedOneClickOriginChain(originChain) {
+		tbm.sendMessage(chatID, "❌ 当前仅支持 EVM / Solana / Sui 网络的 USDC 跨链充值，请重新选择")
 		return
 	}
 
@@ -338,7 +383,7 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 		DestinationAsset:  destAsset,
 		Amount:            amountBase,
 		RefundTo:          walletAddr,
-		RefundType:        "ORIGIN_CHAIN",
+		RefundType:        "INTENTS",
 		Recipient:         walletAddr,
 		RecipientType:     "DESTINATION_CHAIN",
 		Deadline:          time.Now().UTC().Add(tbm.oneClickDeadline).Format(time.RFC3339),
@@ -356,6 +401,13 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 	if depositAddr == "" {
 		tbm.sendMessage(chatID, "❌ 1Click 未返回充值地址，请稍后重试")
 		return
+	}
+
+	minDeposit := oneClickMinDepositUSDC
+	if v := strings.TrimSpace(resp.Quote.MinAmountIn); v != "" {
+		if s, err := baseUnitsToDecimal(v, originTok.Decimals); err == nil && strings.TrimSpace(s) != "" {
+			minDeposit = strings.TrimSpace(s)
+		}
 	}
 
 	deadlineStr := strings.TrimSpace(resp.Quote.Deadline)
@@ -399,7 +451,7 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 
 💡 到账后执行 /balance，可触发自动充值到 Hyperliquid（若已启用）。`,
 		esc(chainDisplayName(originChain)),
-		esc(oneClickMinDepositUSDC),
+		esc(minDeposit),
 		esc(chainDisplayName(originChain)),
 		esc(depositAddr),
 		memoLine,
@@ -453,6 +505,62 @@ func decimalToBaseUnits(amount string, decimals int) (string, error) {
 
 	out := new(big.Int).Quo(r.Num(), r.Denom()) // floor
 	return out.String(), nil
+}
+
+func trimTrailingZerosDecimal(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if !strings.Contains(s, ".") {
+		return s
+	}
+	s = strings.TrimRight(s, "0")
+	s = strings.TrimRight(s, ".")
+	return s
+}
+
+func baseUnitsToDecimal(amountBase string, decimals int) (string, error) {
+	amountBase = strings.TrimSpace(amountBase)
+	amountBase = strings.ReplaceAll(amountBase, ",", "")
+	if amountBase == "" {
+		return "", fmt.Errorf("金额为空")
+	}
+
+	// 兼容 API 直接返回小数的情况
+	if strings.Contains(amountBase, ".") {
+		if ok, _ := parseDecimal(amountBase); ok {
+			return trimTrailingZerosDecimal(amountBase), nil
+		}
+		return "", fmt.Errorf("无法解析金额: %s", amountBase)
+	}
+
+	bi, ok := new(big.Int).SetString(amountBase, 10)
+	if !ok {
+		return "", fmt.Errorf("无法解析 base units: %s", amountBase)
+	}
+	if bi.Sign() < 0 {
+		return "", fmt.Errorf("金额不能为负数")
+	}
+	if decimals <= 0 {
+		return bi.String(), nil
+	}
+
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	quotient, remainder := new(big.Int).QuoRem(bi, scale, new(big.Int))
+	if remainder.Sign() == 0 {
+		return quotient.String(), nil
+	}
+
+	frac := remainder.Text(10)
+	if len(frac) < decimals {
+		frac = strings.Repeat("0", decimals-len(frac)) + frac
+	}
+	frac = strings.TrimRight(frac, "0")
+	if frac == "" {
+		return quotient.String(), nil
+	}
+	return quotient.String() + "." + frac, nil
 }
 
 func parseDecimal(s string) (bool, *big.Rat) {

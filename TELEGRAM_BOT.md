@@ -103,7 +103,7 @@ docker compose up -d
 
 #### 方式 2：跨链充值（NEAR Intents 1Click）
 
-如果你的 USDC 在其他网络，可以通过 `/deposit` 选择来源网络与金额，系统会生成一个“专属充值地址（可能需要 Memo）”，你把 USDC 转到该地址后，1Click 会自动跨链把 USDC 发送到你在 Arbitrum 的收款地址。
+如果你的 USDC 在其他网络（EVM/Solana/Sui），可以通过 `/deposit` 选择来源网络与金额，系统会生成一个“专属充值地址（可能需要 Memo）”，你把 USDC 转到该地址后，1Click 会自动跨链把 USDC 发送到你在 Arbitrum 的收款地址。
 
 你可以用 `/deposit_status` 查询进度；显示“成功”后，再执行 `/balance` 触发自动充值到 Hyperliquid（若已启用）。
 
