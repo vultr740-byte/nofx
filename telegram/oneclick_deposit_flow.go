@@ -209,9 +209,7 @@ func (tbm *TelegramBotManager) sendOneClickChainSelection(chatID int64, telegram
 		pageLine = fmt.Sprintf("\n页码：%d/%d", page+1, totalPages)
 	}
 
-	msg := `🌐 跨链充值 USDC
-
-请选择资金来源网络。` + pageLine
+	msg := `🌐 跨链充值 USDC：请选择资金来源网络。` + pageLine
 
 	tbm.sendMessageWithInlineKeyboard(chatID, msg, tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
