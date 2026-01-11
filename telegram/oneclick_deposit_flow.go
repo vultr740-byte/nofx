@@ -461,18 +461,18 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📦 查看状态", fmt.Sprintf("deposit_status_last|%d", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("✅ 已完成充值", fmt.Sprintf("deposit_status_last|%d", telegramID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔄 重新选择网络", fmt.Sprintf("deposit_xchain|%d", telegramID)),
-			tgbotapi.NewInlineKeyboardButtonData("❌ 关闭", fmt.Sprintf("deposit_cancel|%d", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("❌ 取消", fmt.Sprintf("deposit_cancel|%d", telegramID)),
 		),
 	)
 	tbm.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
 }
 
 func (tbm *TelegramBotManager) handleDepositCancelCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
-	tbm.answerCallbackQuery(callback.ID, "已关闭")
+	tbm.answerCallbackQuery(callback.ID, "")
 
 	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
 	session := sessionMgr.GetOrCreateSession(telegramID)
@@ -483,7 +483,9 @@ func (tbm *TelegramBotManager) handleDepositCancelCallback(callback *tgbotapi.Ca
 	sessionMgr.UpdateSessionState(telegramID, StateIdle)
 	sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
 
-	tbm.sendMessage(chatID, "✅ 已关闭")
+	if callback.Message != nil {
+		tbm.deleteMessage(chatID, callback.Message.MessageID)
+	}
 }
 
 func decimalToBaseUnits(amount string, decimals int) (string, error) {

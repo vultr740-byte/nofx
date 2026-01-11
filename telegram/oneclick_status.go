@@ -44,7 +44,7 @@ func (tbm *TelegramBotManager) handleDepositStatus(update tgbotapi.Update) {
 			depositMemo = strings.TrimSpace(v)
 		}
 		if depositAddress == "" {
-			tbm.sendMessage(chatID, "用法: /deposit_status <depositAddress> [depositMemo]\n\n也可以先使用 /deposit → 跨链充值 USDC 生成充值地址，然后点击“📦 查看状态”。")
+			tbm.sendMessage(chatID, "用法: /deposit_status <depositAddress> [depositMemo]\n\n也可以先使用 /deposit → 跨链充值 USDC 生成充值地址，然后点击“✅ 已完成充值”。")
 			return
 		}
 	}
