@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"nofx/config"
 	"nofx/manager"
@@ -63,6 +64,7 @@ const (
 	hyperliquidBridgeAddress = "0x2df1c51e09aecf9cacb7bc98cb1742757f163df7"
 	gasSponsorshipCooldown   = 6 * time.Hour
 	usdcPermitDeadline       = 5 * time.Minute
+	hlDepositWaitTimeout     = 3 * time.Minute
 )
 
 var minUSDCBridgeAmount = new(big.Int).Mul(big.NewInt(20), big.NewInt(1_000_000))
@@ -1712,7 +1714,8 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 		total := tbm.arbService.SumUSDCTokenTransfers(receipt, common.HexToAddress(walletAddr), common.HexToAddress(hyperliquidBridgeAddress))
 		if total.Sign() > 0 {
 			_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, bridgeStatusCompleted, "", record.BridgeTxHash, "")
-			go tbm.refreshHyperliquidBalance(chatID, privateKey, walletAddr)
+			base, baseOK := tbm.fetchHyperliquidSnapshot(privateKey, walletAddr)
+			go tbm.refreshHyperliquidBalance(chatID, privateKey, walletAddr, record.BridgeTxHash, base, baseOK)
 			return
 		}
 		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, bridgeStatusFailed, "", record.BridgeTxHash, "")
@@ -1725,6 +1728,7 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 	record.USDCAmount = targetUSDC.String()
 	_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, bridgeStatusProcessing, "", "", record.USDCAmount)
 
+	base, baseOK := tbm.fetchHyperliquidSnapshot(privateKey, walletAddr)
 	deadlineSec := uint64(time.Now().Add(usdcPermitDeadline).Unix())
 	txHash, err := tbm.arbService.DepositUSDCToBridgeWithPermit(context.Background(), tbm.gasSponsorKey, privateKey, walletAddr, targetUSDC, deadlineSec)
 	if err != nil {
@@ -1740,44 +1744,141 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 	tbm.sendMessage(chatID, fmt.Sprintf("💸 已检测到 %s USDC，已发起代付自动充值至 Hyperliquid。\\nTx: <code>%s</code>", esc(formatUSDC(targetUSDC)), esc(txHash)))
 
 	// 异步刷新余额，避免阻塞主流程
-	go tbm.refreshHyperliquidBalance(chatID, privateKey, walletAddr)
+	go tbm.refreshHyperliquidBalance(chatID, privateKey, walletAddr, txHash, base, baseOK)
 }
 
-func (tbm *TelegramBotManager) refreshHyperliquidBalance(chatID int64, agentKey, walletAddr string) {
+type hyperliquidBalanceSnapshot struct {
+	TotalWalletBalance float64
+	SpotBalance        float64
+	AvailableBalance   float64
+}
+
+func getFloat64(m map[string]interface{}, key string) float64 {
+	if m == nil {
+		return 0
+	}
+	if v, ok := m[key].(float64); ok {
+		return v
+	}
+	return 0
+}
+
+func (tbm *TelegramBotManager) fetchHyperliquidSnapshot(agentKey, walletAddr string) (hyperliquidBalanceSnapshot, bool) {
 	if tbm.hlService == nil {
+		return hyperliquidBalanceSnapshot{}, false
+	}
+
+	bal, err := tbm.hlService.FetchBalance(agentKey, walletAddr, tbm.testnet)
+	if err != nil {
+		log.Printf("⚠️ 获取 Hyperliquid 余额失败: %v", err)
+		return hyperliquidBalanceSnapshot{}, false
+	}
+
+	return hyperliquidBalanceSnapshot{
+		TotalWalletBalance: getFloat64(bal, "totalWalletBalance"),
+		SpotBalance:        getFloat64(bal, "spotBalance"),
+		AvailableBalance:   getFloat64(bal, "availableBalance"),
+	}, true
+}
+
+func usdcBaseUnitsToFloat(v *big.Int) float64 {
+	if v == nil || v.Sign() <= 0 {
+		return 0
+	}
+	f := new(big.Float).SetInt(v)
+	f.Quo(f, big.NewFloat(1_000_000))
+	out, _ := f.Float64()
+	return out
+}
+
+func hasDepositCredited(base hyperliquidBalanceSnapshot, cur hyperliquidBalanceSnapshot, minDelta float64) bool {
+	if minDelta <= 0 {
+		return true
+	}
+	if cur.TotalWalletBalance-base.TotalWalletBalance >= minDelta {
+		return true
+	}
+	if cur.SpotBalance-base.SpotBalance >= minDelta {
+		return true
+	}
+	if cur.AvailableBalance-base.AvailableBalance >= minDelta {
+		return true
+	}
+	return false
+}
+
+func (tbm *TelegramBotManager) refreshHyperliquidBalance(chatID int64, agentKey, walletAddr string, bridgeTxHash string, base hyperliquidBalanceSnapshot, baseOK bool) {
+	if tbm.hlService == nil || tbm.arbService == nil {
 		return
 	}
 
-	// 等待一段时间让区块链处理交易
-	tbm.sendMessage(chatID, "⏳ 等待区块链确认充值交易...")
-	time.Sleep(5 * time.Second)
+	txHash := strings.TrimSpace(bridgeTxHash)
+	if txHash == "" {
+		return
+	}
 
-	// 重试查询余额，最多重试9次
-	maxRetries := 9
-	intervals := []int{1, 2, 3} // 1s, 2s, 3s 循环
+	// 1) 先确认链上入金交易成功执行（USDC 已从用户地址转入 Bridge2）
+	tbm.sendMessage(chatID, "⏳ 等待链上确认充值交易...")
+	receipt, err := tbm.arbService.WaitForReceipt(context.Background(), txHash, 2*time.Minute)
+	if err != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("⏳ 链上确认中，请稍后使用 /balance 查看。\\nTx: <code>%s</code>", esc(txHash)))
+		return
+	}
+	if receipt.Status != types.ReceiptStatusSuccessful {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 自动充值交易失败（链上执行失败）。\\nTx: <code>%s</code>", esc(txHash)))
+		return
+	}
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		balanceMsg, err := tbm.hlService.GetBalance(agentKey, walletAddr, tbm.testnet)
-		if err != nil {
-			// 只在后台记录日志，不发送给用户
-			log.Printf("⚠️ 余额查询失败 (尝试 %d/%d): %v", attempt+1, maxRetries, err)
-			if attempt < maxRetries-1 {
-				// 使用1s,2s,3s循环间隔
-				retryInterval := time.Duration(intervals[attempt%len(intervals)]) * time.Second
-				time.Sleep(retryInterval)
-			}
-			continue
+	paid := tbm.arbService.SumUSDCTokenTransfers(receipt, common.HexToAddress(walletAddr), common.HexToAddress(hyperliquidBridgeAddress))
+	if paid.Sign() <= 0 {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 自动充值失败（未检测到 USDC 转入 Bridge）。\\nTx: <code>%s</code>", esc(txHash)))
+		return
+	}
+
+	expectedDelta := usdcBaseUnitsToFloat(paid)
+	minDelta := expectedDelta - 0.01 // 容忍浮点误差
+	if minDelta < 0 {
+		minDelta = 0
+	}
+
+	tbm.sendMessage(chatID, fmt.Sprintf("⏳ 链上已确认，等待 Hyperliquid 入账（最多 %d 秒）...", int(hlDepositWaitTimeout.Seconds())))
+
+	// 若基线不可用，则以当前首次读取作为基线，避免误判
+	if !baseOK {
+		if snap, ok := tbm.fetchHyperliquidSnapshot(agentKey, walletAddr); ok {
+			base = snap
+			baseOK = true
 		}
-
-		// 成功获取余额
-		log.Printf("✅ 余额查询成功 (尝试 %d/%d)", attempt+1, maxRetries)
-		tbm.sendMessage(chatID, fmt.Sprintf("✅ 充值完成，最新余额如下：\n\n%s", balanceMsg))
-		return
 	}
 
-	// 所有重试都失败 - 只在后台记录
-	log.Printf("❌ 余额查询重试 %d 次后仍然失败", maxRetries)
-	tbm.sendMessage(chatID, "⚠️ 无法自动刷新 Hyperliquid 余额，请稍后使用 /balance 重试。")
+	// 2) 等待 Hyperliquid 余额真正变化后再宣告“充值完成”
+	deadline := time.Now().Add(hlDepositWaitTimeout)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for time.Now().Before(deadline) {
+		snap, ok := tbm.fetchHyperliquidSnapshot(agentKey, walletAddr)
+		if ok && baseOK && hasDepositCredited(base, snap, minDelta) {
+			balanceMsg, err := tbm.hlService.GetBalanceWithAutoTransfer(agentKey, walletAddr, tbm.testnet)
+			if err != nil {
+				log.Printf("⚠️ 刷新最新余额失败: %v", err)
+				tbm.sendMessage(chatID, "⚠️ 已检测到入账，但刷新余额失败，请稍后使用 /balance 查看。")
+				return
+			}
+			tbm.sendMessage(chatID, fmt.Sprintf("✅ 充值完成，最新余额如下：\n\n%s", balanceMsg))
+			return
+		}
+		<-ticker.C
+	}
+
+	// 3) 超时：给用户一个“当前最新余额”，但不再宣称一定已入账
+	balanceMsg, err := tbm.hlService.GetBalanceWithAutoTransfer(agentKey, walletAddr, tbm.testnet)
+	if err != nil {
+		log.Printf("❌ 余额查询仍然失败: %v", err)
+		tbm.sendMessage(chatID, "⚠️ 链上已确认，但暂时无法获取最新 Hyperliquid 余额，请稍后使用 /balance 重试。")
+		return
+	}
+	tbm.sendMessage(chatID, fmt.Sprintf("⚠️ 链上已确认，但 Hyperliquid 入账可能延迟（请稍后 /balance 再确认）。\n\n当前余额如下：\n\n%s", balanceMsg))
 }
 
 func (tbm *TelegramBotManager) startAPIKeyUpdate(chatID int64, telegramID int64) bool {
