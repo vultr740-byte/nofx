@@ -149,6 +149,13 @@ func (tbm *TelegramBotManager) sendOneClickChainSelection(chatID int64, telegram
 	sort.SliceStable(chains, func(i, j int) bool {
 		ci := strings.ToLower(strings.TrimSpace(chains[i]))
 		cj := strings.ToLower(strings.TrimSpace(chains[j]))
+		// Ethereum 手续费偏高，放到列表最后。
+		if ci == "eth" && cj != "eth" {
+			return false
+		}
+		if ci != "eth" && cj == "eth" {
+			return true
+		}
 		pi := chainLiquidityPriority(ci)
 		pj := chainLiquidityPriority(cj)
 		if pi != pj {
