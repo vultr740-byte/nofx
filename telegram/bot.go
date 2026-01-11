@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ethereum/go-ethereum/common"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"nofx/config"
 	"nofx/manager"
@@ -60,15 +62,16 @@ const (
 	decisionJSONMarker       = "📋 决策JSON"
 	hyperliquidBridgeAddress = "0x2df1c51e09aecf9cacb7bc98cb1742757f163df7"
 	gasSponsorshipCooldown   = 6 * time.Hour
+	usdcPermitDeadline       = 5 * time.Minute
 )
 
 var minUSDCBridgeAmount = new(big.Int).Mul(big.NewInt(20), big.NewInt(1_000_000))
 
 const (
-	gasStatusProcessing = "processing"
-	gasStatusGasSent    = "gas_sent"
-	gasStatusCompleted  = "completed"
-	gasStatusFailed     = "failed"
+	bridgeStatusProcessing = "processing"
+	bridgeStatusTxSent     = "bridge_sent"
+	bridgeStatusCompleted  = "completed"
+	bridgeStatusFailed     = "failed"
 )
 
 type decisionChunk struct {
@@ -1643,7 +1646,7 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 	tbm.gasProcMu.Lock()
 	if _, exists := tbm.gasProcessing[key]; exists {
 		tbm.gasProcMu.Unlock()
-		log.Printf("ℹ️ 跳过重复 Gas 赞助请求 (user=%d, wallet=%s)", telegramID, walletAddr)
+		log.Printf("ℹ️ 跳过重复自动充值请求 (user=%d, wallet=%s)", telegramID, walletAddr)
 		return
 	}
 	tbm.gasProcessing[key] = struct{}{}
@@ -1654,17 +1657,6 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 		tbm.gasProcMu.Unlock()
 	}()
 
-	// 用户级别冷却：提前拦截，避免重复创建记录
-	inCooldown, err := tbm.db.HasRecentGasSponsorshipForUser(walletAddr, telegramID, int(gasSponsorshipCooldown.Hours()))
-	if err != nil {
-		log.Printf("⚠️ 查询 Gas 冷却状态失败: %v", err)
-		return
-	}
-	if inCooldown {
-		log.Printf("ℹ️ 用户 %d 地址 %s 仍在 Gas 冷却期内，跳过自动赞助", telegramID, walletAddr)
-		return
-	}
-
 	usdcBal, err := tbm.arbService.GetUSDCBalance(walletAddr)
 	if err != nil {
 		log.Printf("⚠️ 查询 USDC 余额失败: %v", err)
@@ -1674,138 +1666,81 @@ func (tbm *TelegramBotManager) tryAutoBridge(telegramID int64, chatID int64, pri
 		return
 	}
 
-	record, err := tbm.db.GetActiveGasSponsorshipForUser(walletAddr, telegramID)
-	if err != nil {
-		log.Printf("⚠️ 查询 Gas 赞助记录失败: %v", err)
+	if strings.TrimSpace(tbm.gasSponsorKey) == "" {
+		log.Printf("⚠️ 检测到 USDC>=20 但未配置代付账户")
+		tbm.sendMessage(chatID, "⚠️ 检测到 USDC 余额满足自动充值，但系统尚未配置代付账户。请联系管理员处理。")
+		return
 	}
 
-	requiredEth := big.NewInt(0)
-	if tbm.gasSponsorWei != nil && tbm.gasSponsorWei.Sign() > 0 {
-		requiredEth.Set(tbm.gasSponsorWei)
+	record, err := tbm.db.GetActiveGasSponsorshipForUser(walletAddr, telegramID)
+	if err != nil {
+		log.Printf("⚠️ 查询自动充值记录失败: %v", err)
 	}
 
 	if record == nil {
 		record = &config.TgGasSponsorshipRecord{
 			TgUserID:      telegramID,
 			WalletAddress: walletAddr,
-			AmountWei:     requiredEth.String(),
 			USDCAmount:    usdcBal.String(),
-			Status:        gasStatusProcessing,
+			Status:        bridgeStatusProcessing,
 		}
 		recordID, err := tbm.db.CreateTgGasSponsorship(record)
 		if err != nil {
-			log.Printf("⚠️ 创建 Gas 赞助记录失败: %v", err)
+			log.Printf("⚠️ 创建自动充值记录失败: %v", err)
 			return
 		}
 		record.ID = recordID
-		log.Printf("🧾 创建 Gas 赞助记录: user=%d wallet=%s id=%d", telegramID, walletAddr, recordID)
+		log.Printf("🧾 创建自动充值记录: user=%d wallet=%s id=%d", telegramID, walletAddr, recordID)
 	} else if record.USDCAmount == "" || usdcBal.Cmp(stringToBig(record.USDCAmount)) > 0 {
 		record.USDCAmount = usdcBal.String()
 		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, "", "", "", record.USDCAmount)
 	}
 
-	targetUSDC := stringToBig(record.USDCAmount)
-	if targetUSDC.Sign() == 0 {
-		targetUSDC = new(big.Int).Set(usdcBal)
-		record.USDCAmount = targetUSDC.String()
-		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, "", "", "", record.USDCAmount)
+	// 兼容旧状态：历史 gas_sent 记录在新逻辑下按 processing 处理
+	if record.Status == "gas_sent" {
+		record.Status = bridgeStatusProcessing
+		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, bridgeStatusProcessing, "", "", "")
 	}
 
-	gasCost, err := tbm.arbService.EstimateUSDCTransferCost(walletAddr, targetUSDC)
-	if err != nil {
-		log.Printf("⚠️ 估算 USDC 充值 Gas 失败: %v", err)
-		return
-	}
-	if gasCost.Sign() > 0 && gasCost.Cmp(requiredEth) > 0 {
-		requiredEth = gasCost
-		log.Printf("ℹ️ 使用估算 Gas 费用覆盖配置值: %s wei", gasCost.String())
-	}
-	if requiredEth.Sign() == 0 {
-		log.Printf("⚠️ 无法确定所需 Gas，跳过赞助流程 (user=%d wallet=%s)", telegramID, walletAddr)
-		return
-	}
-	record.AmountWei = requiredEth.String()
-	_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, "", "", "", record.AmountWei)
-
-	if record.Status == gasStatusProcessing && requiredEth.Sign() > 0 && strings.TrimSpace(tbm.gasSponsorKey) == "" {
-		log.Printf("⚠️ 检测到 USDC>=20 但未配置 Gas 赞助账户")
-		tbm.sendMessage(chatID, "⚠️ 检测到 USDC 余额满足自动充值，但当前地址缺少 ETH Gas，且系统尚未配置赞助账户。请手动充值少量 ETH 后重试 /balance。")
-		return
-	}
-
-	ethBal, err := tbm.arbService.GetETHBalance(walletAddr)
-	if err != nil {
-		log.Printf("⚠️ 查询 ETH 余额失败: %v", err)
-		return
-	}
-
-	if record.Status == gasStatusProcessing {
-		if requiredEth.Sign() == 0 || ethBal.Cmp(requiredEth) >= 0 {
-			record.Status = gasStatusGasSent
-			_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusGasSent, "", "", "")
-		} else {
-			if record.GasTxHash != "" {
-				tbm.sendMessage(chatID, "⏳ Gas 赞助已发送，等待到账后再执行 /balance。")
-				return
-			}
-			recent, err := tbm.db.HasRecentGasSponsorshipForUser(walletAddr, telegramID, int(gasSponsorshipCooldown.Hours()))
-			if err != nil {
-				log.Printf("⚠️ 查询 Gas 赞助记录失败: %v", err)
-			}
-			if recent {
-				tbm.sendMessage(chatID, "⚠️ 该地址近期刚获得 Gas 赞助，请稍后再试。")
-				return
-			}
-			txHash, err := tbm.arbService.SendGas(tbm.gasSponsorKey, walletAddr, requiredEth)
-			if err != nil {
-				log.Printf("❌ Gas 赞助失败: %v", err)
-				_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusFailed, "", "", "")
-				tbm.sendMessage(chatID, fmt.Sprintf("❌ 自动赞助 Gas 失败: %s", esc(err)))
-				return
-			}
-			record.GasTxHash = txHash
-			record.Status = gasStatusGasSent
-			_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusGasSent, txHash, "", "")
-			tbm.sendMessage(chatID, fmt.Sprintf("⛽ 已赞助 %s ETH 用于 Gas，交易哈希: <code>%s</code>", esc(formatETH(requiredEth)), esc(txHash)))
-
-			time.Sleep(15 * time.Second)
-			ethBal, err = tbm.arbService.GetETHBalance(walletAddr)
-			if err != nil {
-				log.Printf("⚠️ 再次查询 ETH 余额失败: %v", err)
-				return
-			}
-			if ethBal.Cmp(requiredEth) < 0 {
-				tbm.sendMessage(chatID, "⚠️ Gas 已发送但余额仍不足，请稍后使用 /balance 重试自动充值。")
-				return
-			}
+	// 若已有 bridge tx，先检查是否已成功扣款
+	if record.Status == bridgeStatusTxSent && strings.TrimSpace(record.BridgeTxHash) != "" {
+		receipt, err := tbm.arbService.WaitForReceipt(context.Background(), record.BridgeTxHash, 30*time.Second)
+		if err != nil {
+			tbm.sendMessage(chatID, fmt.Sprintf("⏳ 自动充值交易确认中，请稍后再试 /balance。\\nTx: <code>%s</code>", esc(record.BridgeTxHash)))
+			return
 		}
-	}
-
-	if record.Status != gasStatusGasSent {
+		total := tbm.arbService.SumUSDCTokenTransfers(receipt, common.HexToAddress(walletAddr), common.HexToAddress(hyperliquidBridgeAddress))
+		if total.Sign() > 0 {
+			_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, bridgeStatusCompleted, "", record.BridgeTxHash, "")
+			go tbm.refreshHyperliquidBalance(chatID, privateKey, walletAddr)
+			return
+		}
+		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, bridgeStatusFailed, "", record.BridgeTxHash, "")
+		tbm.sendMessage(chatID, "❌ 自动充值失败（未检测到 USDC 转入 Bridge），请稍后重试 /balance。")
 		return
 	}
 
-	if usdcBal.Cmp(targetUSDC) < 0 {
-		tbm.sendMessage(chatID, "⚠️ USDC 余额不足以完成自动充值，请确保金额 ≥ 20 USDC 后重新执行 /balance。")
-		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusFailed, "", "", "")
-		return
-	}
+	// 默认：把用户 Arbitrum 钱包内 USDC 全部入金
+	targetUSDC := new(big.Int).Set(usdcBal)
+	record.USDCAmount = targetUSDC.String()
+	_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, bridgeStatusProcessing, "", "", record.USDCAmount)
 
-	txHash, err := tbm.arbService.TransferUSDC(privateKey, targetUSDC)
+	deadlineSec := uint64(time.Now().Add(usdcPermitDeadline).Unix())
+	txHash, err := tbm.arbService.DepositUSDCToBridgeWithPermit(context.Background(), tbm.gasSponsorKey, privateKey, walletAddr, targetUSDC, deadlineSec)
 	if err != nil {
 		log.Printf("❌ 自动充值失败: %v", err)
-		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusFailed, "", "", "")
+		_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, bridgeStatusFailed, "", "", "")
 		tbm.sendMessage(chatID, fmt.Sprintf("❌ 自动充值失败: %s", esc(err)))
 		return
 	}
 
-	_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, gasStatusCompleted, "", txHash, "")
-	tbm.sendMessage(chatID, fmt.Sprintf("💸 已检测到 %s USDC，自动充值至 Hyperliquid。\\nTx: <code>%s</code>", esc(formatUSDC(targetUSDC)), esc(txHash)))
+	record.BridgeTxHash = txHash
+	record.Status = bridgeStatusTxSent
+	_ = tbm.db.UpdateTgGasSponsorshipProgress(record.ID, bridgeStatusTxSent, "", txHash, "")
+	tbm.sendMessage(chatID, fmt.Sprintf("💸 已检测到 %s USDC，已发起代付自动充值至 Hyperliquid。\\nTx: <code>%s</code>", esc(formatUSDC(targetUSDC)), esc(txHash)))
 
 	// 异步刷新余额，避免阻塞主流程
-	go func() {
-		tbm.refreshHyperliquidBalance(chatID, privateKey, walletAddr)
-	}()
+	go tbm.refreshHyperliquidBalance(chatID, privateKey, walletAddr)
 }
 
 func (tbm *TelegramBotManager) refreshHyperliquidBalance(chatID int64, agentKey, walletAddr string) {

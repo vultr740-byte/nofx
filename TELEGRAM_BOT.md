@@ -111,6 +111,7 @@ docker compose up -d
 
 - Hyperliquid 最小充值：**20 USDC**
 - 跨链充值会产生费用/滑点，建议输入金额略高于 20 USDC，确保最终 Arbitrum 到账 ≥ 20 USDC。
+- 自动充值到 Hyperliquid 由系统代付 Gas（用户地址无需预存 ETH）。
 
 ### 充值步骤
 

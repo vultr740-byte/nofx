@@ -3372,10 +3372,10 @@ func (d *Database) HasRecentGasSponsorship(walletAddr string, withinHours int) (
 	var err error
 
 	if d.usePostgreSQL {
-		query = `SELECT COUNT(*) FROM tg_gas_sponsorships WHERE wallet_address = $1 AND created_at >= $2 AND status IN ('gas_sent','completed')`
+		query = `SELECT COUNT(*) FROM tg_gas_sponsorships WHERE wallet_address = $1 AND created_at >= $2 AND status IN ('bridge_sent','completed')`
 		err = d.db.QueryRow(query, walletAddr, cutoff).Scan(&count)
 	} else {
-		query = `SELECT COUNT(*) FROM tg_gas_sponsorships WHERE wallet_address = ? AND created_at >= ? AND status IN ('gas_sent','completed')`
+		query = `SELECT COUNT(*) FROM tg_gas_sponsorships WHERE wallet_address = ? AND created_at >= ? AND status IN ('bridge_sent','completed')`
 		err = d.db.QueryRow(query, walletAddr, cutoff.Format("2006-01-02 15:04:05")).Scan(&count)
 	}
 
@@ -3393,10 +3393,10 @@ func (d *Database) HasRecentGasSponsorshipForUser(walletAddr string, tgUserID in
 	var err error
 
 	if d.usePostgreSQL {
-		query = `SELECT COUNT(*) FROM tg_gas_sponsorships WHERE wallet_address = $1 AND tg_user_id = $2 AND created_at >= $3 AND status IN ('gas_sent','completed')`
+		query = `SELECT COUNT(*) FROM tg_gas_sponsorships WHERE wallet_address = $1 AND tg_user_id = $2 AND created_at >= $3 AND status IN ('bridge_sent','completed')`
 		err = d.db.QueryRow(query, walletAddr, tgUserID, cutoff).Scan(&count)
 	} else {
-		query = `SELECT COUNT(*) FROM tg_gas_sponsorships WHERE wallet_address = ? AND tg_user_id = ? AND created_at >= ? AND status IN ('gas_sent','completed')`
+		query = `SELECT COUNT(*) FROM tg_gas_sponsorships WHERE wallet_address = ? AND tg_user_id = ? AND created_at >= ? AND status IN ('bridge_sent','completed')`
 		err = d.db.QueryRow(query, walletAddr, tgUserID, cutoff.Format("2006-01-02 15:04:05")).Scan(&count)
 	}
 
