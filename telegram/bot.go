@@ -1303,10 +1303,6 @@ func (tbm *TelegramBotManager) setupCommands() {
 			Description: "💳 充值",
 		},
 		{
-			Command:     "deposit_status",
-			Description: "📦 充值状态",
-		},
-		{
 			Command:     "balance",
 			Description: "💰 账户余额",
 		},
