@@ -19,7 +19,7 @@ func generateHyperliquidAccount() (agentKey, walletAddr string, err error) {
 		return "", "", fmt.Errorf("转换私钥格式失败: %w", err)
 	}
 	address := crypto.PubkeyToAddress(privateKeyECDSA.PublicKey)
-	walletAddr = address.Hex()
+	walletAddr = normalizeEVMAddressLower(address.Hex())
 
 	return agentKey, walletAddr, nil
 }

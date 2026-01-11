@@ -373,8 +373,13 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 			return
 		}
 		walletAddr = extractedWallet
-		params[oneClickParamWalletAddr] = walletAddr
 	}
+	walletAddr = normalizeEVMAddressLower(walletAddr)
+	if walletAddr == "" {
+		tbm.sendMessage(chatID, "❌ 获取钱包地址失败，请稍后重试")
+		return
+	}
+	params[oneClickParamWalletAddr] = walletAddr
 
 	amountBase, err := decimalToBaseUnits(oneClickMinDepositUSDC, originTok.Decimals)
 	if err != nil {

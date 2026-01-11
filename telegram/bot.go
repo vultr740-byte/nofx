@@ -1588,7 +1588,7 @@ func (tbm *TelegramBotManager) extractAgentKeyAndWallet(telegramID int64) (agent
 		return "", "", fmt.Errorf("交易员缺少 Hyperliquid 账户信息")
 	}
 
-	return trader.PrivateKey, trader.WalletAddress, nil
+	return trader.PrivateKey, normalizeEVMAddressLower(trader.WalletAddress), nil
 }
 
 // ensureTraderHasFunds 在启动交易员前检查是否已经充值资金

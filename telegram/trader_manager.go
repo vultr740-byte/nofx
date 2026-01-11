@@ -586,7 +586,7 @@ func (ttm *TelegramTraderManager) GetTraderStatus(telegramID int64) (map[string]
 		"name":                  trader.Name,
 		"is_running":            actualRunningState, // 使用实际运行状态
 		"is_configured":         trader.IsConfigured,
-		"wallet_address":        trader.WalletAddress,
+		"wallet_address":        normalizeEVMAddressLower(trader.WalletAddress),
 		"initial_balance":       trader.InitialBalance,
 		"scan_interval_minutes": trader.ScanIntervalMinutes,
 		"btc_eth_leverage":      trader.BTCETHLeverage,
