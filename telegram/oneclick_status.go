@@ -109,7 +109,12 @@ func (tbm *TelegramBotManager) handleDepositStatusRefreshCallback(callback *tgbo
 		return
 	}
 
-	tbm.editCallbackMessage(callback.Message.MessageID, chatID, msg)
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔄 刷新", fmt.Sprintf("deposit_status_refresh|%d", telegramID)),
+		),
+	)
+	tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, msg, keyboard)
 
 	// 自动触发一次 Arbitrum -> Hyperliquid 充值（避免用户还要再点 /balance）
 	if statusUpper == "SUCCESS" {

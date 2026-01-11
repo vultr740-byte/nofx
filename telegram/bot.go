@@ -3247,6 +3247,22 @@ func (tbm *TelegramBotManager) editCallbackMessage(messageID int, chatID int64, 
 	}
 }
 
+func (tbm *TelegramBotManager) editCallbackMessageWithInlineKeyboard(messageID int, chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) {
+	editConfig := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	editConfig.ParseMode = "HTML"
+	editConfig.ReplyMarkup = &keyboard
+
+	if _, err := tbm.bot.Request(editConfig); err != nil {
+		log.Printf("⚠️ 编辑消息HTML格式失败，尝试纯文本 (MessageID: %d)", messageID)
+		editConfig.ParseMode = ""
+		if _, err2 := tbm.bot.Request(editConfig); err2 != nil {
+			log.Printf("❌ 编辑回调消息失败 (MessageID: %d): %v", messageID, err2)
+		}
+	} else {
+		log.Printf("✅ 编辑回调消息成功 (MessageID: %d)", messageID)
+	}
+}
+
 func splitMessageIntoChunks(text string, chunkSize int) []string {
 	if chunkSize <= 0 {
 		return []string{text}
