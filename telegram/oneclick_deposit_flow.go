@@ -28,15 +28,14 @@ const oneClickMinDepositUSDC = "1"
 // 链优先级：按“资金体量/主流程度”优先展示（可按运营反馈继续微调）。
 var oneClickChainLiquidityRank = map[string]int{
 	"eth":    0,
-	"arb":    1,
+	"base":   1,
 	"sol":    2,
 	"sui":    3,
-	"base":   4,
-	"op":     5,
-	"pol":    6,
-	"bsc":    7,
-	"avax":   8,
-	"gnosis": 9,
+	"op":     4,
+	"pol":    5,
+	"bsc":    6,
+	"avax":   7,
+	"gnosis": 8,
 	// 其余链默认靠后（按字母排序兜底）
 }
 
@@ -97,6 +96,10 @@ func isEVMChain(chain string) bool {
 
 func isSupportedOneClickOriginChain(chain string) bool {
 	if isEVMChain(chain) {
+		// Arbitrum 已有“直充”入口，不在跨链来源列表中展示/支持。
+		if strings.EqualFold(strings.TrimSpace(chain), "arb") {
+			return false
+		}
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(chain)) {
@@ -141,7 +144,6 @@ func (tbm *TelegramBotManager) sendOneClickChainSelection(chatID int64, telegram
 		if !isSupportedOneClickOriginChain(chain) {
 			continue
 		}
-		// Arbitrum 作为目标链，仍允许选择，但 UI 上建议直充
 		chains = append(chains, chain)
 	}
 	sort.SliceStable(chains, func(i, j int) bool {
@@ -180,9 +182,6 @@ func (tbm *TelegramBotManager) sendOneClickChainSelection(chatID int64, telegram
 		for j := 0; j < 2 && i+j < len(cur); j++ {
 			chain := cur[i+j]
 			label := chainDisplayName(chain)
-			if strings.EqualFold(chain, "arb") {
-				label = label + "（同链）"
-			}
 			row = append(row, tgbotapi.NewInlineKeyboardButtonData(
 				label,
 				fmt.Sprintf("deposit_chain|%d|%s", telegramID, chain),
@@ -210,7 +209,7 @@ func (tbm *TelegramBotManager) sendOneClickChainSelection(chatID int64, telegram
 请选择你要转出 USDC 的来源网络。
 
 说明：
-• 支持 EVM 网络（如 Ethereum/Arbitrum/Base/OP/Polygon/BSC/Avalanche 等）
+• 支持 EVM 网络（如 Ethereum/Base/OP/Polygon/BSC/Avalanche 等；Arbitrum 请用直充）
 • 也支持 Solana / Sui（非 EVM）
 • 暂不支持 Stellar/NEAR 等其它非 EVM 网络
 
@@ -327,6 +326,10 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 	session := sessionMgr.GetOrCreateSession(telegramID)
 	params := tbm.ensureSessionParams(session)
 
+	if strings.EqualFold(originChain, "arb") {
+		tbm.sendMessage(chatID, "💡 Arbitrum 已有“直充”入口，请返回上一层选择「🟦 Arbitrum 直充」。")
+		return
+	}
 	if !isSupportedOneClickOriginChain(originChain) {
 		tbm.sendMessage(chatID, "❌ 当前仅支持 EVM / Solana / Sui 网络的 USDC 跨链充值，请重新选择")
 		return
