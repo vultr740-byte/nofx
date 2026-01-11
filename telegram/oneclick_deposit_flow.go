@@ -157,7 +157,7 @@ func (tbm *TelegramBotManager) sendOneClickChainSelection(chatID int64, telegram
 		return ci < cj
 	})
 
-	const pageSize = 10
+	const pageSize = 20
 	if page < 0 {
 		page = 0
 	}
@@ -204,6 +204,11 @@ func (tbm *TelegramBotManager) sendOneClickChainSelection(chatID int64, telegram
 		tgbotapi.NewInlineKeyboardButtonData("❌ 取消", fmt.Sprintf("deposit_cancel|%d", telegramID)),
 	})
 
+	pageLine := ""
+	if totalPages > 1 {
+		pageLine = fmt.Sprintf("\n页码：%d/%d", page+1, totalPages)
+	}
+
 	msg := fmt.Sprintf(`🌐 跨链充值 USDC（NEAR Intents 1Click）
 
 请选择你要转出 USDC 的来源网络。
@@ -214,7 +219,7 @@ func (tbm *TelegramBotManager) sendOneClickChainSelection(chatID int64, telegram
 • 暂不支持 Stellar/NEAR 等其它非 EVM 网络
 
 最终到账网络：Arbitrum（自动充值到 Hyperliquid 仍需 /balance 触发）
-页码：%d/%d`, page+1, totalPages)
+%s`, pageLine)
 
 	tbm.sendMessageWithInlineKeyboard(chatID, msg, tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
