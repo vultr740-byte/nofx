@@ -10,6 +10,13 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+const oneClickParamStatusMsgCtx = "oneclick_status_msg_ctx"
+
+type oneClickStatusMsgContext struct {
+	DepositAddress string
+	DepositMemo    string
+}
+
 func (tbm *TelegramBotManager) handleDepositStatus(update tgbotapi.Update) {
 	chatID := update.Message.Chat.ID
 	telegramID := update.Message.From.ID
@@ -75,14 +82,87 @@ func (tbm *TelegramBotManager) handleDepositStatusLastCallback(callback *tgbotap
 	tbm.sendOneClickDepositStatus(chatID, telegramID, depositAddress, depositMemo)
 }
 
+func (tbm *TelegramBotManager) handleDepositStatusRefreshCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	// 先结束客户端的 loading 动画（避免用户觉得“卡住了”）
+	tbm.answerCallbackQuery(callback.ID, "")
+
+	if tbm.oneClick == nil {
+		tbm.sendMessage(chatID, "❌ 跨链充值服务未初始化")
+		return
+	}
+	if callback.Message == nil {
+		return
+	}
+
+	msgCtx, ok := tbm.getOneClickStatusMsgContext(telegramID, callback.Message.MessageID)
+	if !ok {
+		tbm.sendMessage(chatID, "❌ 刷新失败：请重新执行 /deposit_status")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	msg, statusUpper, err := tbm.buildOneClickDepositStatusMessage(ctx, telegramID, msgCtx.DepositAddress, msgCtx.DepositMemo)
+	if err != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 刷新失败: %s", esc(err)))
+		return
+	}
+
+	tbm.editCallbackMessage(callback.Message.MessageID, chatID, msg)
+
+	// 自动触发一次 Arbitrum -> Hyperliquid 充值（避免用户还要再点 /balance）
+	if statusUpper == "SUCCESS" {
+		if tbm.arbService == nil {
+			return
+		}
+		agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID)
+		if err != nil {
+			return
+		}
+		go tbm.tryAutoBridge(telegramID, chatID, agentKey, walletAddr)
+	}
+}
+
 func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, telegramID int64, depositAddress string, depositMemo string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	statusResp, err := tbm.oneClick.GetStatus(ctx, depositAddress, depositMemo)
+	msg, statusUpper, err := tbm.buildOneClickDepositStatusMessage(ctx, telegramID, depositAddress, depositMemo)
 	if err != nil {
 		tbm.sendMessage(chatID, fmt.Sprintf("❌ 查询失败: %s", esc(err)))
 		return
+	}
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔄 刷新", fmt.Sprintf("deposit_status_refresh|%d", telegramID)),
+		),
+	)
+	sentMsg, err := tbm.sendMessageWithMarkupAndReturn(chatID, msg, keyboard)
+	if err == nil && sentMsg != nil {
+		tbm.setOneClickStatusMsgContext(telegramID, sentMsg.MessageID, depositAddress, depositMemo)
+	} else {
+		tbm.sendMessage(chatID, msg)
+	}
+
+	// 自动触发一次 Arbitrum -> Hyperliquid 充值（避免用户还要再点 /balance）
+	if statusUpper == "SUCCESS" {
+		if tbm.arbService == nil {
+			return
+		}
+		agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID)
+		if err != nil {
+			return
+		}
+		go tbm.tryAutoBridge(telegramID, chatID, agentKey, walletAddr)
+	}
+}
+
+func (tbm *TelegramBotManager) buildOneClickDepositStatusMessage(ctx context.Context, telegramID int64, depositAddress string, depositMemo string) (string, string, error) {
+	statusResp, err := tbm.oneClick.GetStatus(ctx, depositAddress, depositMemo)
+	if err != nil {
+		return "", "", err
 	}
 
 	originAsset := statusResp.QuoteResponse.QuoteRequest.OriginAsset
@@ -140,11 +220,10 @@ func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, telegramI
 	isPendingOrIncomplete := statusUpper == "PENDING_DEPOSIT" || statusUpper == "INCOMPLETE_DEPOSIT" || statusUpper == "KNOWN_DEPOSIT_TX"
 	if isPendingOrIncomplete {
 		if isExpired {
-			tbm.sendMessage(chatID, `📦 <b>跨链充值状态</b>
+			return `📦 <b>跨链充值状态</b>
 
 🚫 <b>地址已失效</b>
-请重新使用 /deposit 生成新地址。`)
-			return
+请重新使用 /deposit 生成新地址。`, statusUpper, nil
 		}
 
 		needsTopUp := false
@@ -171,43 +250,71 @@ func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, telegramI
 			lines = append(lines, "", "💡 可继续向同一地址补充充值，达到最小充值后会自动开始处理。")
 		}
 
-		tbm.sendMessage(chatID, strings.Join(lines, "\n"))
-		return
+		return strings.Join(lines, "\n"), statusUpper, nil
 	}
 
-	msg := fmt.Sprintf(`📦 跨链充值状态
-
-%s
-状态：%s
-更新时间：%s
-
-输入资产：%s
-输出资产：%s
-收款地址：%s
-已充值：%s
-到账金额：%s
-
-💡 若状态为“成功”，可执行 /balance 触发自动充值到 Hyperliquid（若已启用）。`,
+	lines := []string{
+		"📦 <b>跨链充值状态</b>",
 		"",
-		esc(tbm.oneClickStatusText(statusResp.Status)),
-		esc(updatedAtText),
-		esc(originAsset),
-		esc(destAsset),
-		esc(recipient),
-		esc(depositedAmt),
-		esc(amountOut),
-	)
-	tbm.sendMessage(chatID, msg)
-
-	// 自动触发一次 Arbitrum -> Hyperliquid 充值（避免用户还要再点 /balance）
-	if statusUpper == "SUCCESS" {
-		if tbm.arbService == nil {
-			return
-		}
-		agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID)
-		if err != nil {
-			return
-		}
-		go tbm.tryAutoBridge(telegramID, chatID, agentKey, walletAddr)
+		fmt.Sprintf("状态：%s", esc(tbm.oneClickStatusText(statusResp.Status))),
+		fmt.Sprintf("更新时间：%s", esc(updatedAtText)),
 	}
+	if remainText != "" {
+		lines = append(lines, fmt.Sprintf("剩余时间：%s", esc(remainText)))
+	}
+	lines = append(lines,
+		"",
+		fmt.Sprintf("输入资产：%s", esc(originAsset)),
+		fmt.Sprintf("输出资产：%s", esc(destAsset)),
+		fmt.Sprintf("收款地址：%s", esc(recipient)),
+		fmt.Sprintf("已充值：%s", esc(depositedAmt)),
+		fmt.Sprintf("到账金额：%s", esc(amountOut)),
+		"",
+		"💡 若状态为“成功”，可执行 /balance 触发自动充值到 Hyperliquid（若已启用）。",
+	)
+
+	return strings.Join(lines, "\n"), statusUpper, nil
+}
+
+func (tbm *TelegramBotManager) setOneClickStatusMsgContext(telegramID int64, messageID int, depositAddress string, depositMemo string) {
+	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
+	session := sessionMgr.GetOrCreateSession(telegramID)
+	params := tbm.ensureSessionParams(session)
+
+	m, _ := params[oneClickParamStatusMsgCtx].(map[int]oneClickStatusMsgContext)
+	if m == nil {
+		m = make(map[int]oneClickStatusMsgContext)
+	}
+	m[messageID] = oneClickStatusMsgContext{
+		DepositAddress: strings.TrimSpace(depositAddress),
+		DepositMemo:    strings.TrimSpace(depositMemo),
+	}
+	// 简单限流：避免长期使用导致 map 膨胀
+	if len(m) > 50 {
+		for k := range m {
+			if k == messageID {
+				continue
+			}
+			delete(m, k)
+			break
+		}
+	}
+
+	params[oneClickParamStatusMsgCtx] = m
+	sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
+}
+
+func (tbm *TelegramBotManager) getOneClickStatusMsgContext(telegramID int64, messageID int) (oneClickStatusMsgContext, bool) {
+	session := tbm.tgTraderMgr.GetSessionManager().GetOrCreateSession(telegramID)
+	params := tbm.ensureSessionParams(session)
+
+	m, ok := params[oneClickParamStatusMsgCtx].(map[int]oneClickStatusMsgContext)
+	if !ok || m == nil {
+		return oneClickStatusMsgContext{}, false
+	}
+	msgCtx, ok := m[messageID]
+	if !ok || strings.TrimSpace(msgCtx.DepositAddress) == "" {
+		return oneClickStatusMsgContext{}, false
+	}
+	return msgCtx, true
 }

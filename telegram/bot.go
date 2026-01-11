@@ -2512,6 +2512,8 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleDepositChainSelectCallback(callback, chatID, telegramID, parts)
 	case "deposit_status_last":
 		tbm.handleDepositStatusLastCallback(callback, chatID, telegramID)
+	case "deposit_status_refresh":
+		tbm.handleDepositStatusRefreshCallback(callback, chatID, telegramID)
 	case "deposit_cancel":
 		tbm.handleDepositCancelCallback(callback, chatID, telegramID)
 	default:
