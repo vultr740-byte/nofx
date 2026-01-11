@@ -209,17 +209,9 @@ func (tbm *TelegramBotManager) sendOneClickChainSelection(chatID int64, telegram
 		pageLine = fmt.Sprintf("\n页码：%d/%d", page+1, totalPages)
 	}
 
-	msg := fmt.Sprintf(`🌐 跨链充值 USDC（NEAR Intents 1Click）
+	msg := `🌐 跨链充值 USDC
 
-请选择你要转出 USDC 的来源网络。
-
-说明：
-• 支持 EVM 网络（如 Ethereum/Base/OP/Polygon/BSC/Avalanche 等；Arbitrum 请用直充）
-• 也支持 Solana / Sui（非 EVM）
-• 暂不支持 Stellar/NEAR 等其它非 EVM 网络
-
-最终到账网络：Arbitrum（自动充值到 Hyperliquid 仍需 /balance 触发）
-%s`, pageLine)
+请选择资金来源网络。` + pageLine
 
 	tbm.sendMessageWithInlineKeyboard(chatID, msg, tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
