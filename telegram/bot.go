@@ -740,24 +740,11 @@ func (tbm *TelegramBotManager) handleDeposit(update tgbotapi.Update) {
 		return
 	}
 
-	// 提取 Agent Key 和 Wallet Address
-	_, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID)
-	if err != nil {
-		log.Printf("提取账号信息失败: %v", err)
-		tbm.sendMessage(chatID, "❌ 获取充值地址失败，请稍后重试")
-		return
-	}
+	msg := `💳 <b>USDC 充值</b>
 
-	msg := fmt.Sprintf(`💳 USDC 充值
-
-你的钱包地址（最终收款地址）:
-<code>%s</code>
-
-请选择充值方式:
-• Arbitrum 直充：从 Arbitrum USDC 直接转账到上面的地址
-• 跨链充值：从其他网络（EVM/Solana/Sui）的 USDC 跨链到 Arbitrum（NEAR Intents 1Click）`,
-		esc(walletAddr),
-	)
+请选择充值方式：
+• 🟦 Arbitrum 直充：从 Arbitrum One 网络转 USDC
+• 🌐 跨链充值：从其他网络（EVM / Solana / Sui）跨链到 Arbitrum`
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
