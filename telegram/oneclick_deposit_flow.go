@@ -258,6 +258,23 @@ func (tbm *TelegramBotManager) handleDepositArbitrumCallback(callback *tgbotapi.
 func (tbm *TelegramBotManager) handleDepositCrossChainCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
 	tbm.answerCallbackQuery(callback.ID, "🌐 选择来源网络")
 
+	tbm.startDepositCrossChainSelection(chatID, telegramID)
+}
+
+func (tbm *TelegramBotManager) handleDepositCrossChainReselectCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	// 与“取消”一致：删除当前消息（上一条消息就是网络选择列表）。
+	tbm.answerCallbackQuery(callback.ID, "")
+	if callback.Message != nil {
+		tbm.deleteMessage(chatID, callback.Message.MessageID)
+	}
+}
+
+func (tbm *TelegramBotManager) startDepositCrossChainSelection(chatID int64, telegramID int64) {
+	if tbm.oneClick == nil {
+		tbm.sendMessage(chatID, "❌ 跨链充值服务未初始化")
+		return
+	}
+
 	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
 		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
 		return
@@ -471,7 +488,7 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 			tgbotapi.NewInlineKeyboardButtonData("✅ 已完成充值", fmt.Sprintf("deposit_status_last|%d", telegramID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔄 重新选择网络", fmt.Sprintf("deposit_xchain|%d", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("🔄 重新选择网络", fmt.Sprintf("deposit_xchain_reselect|%d", telegramID)),
 			tgbotapi.NewInlineKeyboardButtonData("❌ 取消", fmt.Sprintf("deposit_cancel|%d", telegramID)),
 		),
 	)

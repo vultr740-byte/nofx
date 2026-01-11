@@ -2506,6 +2506,8 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleDepositArbitrumCallback(callback, chatID, telegramID)
 	case "deposit_xchain":
 		tbm.handleDepositCrossChainCallback(callback, chatID, telegramID)
+	case "deposit_xchain_reselect":
+		tbm.handleDepositCrossChainReselectCallback(callback, chatID, telegramID)
 	case "deposit_chain_page":
 		tbm.handleDepositChainPageCallback(callback, chatID, telegramID, parts)
 	case "deposit_chain":
