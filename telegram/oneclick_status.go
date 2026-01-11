@@ -120,42 +120,59 @@ func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, telegramI
 		}
 	}
 
-	validityBanner := ""
-	if raw, t, ok := pickSoonerTime(deadlineStr, inactiveStr); ok {
+	updatedAtText := strings.TrimSpace(statusResp.UpdatedAt)
+	if t, ok := parseRFC3339Time(updatedAtText); ok {
+		updatedAtText = t.Format("2006-01-02 15:04")
+	}
+
+	remainText := ""
+	isExpired := false
+	if _, t, ok := pickSoonerTime(deadlineStr, inactiveStr); ok {
 		remain := formatDurationCN(time.Until(t))
 		if remain == "已过期" {
-			validityBanner = fmt.Sprintf("🚫 <b>地址已失效</b>\n最迟转账时间：<code>%s</code>\n请重新使用 /deposit 生成新地址（不要再向旧地址转账）。\n\n", esc(raw))
+			isExpired = true
 		} else {
-			validityBanner = fmt.Sprintf("🚨 <b>请尽快完成转账</b>\n最迟转账时间：<code>%s</code>（剩余 %s）\n\n", esc(raw), esc(remain))
+			remainText = remain
 		}
 	}
 
 	statusUpper := strings.ToUpper(strings.TrimSpace(statusResp.Status))
 	isPendingOrIncomplete := statusUpper == "PENDING_DEPOSIT" || statusUpper == "INCOMPLETE_DEPOSIT" || statusUpper == "KNOWN_DEPOSIT_TX"
 	if isPendingOrIncomplete {
+		if isExpired {
+			tbm.sendMessage(chatID, `📦 <b>跨链充值状态</b>
+
+🚫 <b>地址已失效</b>
+请重新使用 /deposit 生成新地址。`)
+			return
+		}
+
+		needsTopUp := false
 		minRat := new(big.Rat).SetInt64(1)
 		if ok, v := parseDecimal(minDeposit); ok {
 			minRat = v
 		}
 		if ok, r := parseDecimal(depositedAmt); ok && r.Cmp(minRat) < 0 {
-			msg := fmt.Sprintf(`📦 跨链充值状态
-
-%s
-状态：%s
-更新时间：%s
-
-已充值：%s USDC（未达到最小充值 %s USDC）
-
-💡 你可以继续向同一地址补充充值，达到最小充值后会自动开始处理。`,
-				validityBanner,
-				esc(tbm.oneClickStatusText(statusResp.Status)),
-				esc(statusResp.UpdatedAt),
-				esc(depositedAmt),
-				esc(minDeposit),
-			)
-			tbm.sendMessage(chatID, msg)
-			return
+			needsTopUp = true
 		}
+
+		lines := []string{
+			"📦 <b>跨链充值状态</b>",
+			"",
+			fmt.Sprintf("状态：%s", esc(tbm.oneClickStatusText(statusResp.Status))),
+			fmt.Sprintf("已充值：%s USDC", esc(depositedAmt)),
+			fmt.Sprintf("最小充值：%s USDC", esc(minDeposit)),
+		}
+		if remainText != "" {
+			lines = append(lines, fmt.Sprintf("剩余时间：%s", esc(remainText)))
+		}
+		lines = append(lines, fmt.Sprintf("更新时间：%s", esc(updatedAtText)))
+		if needsTopUp {
+			lines = append(lines, "", "💡 可继续向同一地址补充充值，达到最小充值后会自动开始处理。")
+		}
+
+		tbm.sendMessage(chatID, strings.Join(lines, "\n"))
+		return
 	}
 
 	msg := fmt.Sprintf(`📦 跨链充值状态
@@ -171,9 +188,9 @@ func (tbm *TelegramBotManager) sendOneClickDepositStatus(chatID int64, telegramI
 到账金额：%s
 
 💡 若状态为“成功”，可执行 /balance 触发自动充值到 Hyperliquid（若已启用）。`,
-		validityBanner,
+		"",
 		esc(tbm.oneClickStatusText(statusResp.Status)),
-		esc(statusResp.UpdatedAt),
+		esc(updatedAtText),
 		esc(originAsset),
 		esc(destAsset),
 		esc(recipient),
