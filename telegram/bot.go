@@ -3237,6 +3237,12 @@ func (tbm *TelegramBotManager) editCallbackMessage(messageID int, chatID int64, 
 	editConfig.ParseMode = "HTML"
 
 	if _, err := tbm.bot.Request(editConfig); err != nil {
+		// 常见场景：刷新时内容未变化，会返回 message is not modified。
+		// 这种情况无需降级为纯文本，否则会导致 HTML 标签以文本形式展示。
+		if strings.Contains(err.Error(), "message is not modified") {
+			log.Printf("ℹ️ 回调消息无需更新 (MessageID: %d)", messageID)
+			return
+		}
 		log.Printf("⚠️ 编辑消息HTML格式失败，尝试纯文本 (MessageID: %d)", messageID)
 		editConfig.ParseMode = ""
 		if _, err2 := tbm.bot.Request(editConfig); err2 != nil {
@@ -3253,6 +3259,10 @@ func (tbm *TelegramBotManager) editCallbackMessageWithInlineKeyboard(messageID i
 	editConfig.ReplyMarkup = &keyboard
 
 	if _, err := tbm.bot.Request(editConfig); err != nil {
+		if strings.Contains(err.Error(), "message is not modified") {
+			log.Printf("ℹ️ 回调消息无需更新 (MessageID: %d)", messageID)
+			return
+		}
 		log.Printf("⚠️ 编辑消息HTML格式失败，尝试纯文本 (MessageID: %d)", messageID)
 		editConfig.ParseMode = ""
 		if _, err2 := tbm.bot.Request(editConfig); err2 != nil {
