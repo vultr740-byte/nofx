@@ -427,39 +427,36 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 
 	memoLine := ""
 	if depositMemo != "" {
-		memoLine = fmt.Sprintf("\n充值 Memo:\n<code>%s</code>", esc(depositMemo))
+		memoLine = fmt.Sprintf("\nMemo:\n<code>%s</code>", esc(depositMemo))
 	}
 
+	remainLine := ""
 	validityBlock := ""
-	if raw, t, ok := pickSoonerTime(deadlineStr, inactiveStr); ok {
+	if _, t, ok := pickSoonerTime(deadlineStr, inactiveStr); ok {
 		remain := formatDurationCN(time.Until(t))
 		if remain == "已过期" {
-			validityBlock = fmt.Sprintf("\n\n🚫 <b>地址已失效</b>\n最迟转账时间：<code>%s</code>\n请重新使用 /deposit 生成新地址（不要再向旧地址转账）。", esc(raw))
+			validityBlock = "\n\n🚫 <b>地址已失效</b>\n请重新使用 /deposit 生成新地址。"
 		} else {
-			validityBlock = fmt.Sprintf("\n\n🚨 <b>请尽快完成转账</b>\n最迟转账时间：<code>%s</code>（剩余 %s）\n超时请重新 /deposit 生成新地址。", esc(raw), esc(remain))
+			remainLine = fmt.Sprintf("剩余时间：%s", esc(remain))
 		}
 	}
 
-	msg := fmt.Sprintf(`✅ 跨链充值地址已生成
+	msg := fmt.Sprintf(`✅ <b>跨链充值地址已生成</b>
 
-来源网络：%s
+网络：%s
 最小充值：%s USDC
-
-请从【%s】网络将 USDC 转账到以下地址：
-<code>%s</code>%s
 %s
 
-最终收款地址（Arbitrum）：
-<code>%s</code>
+充值地址（点击复制）：
+<code>%s</code>%s%s
 
-💡 到账后执行 /balance，可触发自动充值到 Hyperliquid（若已启用）。`,
+到账后执行 /balance。`,
 		esc(chainDisplayName(originChain)),
 		esc(minDeposit),
-		esc(chainDisplayName(originChain)),
+		remainLine,
 		esc(depositAddr),
 		memoLine,
 		validityBlock,
-		esc(walletAddr),
 	)
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
