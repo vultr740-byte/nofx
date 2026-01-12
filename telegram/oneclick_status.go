@@ -186,24 +186,7 @@ func (tbm *TelegramBotManager) buildOneClickDepositStatusMessage(ctx context.Con
 		amountOut = strings.TrimSpace(statusResp.QuoteResponse.Quote.AmountOutFmt)
 	}
 
-	minDeposit := oneClickMinDepositUSDC
-	if v := strings.TrimSpace(statusResp.QuoteResponse.Quote.MinAmountIn); v != "" {
-		decimals := 6
-		originAssetID := strings.TrimSpace(originAsset)
-		if originAssetID != "" {
-			if toks, err := tbm.oneClick.GetTokens(ctx); err == nil {
-				for _, tok := range toks {
-					if strings.TrimSpace(tok.AssetID) == originAssetID {
-						decimals = tok.Decimals
-						break
-					}
-				}
-			}
-		}
-		if s, err := baseUnitsToDecimal(v, decimals); err == nil && strings.TrimSpace(s) != "" {
-			minDeposit = strings.TrimSpace(s)
-		}
-	}
+	minDeposit := oneClickDisplayedMinDepositUSDC
 
 	updatedAtText := strings.TrimSpace(statusResp.UpdatedAt)
 	if t, ok := parseRFC3339Time(updatedAtText); ok {

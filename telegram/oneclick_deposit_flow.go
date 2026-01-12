@@ -23,7 +23,12 @@ const (
 	oneClickParamLastDepositChain   = "oneclick_last_deposit_chain"
 )
 
-const oneClickMinDepositUSDC = "1"
+const (
+	// 用一个很小的金额生成 quote（只用于拿到 depositAddress/memo，不用于对用户展示最小充值金额）。
+	oneClickQuoteSeedAmountUSDC = "1"
+	// 文案侧统一展示 Hyperliquid 最小充值金额。
+	oneClickDisplayedMinDepositUSDC = "20"
+)
 
 // 链优先级：按“资金体量/主流程度”优先展示（可按运营反馈继续微调）。
 var oneClickChainLiquidityRank = map[string]int{
@@ -246,11 +251,10 @@ func (tbm *TelegramBotManager) handleDepositArbitrumCallback(callback *tgbotapi.
 📋 充值说明:
 • 网络: Arbitrum One
 • 最小充值: 20 USDC
-• 到账时间: 通常 2-5 分钟
+• 到账时间: 通常 1 分钟
 
 💡 提示:
-• 充值后可在 /balance 查看余额
-• 如配置了自动充值，/balance 会尝试自动充值到 Hyperliquid`, esc(walletAddr))
+• 充值后可在 /balance 查看余额`, esc(walletAddr))
 
 	tbm.sendMessage(chatID, depositMsg)
 }
@@ -395,7 +399,7 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 	}
 	params[oneClickParamWalletAddr] = walletAddr
 
-	amountBase, err := decimalToBaseUnits(oneClickMinDepositUSDC, originTok.Decimals)
+	amountBase, err := decimalToBaseUnits(oneClickQuoteSeedAmountUSDC, originTok.Decimals)
 	if err != nil {
 		tbm.sendMessage(chatID, fmt.Sprintf("❌ 生成最小充值金额失败: %s", esc(err)))
 		return
@@ -430,12 +434,7 @@ func (tbm *TelegramBotManager) handleDepositChainSelectCallback(callback *tgbota
 		return
 	}
 
-	minDeposit := oneClickMinDepositUSDC
-	if v := strings.TrimSpace(resp.Quote.MinAmountIn); v != "" {
-		if s, err := baseUnitsToDecimal(v, originTok.Decimals); err == nil && strings.TrimSpace(s) != "" {
-			minDeposit = strings.TrimSpace(s)
-		}
-	}
+	minDeposit := oneClickDisplayedMinDepositUSDC
 
 	deadlineStr := strings.TrimSpace(resp.Quote.Deadline)
 	inactiveStr := strings.TrimSpace(resp.Quote.TimeWhenInactive)
