@@ -310,14 +310,12 @@ func (tbm *TelegramBotManager) handleStart(update tgbotapi.Update) {
 		return
 	}
 
-	welcomeMsg := fmt.Sprintf(`🎉 已为你生成 Hyperliquid 钱包 <b>%s</b>
+	welcomeMsg := `🎉 账号创建完成
 
 💡 下一步操作:
 1. 使用 /deposit 获取充值地址并充值 USDC
-2. 使用 /create_trader 完成策略与模型配置
-3. 配置完成后可用 /start_trader 启动交易`,
-		esc(traderRecord.Name),
-	)
+2. 使用 /create_trader 创建AI交易员
+3. 使用 /start_trader 启动AI交易员`
 
 	tbm.sendMessage(chatID, welcomeMsg)
 

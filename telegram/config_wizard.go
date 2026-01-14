@@ -541,7 +541,7 @@ func (cw *ConfigWizard) getQuickSetupMessage() string {
 	builder.WriteString("🤖 选择交易策略：\n\n")
 
 	for i, template := range templates {
-		builder.WriteString(fmt.Sprintf("%d. %s (%s)\n", i+1, template.DisplayName, template.Name))
+		builder.WriteString(fmt.Sprintf("%d. %s\n", i+1, template.DisplayName))
 		builder.WriteString(fmt.Sprintf("   • 杠杆：BTC/ETH %dx，山寨币 %dx\n", template.BTCETHLeverage, template.AltcoinLeverage))
 		builder.WriteString(fmt.Sprintf("   • 决策周期：%d分钟\n", template.ScanIntervalMinutes))
 		if template.Description != "" {

@@ -3,6 +3,7 @@ package telegram
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"strconv"
 	"strings"
 	"time"
@@ -55,6 +56,75 @@ func (ttm *TelegramTraderManager) setupTelegramBotManagerForTrader(traderObj *tr
 	log.Printf("✅ 已为交易员启用Telegram决策推送功能")
 }
 
+// traderNicknames AI交易员昵称列表
+var traderNicknames = []string{
+	// 动物/自然风格
+	"🦅 猎鹰交易员",
+	"🐺 币圈孤狼",
+	"🦈 市场鲨鱼",
+	"🐉 交易神龙",
+	"🦁 币圈雄狮",
+	"🐼 熊猫交易员",
+	"🦉 夜猫子交易员",
+	"🐻 熊市猎手",
+	// 神话/传说风格
+	"🐱 招财猫",
+	"💰 聚宝盆",
+	"🐸 金蟾交易员",
+	"🦄 独角兽",
+	"⚡ 雷神交易员",
+	"🔥 火凤凰",
+	"❄️ 冰霜交易员",
+	// 科技/算法风格
+	"🤖 代码猎人",
+	"🧙 算法巫师",
+	"🔮 数据魔法师",
+	"⚙️ 二进制战士",
+	"💻 代码刺客",
+	"🎯 精准算法",
+	"🔬 量化科学家",
+	// 趣味/网络风格
+	"💎 钻石手",
+	"🚀 梭哈大师",
+	"🛡️ HODL信徒",
+	"🎲 币圈赌神",
+	"🎨 K线艺术家",
+	"💪 币圈硬汉",
+	"🔥 币圈老炮",
+	// 武侠/江湖风格
+	"⚔️ 交易剑客",
+	"🗡️ 币圈侠客",
+	"🏹 市场游侠",
+	"🥷 暗夜交易员",
+	"👤 币圈扫地僧",
+	"🗡️ 币圈刀客",
+	"⚔️ 交易宗师",
+	// 时间/节奏风格
+	"🌙 午夜操盘手",
+	"🌅 黎明猎手",
+	"☀️ 日不落交易员",
+	"⏰ 时间猎人",
+	"⚡ 闪电交易员",
+	"🌊 波动捕手",
+	// 其他创意
+	"🎯 图表魔法师",
+	"📊 数据炼金师",
+	"🔍 市场侦探",
+	"🎭 币圈戏精",
+	"🌟 交易新星",
+	"⚔️ 币圈战神",
+	"🎪 收益收割机",
+}
+
+// generateRandomTraderName 随机生成交易员昵称
+func generateRandomTraderName() string {
+	if len(traderNicknames) == 0 {
+		return "AI交易员"
+	}
+	rand.Seed(time.Now().UnixNano())
+	return traderNicknames[rand.Intn(len(traderNicknames))]
+}
+
 // EnsureTraderAccount 确保用户已经分配了Hyperliquid账号（仅生成钱包，不配置策略）
 func (ttm *TelegramTraderManager) EnsureTraderAccount(telegramID int64) (*config.TgTraderRecord, error) {
 	traders, err := ttm.db.GetTgTraders(telegramID)
@@ -77,7 +147,7 @@ func (ttm *TelegramTraderManager) createTraderSkeleton(telegramID int64, index i
 		return nil, fmt.Errorf("生成 Hyperliquid 账号失败: %w", err)
 	}
 
-	traderName := fmt.Sprintf("AI交易员 #%d", index)
+	traderName := generateRandomTraderName()
 	skeleton := &config.TgTraderRecord{
 		ID:                   traderID,
 		TgUserID:             telegramID,
@@ -199,7 +269,7 @@ func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *T
 		return nil, fmt.Errorf("生成 Hyperliquid 账号失败: %w", err)
 	}
 
-	defaultName := fmt.Sprintf("AI交易员 #%d", len(existingTraders)+1)
+	defaultName := generateRandomTraderName()
 	newTrader := ttm.buildConfiguredTraderRecord(telegramID, defaultName, traderConfig)
 	newTrader.ID = traderID
 	newTrader.PrivateKey = agentKey
