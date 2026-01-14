@@ -312,10 +312,10 @@ func (tbm *TelegramBotManager) handleStart(update tgbotapi.Update) {
 
 	welcomeMsg := `🎉 账号创建完成
 
-💡 下一步操作:
-1. 使用 /deposit 获取充值地址并充值 USDC
-2. 使用 /create_trader 创建AI交易员
-3. 使用 /start_trader 启动AI交易员`
+三步开始交易：
+1. /deposit - 充值
+2. /create_trader - 创建交易员
+3. /start_trader - 启动交易员`
 
 	tbm.sendMessage(chatID, welcomeMsg)
 
