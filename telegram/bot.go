@@ -1118,17 +1118,48 @@ func (tbm *TelegramBotManager) handleForwardedSentiment(update tgbotapi.Update) 
 	pretty, _ := json.MarshalIndent(decision, "", "  ")
 	reply := fmt.Sprintf("📥 已解析转发文本（来源: %s）\n🤖 AI决策 JSON:\n```json\n%s\n```", source, string(pretty))
 
-	if decision.Action == "open_long" || decision.Action == "open_short" {
-		sideText := map[string]string{"open_long": "做多", "open_short": "做空"}[decision.Action]
-		btn1 := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%s BTC", sideText), fmt.Sprintf("fwd_pick|%d|%s|BTCUSDT", telegramID, map[string]string{"open_long": "long", "open_short": "short"}[decision.Action]))
-		btn2 := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%s ETH", sideText), fmt.Sprintf("fwd_pick|%d|%s|ETHUSDT", telegramID, map[string]string{"open_long": "long", "open_short": "short"}[decision.Action]))
-		keyboard := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(btn1, btn2))
-		msg := tgbotapi.NewMessage(chatID, reply)
-		msg.ReplyMarkup = keyboard
-		tbm.bot.Send(msg)
+	diffScore := decision.LongConfidence - decision.ShortConfidence
+	var keyboard tgbotapi.InlineKeyboardMarkup
+	if diffScore == 0 {
+		longBTC := tgbotapi.NewInlineKeyboardButtonData(
+			"做多 BTC",
+			fmt.Sprintf("fwd_pick|%d|%s|BTCUSDT", telegramID, "long"),
+		)
+		longETH := tgbotapi.NewInlineKeyboardButtonData(
+			"做多 ETH",
+			fmt.Sprintf("fwd_pick|%d|%s|ETHUSDT", telegramID, "long"),
+		)
+		shortBTC := tgbotapi.NewInlineKeyboardButtonData(
+			"做空 BTC",
+			fmt.Sprintf("fwd_pick|%d|%s|BTCUSDT", telegramID, "short"),
+		)
+		shortETH := tgbotapi.NewInlineKeyboardButtonData(
+			"做空 ETH",
+			fmt.Sprintf("fwd_pick|%d|%s|ETHUSDT", telegramID, "short"),
+		)
+		keyboard = tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(longBTC, longETH),
+			tgbotapi.NewInlineKeyboardRow(shortBTC, shortETH),
+		)
 	} else {
-		tbm.sendMessage(chatID, reply)
+		side := "long"
+		if diffScore < 0 {
+			side = "short"
+		}
+		sideText := map[string]string{"long": "做多", "short": "做空"}[side]
+		btn1 := tgbotapi.NewInlineKeyboardButtonData(
+			fmt.Sprintf("%s BTC", sideText),
+			fmt.Sprintf("fwd_pick|%d|%s|BTCUSDT", telegramID, side),
+		)
+		btn2 := tgbotapi.NewInlineKeyboardButtonData(
+			fmt.Sprintf("%s ETH", sideText),
+			fmt.Sprintf("fwd_pick|%d|%s|ETHUSDT", telegramID, side),
+		)
+		keyboard = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(btn1, btn2))
 	}
+	replyMsg := tgbotapi.NewMessage(chatID, reply)
+	replyMsg.ReplyMarkup = keyboard
+	tbm.bot.Send(replyMsg)
 	return true
 }
 
