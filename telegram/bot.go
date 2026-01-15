@@ -1027,7 +1027,7 @@ func (tbm *TelegramBotManager) handleForwardedSentiment(update tgbotapi.Update) 
 		tbm.sendMessage(chatID, fmt.Sprintf("❌ 获取交易员失败: %v", err))
 		return true
 	}
-	client := autoTrader.GetMCPClient()
+	client := autoTrader.GetChatMCPClient()
 	if client == nil {
 		tbm.sendMessage(chatID, "❌ AI 解析服务未配置，请先完成模型配置")
 		return true
@@ -3721,7 +3721,7 @@ func (tbm *TelegramBotManager) handleNaturalLanguageCommand(update tgbotapi.Upda
 		tbm.sendMessage(chatID, fmt.Sprintf("❌ 获取交易员失败: %v", err))
 		return true
 	}
-	if client := autoTrader.GetMCPClient(); client != nil {
+	if client := autoTrader.GetChatMCPClient(); client != nil {
 		tbm.nlParser = NewNLParser(client)
 	}
 	if !tbm.nlParser.IsEnabled() {

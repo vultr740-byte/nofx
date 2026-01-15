@@ -259,6 +259,7 @@ type AutoTrader struct {
 	config         AutoTraderConfig
 	trader         Trader // 使用Trader接口（支持多平台）
 	mcpClient      *mcp.Client
+	chatMcpClient  *mcp.Client
 	decisionLogger *logger.DecisionLogger // 决策日志记录器
 
 	// 初始余额相关字段
@@ -310,6 +311,7 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 	}
 
 	mcpClient := mcp.New()
+	chatMcpClient := buildChatMCPClient(config)
 
 	// 初始化AI
 	if config.AIModel == "custom" {
@@ -409,6 +411,7 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 		config:         config,
 		trader:         trader,
 		mcpClient:      mcpClient,
+		chatMcpClient:  chatMcpClient,
 		decisionLogger: decisionLogger,
 
 		// 初始化余额字段
@@ -433,6 +436,69 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 		telegramBotManager:    nil,                   // 初始化为空，后续通过SetTelegramBotManager设置
 		reverseTrading:        config.ReverseTrading, // 从配置中读取反向交易设置
 	}, nil
+}
+
+func chatModelNameForProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "qwen":
+		return "qwen3-30b"
+	default:
+		return "deepseek-chat"
+	}
+}
+
+func buildChatMCPClient(config AutoTraderConfig) *mcp.Client {
+	client := mcp.New()
+
+	provider := strings.ToLower(strings.TrimSpace(config.AIModel))
+	if config.UseQwen {
+		provider = "qwen"
+	}
+	if provider == "" {
+		provider = "deepseek"
+	}
+
+	switch provider {
+	case "custom":
+		if config.CustomAPIURL == "" && config.CustomModelName == "" && config.CustomAPIKey == "" {
+			return nil
+		}
+		client.SetCustomAPI(config.CustomAPIURL, config.CustomAPIKey, config.CustomModelName)
+		return client
+	case "qwen":
+		client.SetQwenAPIKey(config.QwenKey, config.CustomAPIURL, chatModelNameForProvider("qwen"))
+		return client
+	default:
+		client.SetDeepSeekAPIKey(config.DeepSeekKey, config.CustomAPIURL, chatModelNameForProvider("deepseek"))
+		return client
+	}
+}
+
+func (at *AutoTrader) refreshChatMCPClient(provider string, apiKey string) {
+	normalized := strings.ToLower(strings.TrimSpace(provider))
+	if normalized == "" {
+		normalized = "deepseek"
+	}
+
+	client := mcp.New()
+	switch normalized {
+	case "custom":
+		if at.config.CustomAPIURL == "" && at.config.CustomModelName == "" && apiKey == "" {
+			at.chatMcpClient = nil
+			return
+		}
+		client.SetCustomAPI(at.config.CustomAPIURL, apiKey, at.config.CustomModelName)
+		at.chatMcpClient = client
+		return
+	case "qwen":
+		client.SetQwenAPIKey(apiKey, at.config.CustomAPIURL, chatModelNameForProvider("qwen"))
+		at.chatMcpClient = client
+		return
+	default:
+		client.SetDeepSeekAPIKey(apiKey, at.config.CustomAPIURL, chatModelNameForProvider("deepseek"))
+		at.chatMcpClient = client
+		return
+	}
 }
 
 func (at *AutoTrader) ensureHyperliquidUserWS() {
@@ -2612,6 +2678,7 @@ func (at *AutoTrader) UpdateAIConfig(provider string, apiKey string, modelName s
 		if at.mcpClient != nil {
 			at.mcpClient.SetQwenAPIKey(apiKey, at.config.CustomAPIURL, at.config.CustomModelName)
 		}
+		at.refreshChatMCPClient(normalized, apiKey)
 		log.Printf("🔁 [%s] AI 配置已更新为 Qwen", at.name)
 		return
 	}
@@ -2624,6 +2691,7 @@ func (at *AutoTrader) UpdateAIConfig(provider string, apiKey string, modelName s
 	if at.mcpClient != nil {
 		at.mcpClient.SetDeepSeekAPIKey(apiKey, at.config.CustomAPIURL, at.config.CustomModelName)
 	}
+	at.refreshChatMCPClient(normalized, apiKey)
 	log.Printf("🔁 [%s] AI 配置已更新为 DeepSeek", at.name)
 }
 
@@ -3238,6 +3306,13 @@ func (at *AutoTrader) ClearPeakPnLCache(symbol, side string) {
 }
 
 func (at *AutoTrader) GetMCPClient() *mcp.Client {
+	return at.mcpClient
+}
+
+func (at *AutoTrader) GetChatMCPClient() *mcp.Client {
+	if at.chatMcpClient != nil {
+		return at.chatMcpClient
+	}
 	return at.mcpClient
 }
 
