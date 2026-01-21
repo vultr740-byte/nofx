@@ -8,7 +8,8 @@ type Data struct {
 	CurrentPrice      float64
 	PriceChange1h     float64 // 1小时价格变化百分比
 	PriceChange4h     float64 // 4小时价格变化百分比
-	CurrentRSI7       float64
+	CurrentRSI14      float64
+	CurrentRSI1h14    float64
 	OpenInterest      *OIData
 	FundingRate       float64
 	IntradaySeries    *IntradayData

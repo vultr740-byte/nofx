@@ -39,7 +39,7 @@ func Get(symbol string) (*Data, error) {
 
 	// 计算当前价格 (基于15分钟最新数据)
 	currentPrice := klines15m[len(klines15m)-1].Close
-	currentRSI7 := calculateRSI(klines15m, 7)
+	currentRSI15m14 := calculateRSI(klines15m, 14)
 
 	// 计算价格变化百分比
 	// 1小时价格变化 = 4个15分钟K线前的价格 (4 * 15 = 60分钟)
@@ -75,6 +75,10 @@ func Get(symbol string) (*Data, error) {
 
 	// 计算1小时结构数据（仅收盘价序列）
 	hourlyData := calculateHourlyData(klines1h)
+	currentRSI1h14 := 0.0
+	if len(klines1h) > 0 {
+		currentRSI1h14 = calculateRSI(klines1h, 14)
+	}
 
 	// 计算长期数据
 	longerTermData := calculateLongerTermData(klines4h)
@@ -84,7 +88,8 @@ func Get(symbol string) (*Data, error) {
 		CurrentPrice:      currentPrice,
 		PriceChange1h:     priceChange1h,
 		PriceChange4h:     priceChange4h,
-		CurrentRSI7:       currentRSI7,
+		CurrentRSI14:      currentRSI15m14,
+		CurrentRSI1h14:    currentRSI1h14,
 		OpenInterest:      oiData,
 		FundingRate:       fundingRate,
 		IntradaySeries:    intradayData,
@@ -425,8 +430,8 @@ func Format(data *Data) string {
 	priceStr := formatPriceWithDynamicPrecision(data.CurrentPrice)
 	sb.WriteString(fmt.Sprintf("current_price = %s\n\n", priceStr))
 	// 注释掉技术指标显示，default.txt 策略只使用结构分析
-	// sb.WriteString(fmt.Sprintf("current_price = %s, current_ema20 = %.3f, current_macd = %.3f, current_rsi (7 period, 15m) = %.3f\n\n",
-	// 	priceStr, data.CurrentEMA20, data.CurrentMACD, data.CurrentRSI7))
+	// sb.WriteString(fmt.Sprintf("current_price = %s, current_ema20 = %.3f, current_macd = %.3f, current_rsi (14 period, 15m) = %.3f\n\n",
+	// 	priceStr, data.CurrentEMA20, data.CurrentMACD, data.CurrentRSI14))
 
 	sb.WriteString(fmt.Sprintf("In addition, here is the latest %s open interest and funding rate for perps:\n\n",
 		data.Symbol))
@@ -448,7 +453,7 @@ func Format(data *Data) string {
 			sb.WriteString(fmt.Sprintf("%s\n\n", formatFloatSlice(data.IntradaySeries.MidPrices)))
 		}
 
-		sb.WriteString(fmt.Sprintf("RSI(7, 15m): %.2f\n\n", data.CurrentRSI7))
+		sb.WriteString(fmt.Sprintf("RSI(14, 15m): %.2f\n\n", data.CurrentRSI14))
 
 		// 注释掉技术指标显示，default.txt 策略只使用结构分析
 		// if len(data.IntradaySeries.EMA20Values) > 0 {
@@ -471,6 +476,7 @@ func Format(data *Data) string {
 	if data.HourlyContext != nil && len(data.HourlyContext.ClosePrices) > 0 {
 		sb.WriteString("Close prices (1h, oldest → latest):\n\n")
 		sb.WriteString(fmt.Sprintf("%s\n\n", formatFloatSlice(data.HourlyContext.ClosePrices)))
+		sb.WriteString(fmt.Sprintf("RSI(14, 1h): %.2f\n\n", data.CurrentRSI1h14))
 	}
 
 	if data.LongerTermContext != nil {
