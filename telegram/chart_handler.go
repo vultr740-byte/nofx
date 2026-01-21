@@ -13,6 +13,8 @@ import (
 	"nofx/market"
 )
 
+var chartIntervals = []string{"15m", "1h", "4h", "1d", "3d", "7d"}
+
 // handleChart 处理 /chart 命令，格式：/chart SYMBOL [interval]
 func (tbm *TelegramBotManager) handleChart(update tgbotapi.Update) {
 	chatID := update.Message.Chat.ID
@@ -170,6 +172,45 @@ func findPositionInPositions(positions []map[string]interface{}, symbol string) 
 		return entryPrice, side, stopLoss, takeProfit
 	}
 	return 0, "", 0, 0
+}
+
+// buildChartCaption 构建图表文案（含可选的入场/止损/止盈）
+func buildChartCaption(asset, interval string, entryPrice, stopLoss, takeProfit float64, entrySide string) string {
+	caption := fmt.Sprintf("%s %s 价格走势", asset, interval)
+	if entryPrice > 0 {
+		caption += fmt.Sprintf("\n入场价: %.4f%s", entryPrice, sideText(entrySide))
+	}
+	if stopLoss > 0 {
+		caption += fmt.Sprintf("\n止损价: %.4f", stopLoss)
+	}
+	if takeProfit > 0 {
+		caption += fmt.Sprintf("\n止盈价: %.4f", takeProfit)
+	}
+	return caption
+}
+
+// buildChartIntervalKeyboard 构建图表时间维度按钮
+func buildChartIntervalKeyboard(telegramID int64, symbol, interval string) tgbotapi.InlineKeyboardMarkup {
+	rows := [][]tgbotapi.InlineKeyboardButton{}
+	row := []tgbotapi.InlineKeyboardButton{}
+	for i, iv := range chartIntervals {
+		label := iv
+		if iv == interval {
+			label = "✅ " + iv
+		}
+		row = append(row, tgbotapi.NewInlineKeyboardButtonData(
+			label,
+			fmt.Sprintf("chart_interval|%d|%s|%s", telegramID, symbol, iv),
+		))
+		if (i+1)%3 == 0 {
+			rows = append(rows, row)
+			row = []tgbotapi.InlineKeyboardButton{}
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 func sideText(side string) string {
