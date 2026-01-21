@@ -13,7 +13,7 @@ import (
 	"nofx/market"
 )
 
-var chartIntervals = []string{"15m", "1h", "4h", "1d", "3d", "7d"}
+var chartIntervals = []string{"15m", "1h", "4h", "1d", "3d", "1w"}
 
 // handleChart 处理 /chart 命令，格式：/chart SYMBOL [interval]
 func (tbm *TelegramBotManager) handleChart(update tgbotapi.Update) {
@@ -60,7 +60,7 @@ func (tbm *TelegramBotManager) handleChart(update tgbotapi.Update) {
 
 	interval := "15m"
 	if len(args) >= 2 {
-		interval = strings.ToLower(args[1])
+		interval = normalizeChartInterval(strings.ToLower(args[1]))
 	}
 
 	entryPrice, entrySide, stopLoss, takeProfit := tbm.getChartPositionLevels(telegramID, bnSymbol)
@@ -98,7 +98,7 @@ func (tbm *TelegramBotManager) handleChartIntervalCallback(callback *tgbotapi.Ca
 		return
 	}
 	rawSymbol := strings.ToUpper(strings.TrimSpace(parts[2]))
-	interval := strings.ToLower(strings.TrimSpace(parts[3]))
+	interval := normalizeChartInterval(strings.ToLower(strings.TrimSpace(parts[3])))
 	if !isChartIntervalSupported(interval) {
 		tbm.answerCallbackQuery(callback.ID, "不支持的时间维度")
 		return
@@ -239,6 +239,14 @@ func buildChartIntervalKeyboard(telegramID int64, symbol, interval string) tgbot
 		rows = append(rows, row)
 	}
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+// normalizeChartInterval 统一时间维度（兼容输入别名）
+func normalizeChartInterval(interval string) string {
+	if interval == "7d" {
+		return "1w"
+	}
+	return interval
 }
 
 // isChartIntervalSupported 校验时间维度白名单
