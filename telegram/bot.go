@@ -2579,6 +2579,8 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleDepositStatusRefreshCallback(callback, chatID, telegramID)
 	case "deposit_cancel":
 		tbm.handleDepositCancelCallback(callback, chatID, telegramID)
+	case "chart_interval":
+		tbm.handleChartIntervalCallback(callback, chatID, telegramID, parts)
 	default:
 		log.Printf("❌ 未知动作: %s", action)
 		tbm.answerCallbackQuery(callback.ID, "未知操作")
