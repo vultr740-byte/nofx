@@ -67,3 +67,5 @@ SECRET_ENCRYPTION_KEY=*
 .vercel
 
 .mcp.json
+
+.worktrees
