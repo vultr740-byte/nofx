@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -53,6 +54,8 @@ func (c *APIClient) GetKlines(symbol, interval string, limit int) ([]Kline, erro
 		return nil, fmt.Errorf("unsupported binance symbol: %s", symbol)
 	}
 
+	normalizedInterval := normalizeKlineInterval(strings.ToLower(interval))
+
 	url := fmt.Sprintf("%s/fapi/v1/klines", baseURL)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -61,7 +64,7 @@ func (c *APIClient) GetKlines(symbol, interval string, limit int) ([]Kline, erro
 
 	q := req.URL.Query()
 	q.Add("symbol", bnSymbol)
-	q.Add("interval", interval)
+	q.Add("interval", normalizedInterval)
 	q.Add("limit", strconv.Itoa(limit))
 	req.URL.RawQuery = q.Encode()
 
@@ -93,6 +96,13 @@ func (c *APIClient) GetKlines(symbol, interval string, limit int) ([]Kline, erro
 	}
 
 	return klines, nil
+}
+
+func normalizeKlineInterval(interval string) string {
+	if interval == "7d" {
+		return "1w"
+	}
+	return interval
 }
 
 func parseKline(kr KlineResponse) (Kline, error) {
