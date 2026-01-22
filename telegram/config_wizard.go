@@ -422,7 +422,7 @@ func (cw *ConfigWizard) processConfirmationByChoice(telegramID int64, confirm bo
 	}
 
 	cw.ttm.GetSessionManager().ClearSession(telegramID)
-	return "", true, nil
+	return "已取消", true, nil
 }
 
 // buildConfirmInlineKeyboard 构建确认按钮
