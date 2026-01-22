@@ -328,25 +328,44 @@ func (cw *ConfigWizard) getAPIKeyMessage(provider string) string {
 func (cw *ConfigWizard) getAPIKeyFormatHint(provider string) string {
 	switch normalizeAIProvider(provider) {
 	case "qwen":
-		return "❌ API KEY 格式错误！\n• 请输入阿里云 DashScope 创建的 AccessKey\n• 至少 15 个字符，可包含字母、数字和符号"
+		return "❌ API KEY 格式错误！\n• 必须以 sk- 开头\n• 至少 15 个字符\n• 仅支持可见ASCII字符（不含空格/换行/引号）"
 	default:
-		return "❌ API KEY 格式错误！\n• 请确认复制了完整的 DeepSeek API KEY\n• 支持任意字母、数字或符号组合"
+		return "❌ API KEY 格式错误！\n• 必须以 sk- 开头\n• 至少 8 个字符\n• 仅支持可见ASCII字符（不含空格/换行/引号）"
 	}
 }
 
 func (cw *ConfigWizard) validateAPIKeyForProvider(provider, apiKey string) bool {
 	switch normalizeAIProvider(provider) {
 	case "qwen":
-		return len(apiKey) >= 15
+		return validateAPIKeyCommon(apiKey, 15)
 	default:
-		return cw.validateDeepSeekAPIKey(apiKey)
+		return validateAPIKeyCommon(apiKey, 8)
 	}
 }
 
-// validateDeepSeekAPIKey 验证 DeepSeek API KEY 格式
-func (cw *ConfigWizard) validateDeepSeekAPIKey(apiKey string) bool {
-	trimmed := strings.TrimSpace(apiKey)
-	return len(trimmed) >= 8
+func validateAPIKeyCommon(apiKey string, minLen int) bool {
+	if apiKey == "" {
+		return false
+	}
+	if strings.TrimSpace(apiKey) != apiKey {
+		return false
+	}
+	if len(apiKey) < minLen {
+		return false
+	}
+	if !strings.HasPrefix(strings.ToLower(apiKey), "sk-") {
+		return false
+	}
+	for _, r := range apiKey {
+		if r < 33 || r > 126 {
+			return false
+		}
+		switch r {
+		case '"', '\'', '`':
+			return false
+		}
+	}
+	return true
 }
 
 // maskAPIKey 隐藏 API KEY 的敏感部分用于显示
@@ -403,7 +422,7 @@ func (cw *ConfigWizard) processConfirmationByChoice(telegramID int64, confirm bo
 	}
 
 	cw.ttm.GetSessionManager().ClearSession(telegramID)
-	return "❌ 配置已取消", true, nil
+	return "", true, nil
 }
 
 // buildConfirmInlineKeyboard 构建确认按钮

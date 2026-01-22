@@ -2718,13 +2718,15 @@ func (tbm *TelegramBotManager) handleConfirmTraderCallback(callback *tgbotapi.Ca
 	if callback.Message != nil {
 		statusText := "✅ 已确认创建"
 		if !confirm {
-			statusText = "❌ 已取消"
+			statusText = "❌ 配置已取消"
 		}
 		updatedText := fmt.Sprintf("%s\n\n%s", callback.Message.Text, statusText)
 		tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup())
 	}
 
-	tbm.sendMessage(chatID, response)
+	if response != "" {
+		tbm.sendMessage(chatID, response)
+	}
 }
 
 func (tbm *TelegramBotManager) handleExportPrivateKeyCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
