@@ -204,36 +204,6 @@ func GetAvailablePromptTemplates() []PromptTemplate {
 			AltcoinLeverage:     3,
 			ScanIntervalMinutes: 15,
 		},
-		{
-			Name:                "Hansen",
-			DisplayName:         "⚖️ 夏普比率优化",
-			PlainName:           "夏普比率优化",
-			Description:         "夏普比率优化策略，专注高质量低频交易，严格资金管理和绩效反馈驱动",
-			RiskLevel:           "标准",
-			BTCETHLeverage:      5,
-			AltcoinLeverage:     3,
-			ScanIntervalMinutes: 15,
-		},
-		{
-			Name:                "nof1",
-			DisplayName:         "🔧 系统化交易策略",
-			PlainName:           "系统化交易策略",
-			Description:         "系统化交易代理，严格按技术指标和风控参数执行，注重风险调整后收益",
-			RiskLevel:           "中等",
-			BTCETHLeverage:      10,
-			AltcoinLeverage:     5,
-			ScanIntervalMinutes: 15,
-		},
-		{
-			Name:                "taro_long_prompts",
-			DisplayName:         "🧠 多周期专家策略",
-			PlainName:           "多周期专家策略",
-			Description:         "多周期趋势确认策略，强调自主分析和持续学习，通过多时间框架共振优化收益",
-			RiskLevel:           "激进",
-			BTCETHLeverage:      12,
-			AltcoinLeverage:     8,
-			ScanIntervalMinutes: 15,
-		},
 	}
 }
 

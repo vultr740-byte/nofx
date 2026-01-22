@@ -843,16 +843,7 @@ func (tbm *TelegramBotManager) handleAPIKeyUpdateFlow(update tgbotapi.Update, se
 
 	switch session.State {
 	case StateUpdatingAIProvider:
-		if provider, ok := detectAIProviderFromInput(input); ok {
-			session.TraderConfig.AIProvider = provider
-			session.TraderConfig.Step = StateUpdatingAPIKey
-			sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
-			sessionMgr.UpdateSessionState(telegramID, StateUpdatingAPIKey)
-			tbm.sendMessageRemovingKeyboard(chatID, tbm.configWizard.getAPIKeyMessage(provider))
-			return
-		}
-
-		tbm.sendAIProviderSelectionMessage(chatID, "❌ 无法识别的选项，请点击按钮选择 DeepSeek 或 Qwen，或输入 1 / 2。输入 \"cancel\" 可取消。")
+		tbm.sendAIProviderSelectionMessage(chatID, telegramID, "❌ 请点击按钮选择 DeepSeek 或 Qwen。输入 \"cancel\" 可取消。")
 	case StateUpdatingAPIKey:
 		provider := normalizeAIProvider(session.TraderConfig.AIProvider)
 		if !tbm.configWizard.validateAPIKeyForProvider(provider, input) {
@@ -935,7 +926,7 @@ func (tbm *TelegramBotManager) handleRegularMessage(update tgbotapi.Update) {
 		}
 
 		if !isComplete && session.State == StateChoosingAIModel {
-			tbm.sendAIProviderSelectionMessage(chatID, response)
+			tbm.sendAIProviderSelectionMessage(chatID, telegramID, response)
 		} else if prevState == StateChoosingAIModel && session.State != StateChoosingAIModel {
 			tbm.sendMessageRemovingKeyboard(chatID, response)
 		} else if prevState == StateQuickSetup && session.State == StateQuickSetup {
@@ -1415,16 +1406,9 @@ func (tbm *TelegramBotManager) sendMessageWithInlineKeyboard(chatID int64, text 
 }
 
 // sendAIProviderSelectionMessage 发送AI提供商选择按钮
-func (tbm *TelegramBotManager) sendAIProviderSelectionMessage(chatID int64, text string) {
-	keyboard := tgbotapi.NewReplyKeyboard(
-		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("DeepSeek"),
-			tgbotapi.NewKeyboardButton("Qwen / 通义千问"),
-		),
-	)
-	keyboard.ResizeKeyboard = true
-	keyboard.OneTimeKeyboard = true
-	tbm.sendMessageWithMarkupAndReturnInternal(chatID, text, keyboard, true, false)
+func (tbm *TelegramBotManager) sendAIProviderSelectionMessage(chatID int64, telegramID int64, text string) {
+	keyboard := tbm.configWizard.buildAIProviderInlineKeyboard(telegramID)
+	tbm.sendMessageWithInlineKeyboard(chatID, text, keyboard)
 }
 
 // sendMessageRemovingKeyboard 发送消息并移除键盘
@@ -1957,15 +1941,15 @@ func (tbm *TelegramBotManager) startAPIKeyUpdate(chatID int64, telegramID int64)
 当前密钥: %s
 
 请选择要使用的大模型：
-1. DeepSeek（默认）
-2. Qwen / 通义千问
+DeepSeek（默认）
+Qwen / 通义千问
 
-点击下方按钮或回复 1 / 2，输入 "cancel" 可取消。`,
+请点击下方按钮选择，输入 "cancel" 可取消。`,
 		esc(trader.Name),
 		esc(providerName),
 		esc(maskedKey))
 
-	tbm.sendAIProviderSelectionMessage(chatID, message)
+	tbm.sendAIProviderSelectionMessage(chatID, telegramID, message)
 	return true
 }
 
@@ -2585,6 +2569,8 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleDepositCancelCallback(callback, chatID, telegramID)
 	case "chart_interval":
 		tbm.handleChartIntervalCallback(callback, chatID, telegramID, parts)
+	case "ai_provider":
+		tbm.handleAIProviderCallback(callback, chatID, telegramID, parts)
 	case "prompt_select":
 		tbm.handlePromptTemplateCallback(callback, chatID, telegramID, parts)
 	default:
@@ -2646,9 +2632,60 @@ func (tbm *TelegramBotManager) handlePromptTemplateCallback(callback *tgbotapi.C
 
 	session := tbm.tgTraderMgr.GetSessionManager().GetOrCreateSession(telegramID)
 	if session.State == StateChoosingAIModel {
-		tbm.sendAIProviderSelectionMessage(chatID, response)
+		tbm.sendAIProviderSelectionMessage(chatID, telegramID, response)
 	} else {
 		tbm.sendMessage(chatID, response)
+	}
+}
+
+// handleAIProviderCallback 处理AI提供商选择按钮
+func (tbm *TelegramBotManager) handleAIProviderCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
+	if len(parts) < 3 {
+		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
+		return
+	}
+	provider := parts[2]
+
+	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
+	session := sessionMgr.GetOrCreateSession(telegramID)
+
+	switch session.State {
+	case StateChoosingAIModel:
+		response, err := tbm.configWizard.processAIProviderSelectionByName(telegramID, provider)
+		if err != nil {
+			tbm.answerCallbackQuery(callback.ID, "选择失败")
+			tbm.sendMessage(chatID, fmt.Sprintf("❌ %s", esc(err)))
+			return
+		}
+		tbm.answerCallbackQuery(callback.ID, "✅ 已选择模型")
+		if callback.Message != nil {
+			displayName := aiProviderDisplayName(provider)
+			updatedText := fmt.Sprintf("%s\n\n✅ 已选择：%s", callback.Message.Text, esc(displayName))
+			tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup())
+		}
+		tbm.sendMessage(chatID, response)
+	case StateUpdatingAIProvider:
+		normalized := normalizeAIProvider(provider)
+		if normalized != "deepseek" && normalized != "qwen" {
+			tbm.answerCallbackQuery(callback.ID, "选择失败")
+			tbm.sendMessage(chatID, "❌ 无效的 AI 提供商")
+			return
+		}
+
+		session.TraderConfig.AIProvider = normalized
+		session.TraderConfig.Step = StateUpdatingAPIKey
+		sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
+		sessionMgr.UpdateSessionState(telegramID, StateUpdatingAPIKey)
+
+		tbm.answerCallbackQuery(callback.ID, "✅ 已选择模型")
+		if callback.Message != nil {
+			displayName := aiProviderDisplayName(normalized)
+			updatedText := fmt.Sprintf("%s\n\n✅ 已选择：%s", callback.Message.Text, esc(displayName))
+			tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup())
+		}
+		tbm.sendMessage(chatID, tbm.configWizard.getAPIKeyMessage(normalized))
+	default:
+		tbm.answerCallbackQuery(callback.ID, "当前不在选择步骤")
 	}
 }
 

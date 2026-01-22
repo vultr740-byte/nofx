@@ -413,7 +413,11 @@ func (cw *ConfigWizard) getPromptTemplateMessage() string {
 	message.WriteString("🎯 <b>选择交易策略</b>\n\n")
 
 	for _, template := range templates {
-		message.WriteString(fmt.Sprintf("• %s\n%s\n\n", template.DisplayName, template.Description))
+		displayName := template.DisplayName
+		if template.PlainName != "" {
+			displayName = template.PlainName
+		}
+		message.WriteString(fmt.Sprintf("<b>%s</b>\n%s\n\n", html.EscapeString(displayName), html.EscapeString(template.Description)))
 	}
 
 	message.WriteString("请点击下方按钮选择交易策略：")
@@ -564,11 +568,15 @@ func (cw *ConfigWizard) getQuickSetupMessage() string {
 	builder.WriteString("🤖 选择交易策略：\n\n")
 
 	for _, template := range templates {
-		builder.WriteString(fmt.Sprintf("• %s\n", template.DisplayName))
+		displayName := template.DisplayName
+		if template.PlainName != "" {
+			displayName = template.PlainName
+		}
+		builder.WriteString(fmt.Sprintf("<b>%s</b>\n", html.EscapeString(displayName)))
 		builder.WriteString(fmt.Sprintf("   • 杠杆：BTC/ETH %dx，山寨币 %dx\n", template.BTCETHLeverage, template.AltcoinLeverage))
 		builder.WriteString(fmt.Sprintf("   • 决策周期：%d分钟\n", template.ScanIntervalMinutes))
 		if template.Description != "" {
-			builder.WriteString(fmt.Sprintf("   • 特点：%s\n", template.Description))
+			builder.WriteString(fmt.Sprintf("   • 特点：%s\n", html.EscapeString(template.Description)))
 		}
 		builder.WriteString(fmt.Sprintf("   • Prompt: %s\n\n", template.Name))
 	}
@@ -583,9 +591,13 @@ func (cw *ConfigWizard) buildPromptTemplateInlineKeyboard(telegramID int64) tgbo
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(templates))
 
 	for _, template := range templates {
+		displayName := template.DisplayName
+		if template.PlainName != "" {
+			displayName = template.PlainName
+		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(
-				template.DisplayName,
+				displayName,
 				fmt.Sprintf("prompt_select|%d|%s", telegramID, template.Name),
 			),
 		))
@@ -598,42 +610,15 @@ func (cw *ConfigWizard) getAIProviderMessage() string {
 	return `🧠 创建 AI 交易员 - 选择大模型
 
 请选择要使用的 AI 提供商：
-1. DeepSeek（默认，性价比高，推理速度快）
-2. Qwen / 通义千问（由阿里云 DashScope 提供）
+DeepSeek（默认，性价比高，推理速度快）
+Qwen / 通义千问（由阿里云 DashScope 提供）
 
-请点击下方按钮或回复 1 / 2：`
+请点击下方按钮选择：`
 }
 
 func (cw *ConfigWizard) processAIProviderSelection(telegramID int64, input string) (string, bool, error) {
-	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
-
-	if provider, ok := detectAIProviderFromInput(input); ok {
-		session.TraderConfig.AIProvider = provider
-		session.State = StateSettingAPIKey
-		cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
-		return cw.getAPIKeyMessage(provider), false, nil
-	}
-
-	choice, err := cw.ttm.ParseIntInput(input)
-	if err != nil {
-		return cw.getAIProviderMessage() + "\n\n❌ 请输入 1 或 2", false, nil
-	}
-
-	var provider string
-	switch choice {
-	case 1:
-		provider = "deepseek"
-	case 2:
-		provider = "qwen"
-	default:
-		return cw.getAIProviderMessage() + "\n\n❌ 请选择有效的选项 (1-2)", false, nil
-	}
-
-	session.TraderConfig.AIProvider = provider
-	session.State = StateSettingAPIKey
-	cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
-
-	return cw.getAPIKeyMessage(provider), false, nil
+	_ = input
+	return cw.getAIProviderMessage() + "\n\n❌ 请点击下方按钮选择 AI 提供商", false, nil
 }
 
 // processQuickSetupInput 处理快速配置输入
@@ -664,4 +649,33 @@ func detectAIProviderFromInput(input string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// processAIProviderSelectionByName 处理AI提供商选择（按钮）
+func (cw *ConfigWizard) processAIProviderSelectionByName(telegramID int64, provider string) (string, error) {
+	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
+	if session.TraderConfig == nil {
+		session.TraderConfig = &TraderConfig{}
+	}
+
+	normalized := normalizeAIProvider(provider)
+	if normalized != "deepseek" && normalized != "qwen" {
+		return "", fmt.Errorf("无效的 AI 提供商")
+	}
+
+	session.TraderConfig.AIProvider = normalized
+	session.State = StateSettingAPIKey
+	cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
+
+	return cw.getAPIKeyMessage(normalized), nil
+}
+
+// buildAIProviderInlineKeyboard 构建AI提供商选择按钮
+func (cw *ConfigWizard) buildAIProviderInlineKeyboard(telegramID int64) tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("DeepSeek", fmt.Sprintf("ai_provider|%d|deepseek", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("Qwen / 通义千问", fmt.Sprintf("ai_provider|%d|qwen", telegramID)),
+		),
+	)
 }
