@@ -938,6 +938,10 @@ func (tbm *TelegramBotManager) handleRegularMessage(update tgbotapi.Update) {
 			tbm.sendAIProviderSelectionMessage(chatID, response)
 		} else if prevState == StateChoosingAIModel && session.State != StateChoosingAIModel {
 			tbm.sendMessageRemovingKeyboard(chatID, response)
+		} else if prevState == StateQuickSetup && session.State == StateQuickSetup {
+			tbm.sendMessageWithInlineKeyboard(chatID, response, tbm.configWizard.buildPromptTemplateInlineKeyboard(telegramID))
+		} else if prevState == StateChoosingPrompt && session.State == StateChoosingPrompt {
+			tbm.sendMessageWithInlineKeyboard(chatID, response, tbm.configWizard.buildPromptTemplateInlineKeyboard(telegramID))
 		} else {
 			tbm.sendMessage(chatID, response)
 		}
@@ -2010,7 +2014,7 @@ func (tbm *TelegramBotManager) handleCreateTrader(update tgbotapi.Update) {
 		return
 	}
 
-	tbm.sendMessage(chatID, message)
+	tbm.sendMessageWithInlineKeyboard(chatID, message, tbm.configWizard.buildPromptTemplateInlineKeyboard(telegramID))
 }
 
 // handleStartTrader 处理 /start_trader 命令
@@ -2581,6 +2585,8 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleDepositCancelCallback(callback, chatID, telegramID)
 	case "chart_interval":
 		tbm.handleChartIntervalCallback(callback, chatID, telegramID, parts)
+	case "prompt_select":
+		tbm.handlePromptTemplateCallback(callback, chatID, telegramID, parts)
 	default:
 		log.Printf("❌ 未知动作: %s", action)
 		tbm.answerCallbackQuery(callback.ID, "未知操作")
@@ -2612,6 +2618,38 @@ func (tbm *TelegramBotManager) handleStartTraderCallback(callback *tgbotapi.Call
 	}
 
 	tbm.updateProgressMessage(chatID, progressMsgID, "🚀 交易员启动成功！使用 /trader_status 查看运行状态")
+}
+
+// handlePromptTemplateCallback 处理策略选择按钮
+func (tbm *TelegramBotManager) handlePromptTemplateCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
+	if len(parts) < 3 {
+		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
+		return
+	}
+	templateName := parts[2]
+
+	response, err := tbm.configWizard.processPromptTemplateSelectionByName(telegramID, templateName)
+	if err != nil {
+		tbm.answerCallbackQuery(callback.ID, "选择失败")
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ %s", esc(err)))
+		return
+	}
+
+	tbm.answerCallbackQuery(callback.ID, "✅ 已选择策略")
+
+	// 更新原消息，移除按钮
+	if callback.Message != nil {
+		displayName := tbm.configWizard.getPromptDisplayNameClean(templateName)
+		updatedText := fmt.Sprintf("%s\n\n✅ 已选择：%s", callback.Message.Text, esc(displayName))
+		tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup())
+	}
+
+	session := tbm.tgTraderMgr.GetSessionManager().GetOrCreateSession(telegramID)
+	if session.State == StateChoosingAIModel {
+		tbm.sendAIProviderSelectionMessage(chatID, response)
+	} else {
+		tbm.sendMessage(chatID, response)
+	}
 }
 
 func (tbm *TelegramBotManager) handleExportPrivateKeyCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {

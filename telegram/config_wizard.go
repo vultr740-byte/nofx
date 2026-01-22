@@ -92,24 +92,47 @@ func (cw *ConfigWizard) ProcessInput(telegramID int64, input string) (string, bo
 
 // processPromptTemplateSelection 处理提示词模板选择
 func (cw *ConfigWizard) processPromptTemplateSelection(telegramID int64, input string) (string, bool, error) {
+	_ = input
+	return cw.getPromptTemplateMessage() + "\n\n❌ 请点击下方按钮选择交易策略", false, nil
+}
+
+// processPromptTemplateSelectionByName 处理提示词模板选择（按钮）
+func (cw *ConfigWizard) processPromptTemplateSelectionByName(telegramID int64, templateName string) (string, error) {
 	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
+	if session.TraderConfig == nil {
+		session.TraderConfig = &TraderConfig{}
+	}
+
 	templates := GetAvailablePromptTemplates()
-
-	choice, err := cw.ttm.ParseIntInput(input)
-	if err != nil {
-		return cw.getPromptTemplateMessage() + "\n\n❌ 请输入有效的数字 (1-" + strconv.Itoa(len(templates)) + ")", false, nil
+	var selected *PromptTemplate
+	for i := range templates {
+		if templates[i].Name == templateName {
+			selected = &templates[i]
+			break
+		}
+	}
+	if selected == nil {
+		return "", fmt.Errorf("未找到该交易策略")
 	}
 
-	if choice < 1 || choice > len(templates) {
-		return cw.getPromptTemplateMessage() + "\n\n❌ 请选择有效的选项 (1-" + strconv.Itoa(len(templates)) + ")", false, nil
+	switch session.State {
+	case StateQuickSetup:
+		session.TraderConfig.PromptTemplate = selected.Name
+		session.TraderConfig.RiskLevel = selected.RiskLevel
+		session.TraderConfig.BTCETHLeverage = selected.BTCETHLeverage
+		session.TraderConfig.AltcoinLeverage = selected.AltcoinLeverage
+		session.TraderConfig.ScanIntervalMinutes = selected.ScanIntervalMinutes
+		session.State = StateChoosingAIModel
+		cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
+		return cw.getAIProviderMessage(), nil
+	case StateChoosingPrompt:
+		session.TraderConfig.PromptTemplate = selected.Name
+		session.State = StateSettingBalance
+		cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
+		return cw.getBalanceMessage(), nil
+	default:
+		return "", fmt.Errorf("当前不在策略选择步骤")
 	}
-
-	selectedTemplate := templates[choice-1]
-	session.TraderConfig.PromptTemplate = selectedTemplate.Name
-	session.State = StateSettingBalance
-	cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
-
-	return cw.getBalanceMessage(), false, nil
 }
 
 // processBalanceInput 处理初始资金输入
@@ -350,7 +373,7 @@ func (cw *ConfigWizard) processConfirmation(telegramID int64, input string) (str
 			return fmt.Sprintf("❌ 创建交易员失败: %v", err), true, nil
 		}
 
-		log.Printf("✅ 成功创建交易员: %s, 钱包: %s, 私钥: %s", 
+		log.Printf("✅ 成功创建交易员: %s, 钱包: %s, 私钥: %s",
 			traderRecord.Name, traderRecord.WalletAddress, maskPrivateKey(traderRecord.PrivateKey))
 
 		cw.ttm.GetSessionManager().ClearSession(telegramID)
@@ -389,11 +412,11 @@ func (cw *ConfigWizard) getPromptTemplateMessage() string {
 	message.WriteString("🤖 <b>创建 AI 交易员 - 第1步</b>\n\n")
 	message.WriteString("🎯 <b>选择交易策略</b>\n\n")
 
-	for i, template := range templates {
-		message.WriteString(fmt.Sprintf("%d. %s\n%s\n\n", i+1, template.DisplayName, template.Description))
+	for _, template := range templates {
+		message.WriteString(fmt.Sprintf("• %s\n%s\n\n", template.DisplayName, template.Description))
 	}
 
-	message.WriteString("请回复数字选择 (1-" + strconv.Itoa(len(templates)) + ")：")
+	message.WriteString("请点击下方按钮选择交易策略：")
 	message.WriteString("\n\n💡 *输入 'cancel' 可随时取消配置*")
 
 	return message.String()
@@ -540,8 +563,8 @@ func (cw *ConfigWizard) getQuickSetupMessage() string {
 	var builder strings.Builder
 	builder.WriteString("🤖 选择交易策略：\n\n")
 
-	for i, template := range templates {
-		builder.WriteString(fmt.Sprintf("%d. %s\n", i+1, template.DisplayName))
+	for _, template := range templates {
+		builder.WriteString(fmt.Sprintf("• %s\n", template.DisplayName))
 		builder.WriteString(fmt.Sprintf("   • 杠杆：BTC/ETH %dx，山寨币 %dx\n", template.BTCETHLeverage, template.AltcoinLeverage))
 		builder.WriteString(fmt.Sprintf("   • 决策周期：%d分钟\n", template.ScanIntervalMinutes))
 		if template.Description != "" {
@@ -550,8 +573,25 @@ func (cw *ConfigWizard) getQuickSetupMessage() string {
 		builder.WriteString(fmt.Sprintf("   • Prompt: %s\n\n", template.Name))
 	}
 
-	builder.WriteString(fmt.Sprintf("请选择 1-%d：", len(templates)))
+	builder.WriteString("请点击下方按钮选择：")
 	return builder.String()
+}
+
+// buildPromptTemplateInlineKeyboard 构建策略选择按钮
+func (cw *ConfigWizard) buildPromptTemplateInlineKeyboard(telegramID int64) tgbotapi.InlineKeyboardMarkup {
+	templates := GetAvailablePromptTemplates()
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(templates))
+
+	for _, template := range templates {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(
+				template.DisplayName,
+				fmt.Sprintf("prompt_select|%d|%s", telegramID, template.Name),
+			),
+		))
+	}
+
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 func (cw *ConfigWizard) getAIProviderMessage() string {
@@ -598,29 +638,8 @@ func (cw *ConfigWizard) processAIProviderSelection(telegramID int64, input strin
 
 // processQuickSetupInput 处理快速配置输入
 func (cw *ConfigWizard) processQuickSetupInput(telegramID int64, input string) (string, bool, error) {
-	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
-	templates := GetAvailablePromptTemplates()
-
-	choice, err := cw.ttm.ParseIntInput(input)
-	if err != nil {
-		return cw.getQuickSetupMessage() + fmt.Sprintf("\n\n❌ 请输入有效的数字 (1-%d)", len(templates)), false, nil
-	}
-
-	if choice < 1 || choice > len(templates) {
-		return cw.getQuickSetupMessage() + fmt.Sprintf("\n\n❌ 请选择有效的选项 (1-%d)", len(templates)), false, nil
-	}
-
-	selected := templates[choice-1]
-	session.TraderConfig.PromptTemplate = selected.Name
-	session.TraderConfig.RiskLevel = selected.RiskLevel
-	session.TraderConfig.BTCETHLeverage = selected.BTCETHLeverage
-	session.TraderConfig.AltcoinLeverage = selected.AltcoinLeverage
-	session.TraderConfig.ScanIntervalMinutes = selected.ScanIntervalMinutes
-
-	session.State = StateChoosingAIModel
-	cw.ttm.GetSessionManager().UpdateTraderConfig(telegramID, session.TraderConfig)
-
-	return cw.getAIProviderMessage(), false, nil
+	_ = input
+	return cw.getQuickSetupMessage() + "\n\n❌ 请点击下方按钮选择交易策略", false, nil
 }
 
 func detectAIProviderFromInput(input string) (string, bool) {
