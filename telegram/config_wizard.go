@@ -429,7 +429,7 @@ func (cw *ConfigWizard) getPromptTemplateMessage() string {
 		if template.PlainName != "" {
 			displayName = template.PlainName
 		}
-		message.WriteString(fmt.Sprintf("<b>%s</b>\n%s\n\n", html.EscapeString(displayName), html.EscapeString(template.Description)))
+		message.WriteString(fmt.Sprintf("🔹 <b>%s</b>\n%s\n\n", html.EscapeString(displayName), html.EscapeString(template.Description)))
 	}
 
 	message.WriteString("请点击下方按钮选择交易策略：")
@@ -577,14 +577,14 @@ func (cw *ConfigWizard) getLeverageByRiskLevel(riskLevel string) (int, int) {
 func (cw *ConfigWizard) getQuickSetupMessage() string {
 	templates := GetAvailablePromptTemplates()
 	var builder strings.Builder
-	builder.WriteString("🤖 选择交易策略：\n\n")
+	builder.WriteString("📈 选择交易策略：\n\n")
 
 	for _, template := range templates {
 		displayName := template.DisplayName
 		if template.PlainName != "" {
 			displayName = template.PlainName
 		}
-		builder.WriteString(fmt.Sprintf("<b>%s</b>\n", html.EscapeString(displayName)))
+		builder.WriteString(fmt.Sprintf("🔹 <b>%s</b>\n", html.EscapeString(displayName)))
 		builder.WriteString(fmt.Sprintf("   • 杠杆：BTC/ETH %dx，山寨币 %dx\n", template.BTCETHLeverage, template.AltcoinLeverage))
 		builder.WriteString(fmt.Sprintf("   • 决策周期：%d分钟\n", template.ScanIntervalMinutes))
 		if template.Description != "" {
@@ -619,7 +619,7 @@ func (cw *ConfigWizard) buildPromptTemplateInlineKeyboard(telegramID int64) tgbo
 }
 
 func (cw *ConfigWizard) getAIProviderMessage() string {
-	return `🧠 创建 AI 交易员 - 选择大模型
+	return `🤖 创建 AI 交易员 - 选择大模型
 
 请选择要使用的 AI 提供商：
 DeepSeek（默认，性价比高，推理速度快）
