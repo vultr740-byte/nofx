@@ -2716,12 +2716,12 @@ func (tbm *TelegramBotManager) handleConfirmTraderCallback(callback *tgbotapi.Ca
 	}
 
 	if callback.Message != nil {
-		statusText := "✅ 已确认创建"
 		if !confirm {
-			statusText = "已取消"
+			tbm.deleteMessage(chatID, callback.Message.MessageID)
+		} else {
+			updatedText := fmt.Sprintf("%s\n\n✅ 已确认创建", callback.Message.Text)
+			tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup())
 		}
-		updatedText := fmt.Sprintf("%s\n\n%s", callback.Message.Text, statusText)
-		tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup())
 	}
 
 	if response != "" {
