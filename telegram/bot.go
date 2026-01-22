@@ -1943,8 +1943,8 @@ func (tbm *TelegramBotManager) startAPIKeyUpdate(chatID int64, telegramID int64)
 当前密钥: %s
 
 请选择要使用的大模型：
-DeepSeek（默认）
-Qwen / 通义千问
+DeepSeek（默认，性价比高，推理速度快）
+Qwen / 通义千问（由阿里云 DashScope 提供，稳定可靠）
 
 请点击下方按钮选择，输入 "cancel" 可取消。`,
 		esc(trader.Name),

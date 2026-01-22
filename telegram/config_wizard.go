@@ -623,7 +623,7 @@ func (cw *ConfigWizard) getAIProviderMessage() string {
 
 请选择要使用的 AI 提供商：
 DeepSeek（默认，性价比高，推理速度快）
-Qwen / 通义千问（由阿里云 DashScope 提供）
+Qwen / 通义千问（由阿里云 DashScope 提供，稳定可靠）
 
 请点击下方按钮选择：`
 }
