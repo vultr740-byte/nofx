@@ -363,10 +363,15 @@ func (cw *ConfigWizard) maskAPIKey(apiKey string) string {
 
 // processConfirmation 处理确认
 func (cw *ConfigWizard) processConfirmation(telegramID int64, input string) (string, bool, error) {
+	_ = input
+	return cw.getConfirmMessage(telegramID) + "\n\n❌ 请点击下方按钮确认或取消", false, nil
+}
+
+// processConfirmationByChoice 处理确认选择（按钮）
+func (cw *ConfigWizard) processConfirmationByChoice(telegramID int64, confirm bool) (string, bool, error) {
 	session := cw.ttm.GetSessionManager().GetOrCreateSession(telegramID)
 
-	if strings.ToLower(input) == "y" || input == "是" || input == "yes" {
-		// 创建交易员
+	if confirm {
 		traderRecord, err := cw.ttm.CreateTrader(telegramID, session.TraderConfig)
 		if err != nil {
 			cw.ttm.GetSessionManager().ClearSession(telegramID)
@@ -396,12 +401,18 @@ func (cw *ConfigWizard) processConfirmation(telegramID int64, input string) (str
 			html.EscapeString(traderRecord.WalletAddress)), true, nil
 	}
 
-	if strings.ToLower(input) == "n" || input == "否" || input == "no" {
-		cw.ttm.GetSessionManager().ClearSession(telegramID)
-		return "❌ 配置已取消", true, nil
-	}
+	cw.ttm.GetSessionManager().ClearSession(telegramID)
+	return "❌ 配置已取消", true, nil
+}
 
-	return cw.getConfirmMessage(telegramID) + "\n\n❌ 请输入 'y' 或 'n'", false, nil
+// buildConfirmInlineKeyboard 构建确认按钮
+func (cw *ConfigWizard) buildConfirmInlineKeyboard(telegramID int64) tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✅ 确认创建", fmt.Sprintf("confirm_trader|%d|yes", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("❌ 取消", fmt.Sprintf("confirm_trader|%d|no", telegramID)),
+		),
+	)
 }
 
 // 消息生成方法
@@ -526,7 +537,7 @@ func (cw *ConfigWizard) getConfirmMessage(telegramID int64) string {
 		message.WriteString(fmt.Sprintf("%s API KEY: %s\n", providerName, cw.maskAPIKey(config.AIModelAPIKey)))
 	}
 
-	message.WriteString("\n确认创建交易员吗？ (y/n)")
+	message.WriteString("\n请点击下方按钮确认创建交易员：")
 
 	return message.String()
 }

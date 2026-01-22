@@ -933,6 +933,8 @@ func (tbm *TelegramBotManager) handleRegularMessage(update tgbotapi.Update) {
 			tbm.sendMessageWithInlineKeyboard(chatID, response, tbm.configWizard.buildPromptTemplateInlineKeyboard(telegramID))
 		} else if prevState == StateChoosingPrompt && session.State == StateChoosingPrompt {
 			tbm.sendMessageWithInlineKeyboard(chatID, response, tbm.configWizard.buildPromptTemplateInlineKeyboard(telegramID))
+		} else if !isComplete && session.State == StateConfirm {
+			tbm.sendMessageWithInlineKeyboard(chatID, response, tbm.configWizard.buildConfirmInlineKeyboard(telegramID))
 		} else {
 			tbm.sendMessage(chatID, response)
 		}
@@ -2573,6 +2575,8 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleAIProviderCallback(callback, chatID, telegramID, parts)
 	case "prompt_select":
 		tbm.handlePromptTemplateCallback(callback, chatID, telegramID, parts)
+	case "confirm_trader":
+		tbm.handleConfirmTraderCallback(callback, chatID, telegramID, parts)
 	default:
 		log.Printf("❌ 未知动作: %s", action)
 		tbm.answerCallbackQuery(callback.ID, "未知操作")
@@ -2687,6 +2691,40 @@ func (tbm *TelegramBotManager) handleAIProviderCallback(callback *tgbotapi.Callb
 	default:
 		tbm.answerCallbackQuery(callback.ID, "当前不在选择步骤")
 	}
+}
+
+// handleConfirmTraderCallback 处理确认创建交易员按钮
+func (tbm *TelegramBotManager) handleConfirmTraderCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
+	if len(parts) < 3 {
+		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
+		return
+	}
+	choice := strings.ToLower(strings.TrimSpace(parts[2]))
+	confirm := choice == "yes"
+
+	response, _, err := tbm.configWizard.processConfirmationByChoice(telegramID, confirm)
+	if err != nil {
+		tbm.answerCallbackQuery(callback.ID, "操作失败")
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ %s", esc(err)))
+		return
+	}
+
+	if confirm {
+		tbm.answerCallbackQuery(callback.ID, "✅ 已确认")
+	} else {
+		tbm.answerCallbackQuery(callback.ID, "❌ 已取消")
+	}
+
+	if callback.Message != nil {
+		statusText := "✅ 已确认创建"
+		if !confirm {
+			statusText = "❌ 已取消"
+		}
+		updatedText := fmt.Sprintf("%s\n\n%s", callback.Message.Text, statusText)
+		tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup())
+	}
+
+	tbm.sendMessage(chatID, response)
 }
 
 func (tbm *TelegramBotManager) handleExportPrivateKeyCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
