@@ -394,8 +394,9 @@ func (cw *ConfigWizard) processConfirmationByChoice(telegramID int64, confirm bo
 • 系统将自动使用私钥进行交易
 
 💡 下一步:
+使用 /deposit 充值资金
 使用 /start_trader 启动交易员
-使用 /balance 查看账户余额`,
+`,
 			html.EscapeString(traderRecord.Name),
 			html.EscapeString(cw.getPromptDisplayNameClean(session.TraderConfig.PromptTemplate)),
 			html.EscapeString(traderRecord.WalletAddress)), true, nil
@@ -410,7 +411,7 @@ func (cw *ConfigWizard) buildConfirmInlineKeyboard(telegramID int64) tgbotapi.In
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("✅ 确认创建", fmt.Sprintf("confirm_trader|%d|yes", telegramID)),
-			tgbotapi.NewInlineKeyboardButtonData("❌ 取消", fmt.Sprintf("confirm_trader|%d|no", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("🗑️ 取消", fmt.Sprintf("confirm_trader|%d|no", telegramID)),
 		),
 	)
 }
