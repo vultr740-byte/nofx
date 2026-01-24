@@ -37,9 +37,14 @@ func Get(symbol string) (*Data, error) {
 		klines1h = nil
 	}
 
+	now := serverTimeNow()
+	klines15mClosed := filterClosedKlines(klines15m, now)
+	klines1hClosed := filterClosedKlines(klines1h, now)
+	klines4hClosed := filterClosedKlines(klines4h, now)
+
 	// 计算当前价格 (基于15分钟最新数据)
 	currentPrice := klines15m[len(klines15m)-1].Close
-	currentRSI15m14 := calculateRSI(klines15m, 14)
+	currentRSI15m14 := calculateRSI(klines15mClosed, 14)
 
 	// 计算价格变化百分比
 	// 1小时价格变化 = 4个15分钟K线前的价格 (4 * 15 = 60分钟)
@@ -76,12 +81,12 @@ func Get(symbol string) (*Data, error) {
 	// 计算1小时结构数据（仅收盘价序列）
 	hourlyData := calculateHourlyData(klines1h)
 	currentRSI1h14 := 0.0
-	if len(klines1h) > 0 {
-		currentRSI1h14 = calculateRSI(klines1h, 14)
+	if len(klines1hClosed) > 0 {
+		currentRSI1h14 = calculateRSI(klines1hClosed, 14)
 	}
 
 	// 计算长期数据
-	longerTermData := calculateLongerTermData(klines4h)
+	longerTermData := calculateLongerTermData(klines4h, klines4hClosed)
 
 	return &Data{
 		Symbol:            symbol,
@@ -132,6 +137,21 @@ func calculateMACD(klines []Kline) float64 {
 
 	// MACD = EMA12 - EMA26
 	return ema12 - ema26
+}
+
+func filterClosedKlines(klines []Kline, now time.Time) []Kline {
+	if len(klines) == 0 {
+		return klines
+	}
+
+	cutoff := now.UnixMilli()
+	closed := make([]Kline, 0, len(klines))
+	for _, k := range klines {
+		if k.CloseTime <= cutoff {
+			closed = append(closed, k)
+		}
+	}
+	return closed
 }
 
 // calculateRSI 计算RSI
@@ -257,7 +277,7 @@ func calculateIntradaySeries(klines []Kline) *IntradayData {
 }
 
 // calculateLongerTermData 计算长期数据
-func calculateLongerTermData(klines []Kline) *LongerTermData {
+func calculateLongerTermData(klines []Kline, indicatorKlines []Kline) *LongerTermData {
 	data := &LongerTermData{
 		// 注释掉技术指标字段，default.txt 策略只使用结构分析
 		// MACDValues:  make([]float64, 0, 10),
@@ -274,10 +294,10 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 	// data.EMA50 = calculateEMA(klines, 50)
 
 	// 计算ATR
-	data.ATR14 = calculateATR(klines, 14)
+	data.ATR14 = calculateATR(indicatorKlines, 14)
 
 	// 计算RSI14（4h）
-	data.RSI14 = calculateRSI(klines, 14)
+	data.RSI14 = calculateRSI(indicatorKlines, 14)
 
 	// 计算成交量
 	if len(klines) > 0 {

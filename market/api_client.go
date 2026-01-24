@@ -8,15 +8,20 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
 	baseURL = "https://fapi.binance.com"
+	serverTimeTTL = 30 * time.Second
 )
 
 type APIClient struct {
 	client *http.Client
+	timeMu       sync.RWMutex
+	timeOffset   int64
+	timeSyncedAt time.Time
 }
 
 func NewAPIClient() *APIClient {
@@ -46,6 +51,63 @@ func (c *APIClient) GetExchangeInfo() (*ExchangeInfo, error) {
 	}
 
 	return &exchangeInfo, nil
+}
+
+func (c *APIClient) ServerTime() (int64, error) {
+	if c == nil {
+		return 0, fmt.Errorf("nil api client")
+	}
+
+	c.timeMu.RLock()
+	if !c.timeSyncedAt.IsZero() && time.Since(c.timeSyncedAt) < serverTimeTTL {
+		offset := c.timeOffset
+		c.timeMu.RUnlock()
+		return time.Now().UnixMilli() - offset, nil
+	}
+	c.timeMu.RUnlock()
+
+	serverTime, err := c.fetchServerTime()
+	if err != nil {
+		return 0, err
+	}
+
+	now := time.Now().UnixMilli()
+	offset := now - serverTime
+
+	c.timeMu.Lock()
+	c.timeOffset = offset
+	c.timeSyncedAt = time.Now()
+	c.timeMu.Unlock()
+
+	return serverTime, nil
+}
+
+func (c *APIClient) fetchServerTime() (int64, error) {
+	url := fmt.Sprintf("%s/fapi/v1/time", baseURL)
+	resp, err := c.client.Get(url)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("server time status %d: %s", resp.StatusCode, truncateForLog(string(body)))
+	}
+
+	var payload struct {
+		ServerTime int64 `json:"serverTime"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return 0, err
+	}
+	if payload.ServerTime == 0 {
+		return 0, fmt.Errorf("serverTime missing in response")
+	}
+	return payload.ServerTime, nil
 }
 
 func (c *APIClient) GetKlines(symbol, interval string, limit int) ([]Kline, error) {
@@ -96,6 +158,16 @@ func (c *APIClient) GetKlines(symbol, interval string, limit int) ([]Kline, erro
 	}
 
 	return klines, nil
+}
+
+var serverTimeClient = NewAPIClient()
+
+func serverTimeNow() time.Time {
+	serverTime, err := serverTimeClient.ServerTime()
+	if err != nil {
+		return time.Now()
+	}
+	return time.UnixMilli(serverTime)
 }
 
 func normalizeKlineInterval(interval string) string {
