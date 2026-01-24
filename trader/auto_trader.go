@@ -293,6 +293,18 @@ type AutoTrader struct {
 	hlWSTestnet    bool
 }
 
+// ensureUserInitialBalance 确保收益率基准存在（仅在缺失时回退到同步余额）
+func (at *AutoTrader) ensureUserInitialBalance() float64 {
+	if at.userInitialBalance > 0 {
+		return at.userInitialBalance
+	}
+	if at.initialBalance > 0 {
+		at.userInitialBalance = at.initialBalance
+		log.Printf("⚠️ [AccountInfo] 用户初始余额缺失，使用同步余额作为基准: %.2f", at.initialBalance)
+	}
+	return at.userInitialBalance
+}
+
 // NewAutoTrader 创建自动交易器
 func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string) (*AutoTrader, error) {
 	// 设置默认值
@@ -1879,23 +1891,24 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 	}
 
 	// 4. 计算总盈亏
-	totalPnL := totalEquity - at.userInitialBalance
+	baseBalance := at.ensureUserInitialBalance()
+	totalPnL := totalEquity - baseBalance
 	totalPnLPct := 0.0
 
 	// 添加边界检查和验证
-	if at.userInitialBalance <= 0 {
+	if baseBalance <= 0 {
 		// 用户初始余额无效，记录警告但避免除零错误
-		log.Printf("⚠️ [AccountInfo] 用户初始余额无效 (trader=%s user_initial=%.2f)", at.name, at.userInitialBalance)
+		log.Printf("⚠️ [AccountInfo] 用户初始余额无效 (trader=%s user_initial=%.2f)", at.name, baseBalance)
 		totalPnL = totalEquity
 		totalPnLPct = 0.0
 	} else {
 		// 正常计算收益率
-		totalPnLPct = (totalPnL / at.userInitialBalance) * 100
+		totalPnLPct = (totalPnL / baseBalance) * 100
 
 		// 边界检查：异常高的收益率可能表示数据错误
 		if math.Abs(totalPnLPct) > 10000 { // 10000% = 100倍收益
 			log.Printf("🚨 [AccountInfo] 异常高收益率检测 (trader=%s pnl_pct=%.2f%% user_initial=%.2f pnl=%.2f)",
-				at.name, totalPnLPct, at.userInitialBalance, totalPnL)
+				at.name, totalPnLPct, baseBalance, totalPnL)
 			// 可以选择限制最大收益率，但暂时记录日志不修改数值
 		}
 	}
@@ -2839,23 +2852,24 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 		totalMarginUsed += marginUsed
 	}
 
-	totalPnL := totalEquity - at.userInitialBalance
+	baseBalance := at.ensureUserInitialBalance()
+	totalPnL := totalEquity - baseBalance
 	totalPnLPct := 0.0
 
 	// 添加边界检查和验证
-	if at.userInitialBalance <= 0 {
+	if baseBalance <= 0 {
 		// 用户初始余额无效，记录警告但避免除零错误
-		log.Printf("⚠️ [AccountInfo] 用户初始余额无效 (trader=%s user_initial=%.2f)", at.name, at.userInitialBalance)
+		log.Printf("⚠️ [AccountInfo] 用户初始余额无效 (trader=%s user_initial=%.2f)", at.name, baseBalance)
 		totalPnL = totalEquity
 		totalPnLPct = 0.0
 	} else {
 		// 正常计算收益率
-		totalPnLPct = (totalPnL / at.userInitialBalance) * 100
+		totalPnLPct = (totalPnL / baseBalance) * 100
 
 		// 边界检查：异常高的收益率可能表示数据错误
 		if math.Abs(totalPnLPct) > 10000 { // 10000% = 100倍收益
 			log.Printf("🚨 [AccountInfo] 异常高收益率检测 (trader=%s pnl_pct=%.2f%% user_initial=%.2f pnl=%.2f)",
-				at.name, totalPnLPct, at.userInitialBalance, totalPnL)
+				at.name, totalPnLPct, baseBalance, totalPnL)
 			// 可以选择限制最大收益率，但暂时记录日志不修改数值
 		}
 	}
@@ -2867,7 +2881,7 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 
 	// 诊断日志：输出盈亏相关数据，便于排查排行榜异常
 	log.Printf("📈 [AccountInfo] trader=%s equity=%.2f user_initial=%.2f synced_initial=%.2f pnl=%.2f pnl_pct=%.2f unrealized=%.2f margin_used=%.2f",
-		at.name, totalEquity, at.userInitialBalance, at.initialBalance, totalPnL, totalPnLPct, totalUnrealizedPnL, totalMarginUsed)
+		at.name, totalEquity, baseBalance, at.initialBalance, totalPnL, totalPnLPct, totalUnrealizedPnL, totalMarginUsed)
 
 	return map[string]interface{}{
 		// 核心字段
@@ -2877,12 +2891,12 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 		"available_balance": availableBalance,      // 可用余额
 
 		// 盈亏统计
-		"total_pnl":              totalPnL,              // 总盈亏 = equity - initial
-		"total_pnl_pct":          totalPnLPct,           // 总盈亏百分比
-		"total_unrealized_pnl":   totalUnrealizedPnL,    // 未实现盈亏（从持仓计算）
-		"initial_balance":        at.userInitialBalance, // 用户初始投资余额
-		"synced_initial_balance": at.initialBalance,     // 自动同步的余额
-		"daily_pnl":              at.dailyPnL,           // 日盈亏
+		"total_pnl":              totalPnL,           // 总盈亏 = equity - initial
+		"total_pnl_pct":          totalPnLPct,        // 总盈亏百分比
+		"total_unrealized_pnl":   totalUnrealizedPnL, // 未实现盈亏（从持仓计算）
+		"initial_balance":        baseBalance,        // 用户初始投资余额
+		"synced_initial_balance": at.initialBalance,  // 自动同步的余额
+		"daily_pnl":              at.dailyPnL,        // 日盈亏
 
 		// 持仓信息
 		"position_count":  len(positions),  // 持仓数量
