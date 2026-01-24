@@ -657,7 +657,7 @@ func (tbm *TelegramBotManager) handleLeaderboard(update tgbotapi.Update) {
 		}
 	}
 
-	data, err := tbm.traderMgr.GetCompetitionDataByIDs(traderIDs)
+	data, err := tbm.traderMgr.GetLeaderboardDataByIDs(traderIDs)
 	if err != nil {
 		log.Printf("获取排行榜失败: %v", err)
 		tbm.sendMessage(chatID, "❌ 获取排行榜失败，请稍后重试。")

@@ -612,6 +612,47 @@ func (tm *TraderManager) GetCompetitionDataByIDs(traderIDs []string) (map[string
 	}, nil
 }
 
+// GetLeaderboardDataByIDs 获取指定 trader 列表的排行榜数据（轻量版，不拉持仓）
+func (tm *TraderManager) GetLeaderboardDataByIDs(traderIDs []string) (map[string]interface{}, error) {
+	tm.mu.RLock()
+	selected := make([]*trader.AutoTrader, 0, len(traderIDs))
+	for _, id := range traderIDs {
+		if t, ok := tm.traders[id]; ok {
+			selected = append(selected, t)
+		}
+	}
+	tm.mu.RUnlock()
+
+	if len(selected) == 0 {
+		return map[string]interface{}{
+			"traders":     []map[string]interface{}{},
+			"count":       0,
+			"total_count": 0,
+		}, nil
+	}
+
+	traders := tm.getConcurrentTraderDataLight(selected)
+
+	// 按收益率排序（降序）
+	sort.Slice(traders, func(i, j int) bool {
+		pnlPctI, okI := traders[i]["total_pnl_pct"].(float64)
+		pnlPctJ, okJ := traders[j]["total_pnl_pct"].(float64)
+		if !okI {
+			pnlPctI = 0
+		}
+		if !okJ {
+			pnlPctJ = 0
+		}
+		return pnlPctI > pnlPctJ
+	})
+
+	return map[string]interface{}{
+		"traders":     traders,
+		"count":       len(traders),
+		"total_count": len(traders),
+	}, nil
+}
+
 // GetTGCompetitionData 获取仅TG交易员的竞赛数据（按收益率排序）
 func (tm *TraderManager) GetTGCompetitionData() (map[string]interface{}, error) {
 	tm.mu.RLock()
@@ -664,7 +705,7 @@ func (tm *TraderManager) getConcurrentTraderData(traders []*trader.AutoTrader) [
 	for i, t := range traders {
 		go func(index int, trader *trader.AutoTrader) {
 			// 设置单个交易员的超时时间为3秒
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 			defer cancel()
 
 			// 使用通道来实现超时控制
@@ -737,6 +778,94 @@ func (tm *TraderManager) getConcurrentTraderData(traders []*trader.AutoTrader) [
 	}
 
 	// 收集所有结果
+	results := make([]map[string]interface{}, len(traders))
+	for i := 0; i < len(traders); i++ {
+		result := <-resultChan
+		results[result.index] = result.data
+	}
+
+	return results
+}
+
+// getConcurrentTraderDataLight 并发获取多个交易员的数据（轻量版，不拉持仓）
+func (tm *TraderManager) getConcurrentTraderDataLight(traders []*trader.AutoTrader) []map[string]interface{} {
+	type traderResult struct {
+		index int
+		data  map[string]interface{}
+	}
+
+	resultChan := make(chan traderResult, len(traders))
+
+	for i, t := range traders {
+		go func(index int, trader *trader.AutoTrader) {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+
+			accountChan := make(chan map[string]interface{}, 1)
+			errorChan := make(chan error, 1)
+
+			go func() {
+				account, err := trader.GetAccountInfoLight()
+				if err != nil {
+					errorChan <- err
+				} else {
+					accountChan <- account
+				}
+			}()
+
+			status := trader.GetStatus()
+			var traderData map[string]interface{}
+
+			select {
+			case account := <-accountChan:
+				traderData = map[string]interface{}{
+					"trader_id":       trader.GetID(),
+					"trader_name":     trader.GetName(),
+					"ai_model":        trader.GetAIModel(),
+					"exchange":        trader.GetExchange(),
+					"total_equity":    account["total_equity"],
+					"total_pnl":       account["total_pnl"],
+					"total_pnl_pct":   account["total_pnl_pct"],
+					"position_count":  account["position_count"],
+					"margin_used_pct": account["margin_used_pct"],
+					"is_running":      status["is_running"],
+				}
+			case err := <-errorChan:
+				log.Printf("⚠️ 获取交易员 %s 账户信息失败: %v", trader.GetID(), err)
+				traderData = map[string]interface{}{
+					"trader_id":       trader.GetID(),
+					"trader_name":     trader.GetName(),
+					"ai_model":        trader.GetAIModel(),
+					"exchange":        trader.GetExchange(),
+					"total_equity":    0.0,
+					"total_pnl":       0.0,
+					"total_pnl_pct":   0.0,
+					"position_count":  0,
+					"margin_used_pct": 0.0,
+					"is_running":      status["is_running"],
+					"error":           "账户数据获取失败",
+				}
+			case <-ctx.Done():
+				log.Printf("⏰ 获取交易员 %s 账户信息超时", trader.GetID())
+				traderData = map[string]interface{}{
+					"trader_id":       trader.GetID(),
+					"trader_name":     trader.GetName(),
+					"ai_model":        trader.GetAIModel(),
+					"exchange":        trader.GetExchange(),
+					"total_equity":    0.0,
+					"total_pnl":       0.0,
+					"total_pnl_pct":   0.0,
+					"position_count":  0,
+					"margin_used_pct": 0.0,
+					"is_running":      status["is_running"],
+					"error":           "获取超时",
+				}
+			}
+
+			resultChan <- traderResult{index: index, data: traderData}
+		}(i, t)
+	}
+
 	results := make([]map[string]interface{}, len(traders))
 	for i := 0; i < len(traders); i++ {
 		result := <-resultChan

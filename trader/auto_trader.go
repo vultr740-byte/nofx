@@ -2802,6 +2802,67 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 	}
 }
 
+// GetAccountInfoLight 获取账户信息（轻量版，用于排行榜）
+func (at *AutoTrader) GetAccountInfoLight() (map[string]interface{}, error) {
+	balance, err := at.trader.GetBalance()
+	if err != nil {
+		return nil, fmt.Errorf("获取余额失败: %w", err)
+	}
+
+	totalWalletBalance := 0.0
+	totalUnrealizedProfit := 0.0
+	availableBalance := 0.0
+
+	if wallet, ok := balance["totalWalletBalance"].(float64); ok {
+		totalWalletBalance = wallet
+	}
+	if unrealized, ok := balance["totalUnrealizedProfit"].(float64); ok {
+		totalUnrealizedProfit = unrealized
+	}
+	if avail, ok := balance["availableBalance"].(float64); ok {
+		availableBalance = avail
+	}
+
+	// totalWalletBalance 已包含净值
+	totalEquity := totalWalletBalance
+
+	baseBalance := at.ensureUserInitialBalance()
+	totalPnL := totalEquity - baseBalance
+	totalPnLPct := 0.0
+	if baseBalance <= 0 {
+		log.Printf("⚠️ [AccountInfo] 用户初始余额无效 (trader=%s user_initial=%.2f)", at.name, baseBalance)
+		totalPnL = totalEquity
+		totalPnLPct = 0.0
+	} else {
+		totalPnLPct = (totalPnL / baseBalance) * 100
+		if math.Abs(totalPnLPct) > 10000 {
+			log.Printf("🚨 [AccountInfo] 异常高收益率检测 (trader=%s pnl_pct=%.2f%% user_initial=%.2f pnl=%.2f)",
+				at.name, totalPnLPct, baseBalance, totalPnL)
+		}
+	}
+
+	return map[string]interface{}{
+		// 核心字段
+		"total_equity":      totalEquity,
+		"wallet_balance":    totalWalletBalance,
+		"unrealized_profit": totalUnrealizedProfit,
+		"available_balance": availableBalance,
+
+		// 盈亏统计
+		"total_pnl":              totalPnL,
+		"total_pnl_pct":          totalPnLPct,
+		"total_unrealized_pnl":   0.0,
+		"initial_balance":        baseBalance,
+		"synced_initial_balance": at.initialBalance,
+		"daily_pnl":              at.dailyPnL,
+
+		// 持仓信息（轻量版不获取）
+		"position_count":  0,
+		"margin_used":     0.0,
+		"margin_used_pct": 0.0,
+	}, nil
+}
+
 // GetAccountInfo 获取账户信息（用于API）
 func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 	balance, err := at.trader.GetBalance()
