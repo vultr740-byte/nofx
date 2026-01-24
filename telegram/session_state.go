@@ -195,6 +195,16 @@ func GetAvailablePromptTemplates() []PromptTemplate {
 			ScanIntervalMinutes: 15,
 		},
 		{
+			Name:                "range_reversion",
+			DisplayName:         "🔹 RSI震荡策略",
+			PlainName:           "RSI震荡策略",
+			Description:         "RSI驱动的区间震荡反转，4H/1H定区间，15m极端入场；ATR风控、分批止盈",
+			RiskLevel:           "标准",
+			BTCETHLeverage:      5,
+			AltcoinLeverage:     3,
+			ScanIntervalMinutes: 15,
+		},
+		{
 			Name:                "structure_trend",
 			DisplayName:         "🧭 结构趋势（RSI过滤）",
 			PlainName:           "结构趋势（RSI过滤）",
