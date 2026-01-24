@@ -14,7 +14,7 @@ import (
 
 // ParsedCommand 表示解析后的交易命令
 type ParsedCommand struct {
-	Action     string  `json:"action"`     // "long", "short", "close", "stop_loss", "take_profit", "close_all"
+	Action     string  `json:"action"`     // "long", "short", "close", "stop_loss", "take_profit", "close_all", "cancel_stop_loss", "cancel_take_profit"
 	Symbol     string  `json:"symbol"`     // "ETH", "BTC", etc.
 	AssetType  string  `json:"asset_type"` // "crypto", "stock", "forex", "commodity"
 	Leverage   int     `json:"leverage"`   // 2, 3, 5, etc. (0 for close operations)
@@ -164,7 +164,7 @@ func (p *NLParser) parseWithAI(message string) (*ParsedCommand, error) {
 
 请直接返回JSON（无其他文字）:
 {
-  "action": "long|short|close|stop_loss|take_profit|close_all",
+  "action": "long|short|close|stop_loss|take_profit|close_all|cancel_stop_loss|cancel_take_profit",
   "symbol": "交易代码(大写，无空格)",
   "asset_type": "crypto|stock|forex|commodity",
   "leverage": 数字或0,
@@ -192,6 +192,10 @@ func (p *NLParser) parseWithAI(message string) (*ParsedCommand, error) {
 - "欧元美元"、"EURUSD" → forex
 - "黄金"、"GOLD" → commodity
 - "原油"、"OIL" → commodity
+
+取消类指令示例：
+- "取消止损 BTC" / "撤销止损 ETH" → action: cancel_stop_loss
+- "取消止盈 BTC" / "移除止盈 ETH" → action: cancel_take_profit
 
 资产类型智能判断规则:
 1. "crypto": 加密货币
@@ -285,6 +289,7 @@ func (p *NLParser) parseWithRegex(message string) (*ParsedCommand, error) {
 	cmd := &ParsedCommand{
 		Confidence: 0.6, // 正则解析置信度较低
 	}
+	lower := strings.ToLower(message)
 
 	// 提取交易对：放宽为 2-10 位字母（默认拼接 USDT）
 	symbolPattern := regexp.MustCompile(`(?i)([A-Z]{2,10})`)
@@ -299,7 +304,6 @@ func (p *NLParser) parseWithRegex(message string) (*ParsedCommand, error) {
 		cmd.Action = "short"
 	} else if strings.Contains(message, "平仓") || strings.Contains(message, "close") || strings.Contains(message, "清仓") {
 		// “全部平仓/全仓/平仓所有/close all” 识别为 close_all
-		lower := strings.ToLower(message)
 		if strings.Contains(message, "全部") ||
 			strings.Contains(message, "全仓") ||
 			strings.Contains(message, "所有") ||
@@ -307,6 +311,36 @@ func (p *NLParser) parseWithRegex(message string) (*ParsedCommand, error) {
 			cmd.Action = "close_all"
 		} else {
 			cmd.Action = "close"
+		}
+	}
+
+	// 取消止损/止盈（优先于设置止损/止盈）
+	if cmd.Action == "" {
+		hasCancel := strings.Contains(message, "取消") ||
+			strings.Contains(message, "撤销") ||
+			strings.Contains(message, "清除") ||
+			strings.Contains(message, "删除") ||
+			strings.Contains(message, "移除") ||
+			strings.Contains(lower, "cancel") ||
+			strings.Contains(lower, "remove") ||
+			strings.Contains(lower, "clear")
+		hasStop := strings.Contains(message, "止损") ||
+			strings.Contains(lower, "stop loss") ||
+			strings.Contains(lower, "stop-loss") ||
+			strings.Contains(lower, "stoploss")
+		hasTake := strings.Contains(message, "止盈") ||
+			strings.Contains(lower, "take profit") ||
+			strings.Contains(lower, "take-profit") ||
+			strings.Contains(lower, "takeprofit")
+
+		if hasCancel && hasStop {
+			cmd.Action = "cancel_stop_loss"
+		} else if hasCancel && hasTake {
+			cmd.Action = "cancel_take_profit"
+		} else if hasStop {
+			cmd.Action = "stop_loss"
+		} else if hasTake {
+			cmd.Action = "take_profit"
 		}
 	}
 
@@ -333,6 +367,17 @@ func (p *NLParser) parseWithRegex(message string) (*ParsedCommand, error) {
 		cmd.Amount = val
 		cmd.Currency = "USD"
 		break
+	}
+
+	if cmd.Action == "stop_loss" || cmd.Action == "take_profit" {
+		if cmd.Price == 0 && cmd.Amount > 0 {
+			cmd.Price = cmd.Amount
+			cmd.Amount = 0
+		}
+	}
+	if cmd.Action == "cancel_stop_loss" || cmd.Action == "cancel_take_profit" {
+		cmd.Amount = 0
+		cmd.Price = 0
 	}
 
 	// 如果是全平/清仓，允许无标的（交由上层执行 close_all）
@@ -428,6 +473,7 @@ func (p *NLParser) normalizeCommand(cmd ParsedCommand) ParsedCommand {
 	validActions := map[string]bool{
 		"long": true, "short": true, "close": true,
 		"stop_loss": true, "take_profit": true, "close_all": true,
+		"cancel_stop_loss": true, "cancel_take_profit": true,
 	}
 	if !validActions[cmd.Action] {
 		cmd.Confidence = 0.0
@@ -512,6 +558,10 @@ func (p *NLParser) GetConfirmationMessage(cmd *ParsedCommand) string {
 		return fmt.Sprintf("确认设置 %s 止损价 $%.2f？", cmd.Symbol, cmd.Price)
 	case "take_profit":
 		return fmt.Sprintf("确认设置 %s 止盈价 $%.2f？", cmd.Symbol, cmd.Price)
+	case "cancel_stop_loss":
+		return fmt.Sprintf("确认取消 %s 的止损？", cmd.Symbol)
+	case "cancel_take_profit":
+		return fmt.Sprintf("确认取消 %s 的止盈？", cmd.Symbol)
 	default:
 		return fmt.Sprintf("确认执行操作: %s", cmd.Action)
 	}

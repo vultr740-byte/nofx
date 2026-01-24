@@ -3506,6 +3506,18 @@ func (at *AutoTrader) ExecuteNaturalLanguageTrade(action, symbol string, amount 
 			}
 		}
 		return nil, fmt.Errorf("未找到 %s 的持仓，无法设置止盈/止损", symbol)
+	case "cancel_stop_loss":
+		formattedSymbol := at.formatSymbolForExchange(symbol)
+		if err := at.trader.CancelStopLossOrders(formattedSymbol); err != nil {
+			return nil, fmt.Errorf("取消止损失败: %w", err)
+		}
+		return map[string]interface{}{"status": "OK", "symbol": symbol, "action": "cancel_stop_loss"}, nil
+	case "cancel_take_profit":
+		formattedSymbol := at.formatSymbolForExchange(symbol)
+		if err := at.trader.CancelTakeProfitOrders(formattedSymbol); err != nil {
+			return nil, fmt.Errorf("取消止盈失败: %w", err)
+		}
+		return map[string]interface{}{"status": "OK", "symbol": symbol, "action": "cancel_take_profit"}, nil
 	default:
 		return nil, fmt.Errorf("不支持的操作类型: %s", action)
 	}

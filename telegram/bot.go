@@ -4001,6 +4001,14 @@ func (tbm *TelegramBotManager) executeNaturalLanguageCommand(chatID int64, teleg
 		tbm.sendMessage(chatID, fmt.Sprintf("🔄 正在为 %s 设置止盈...", displaySym))
 		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("take_profit", cmd.Symbol, 0, cmd.Price, 0, cmd.AssetType)
 
+	case "cancel_stop_loss":
+		tbm.sendMessage(chatID, fmt.Sprintf("🔄 正在为 %s 取消止损...", displaySym))
+		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("cancel_stop_loss", cmd.Symbol, 0, 0, 0, cmd.AssetType)
+
+	case "cancel_take_profit":
+		tbm.sendMessage(chatID, fmt.Sprintf("🔄 正在为 %s 取消止盈...", displaySym))
+		_, tradeErr = autoTrader.ExecuteNaturalLanguageTrade("cancel_take_profit", cmd.Symbol, 0, 0, 0, cmd.AssetType)
+
 	default:
 		tbm.sendMessage(chatID, fmt.Sprintf("❌ 不支持的操作类型: %s", cmd.Action))
 		return true
@@ -4012,12 +4020,14 @@ func (tbm *TelegramBotManager) executeNaturalLanguageCommand(chatID int64, teleg
 		log.Printf("❌ 交易失败 [用户:%d]: %v", telegramID, tradeErr)
 	} else {
 		actionText := map[string]string{
-			"long":        "开多",
-			"short":       "开空",
-			"close":       "平仓",
-			"close_all":   "全部平仓",
-			"stop_loss":   "设置止损",
-			"take_profit": "设置止盈",
+			"long":               "开多",
+			"short":              "开空",
+			"close":              "平仓",
+			"close_all":          "全部平仓",
+			"stop_loss":          "设置止损",
+			"take_profit":        "设置止盈",
+			"cancel_stop_loss":   "取消止损",
+			"cancel_take_profit": "取消止盈",
 		}[cmd.Action]
 		successMsg := "✅ 交易执行成功！"
 		if cmd.Action == "close_all" {

@@ -89,7 +89,7 @@ func (cv *CommandValidator) validateBasicParams(cmd *ParsedCommand) error {
 		return fmt.Errorf("❌ 未指定操作类型")
 	}
 
-	validActions := []string{"long", "short", "close", "stop_loss", "take_profit", "close_all"}
+	validActions := []string{"long", "short", "close", "stop_loss", "take_profit", "close_all", "cancel_stop_loss", "cancel_take_profit"}
 	isValidAction := false
 	for _, action := range validActions {
 		if cmd.Action == action {
