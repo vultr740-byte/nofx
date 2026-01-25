@@ -463,10 +463,10 @@ func (tbm *TelegramBotManager) handlePositions(update tgbotapi.Update) {
 	var tradeURL string
 	if assetName != "" {
 		// 有持仓时：包含market参数（资产名称-USDC）
-		tradeURL = fmt.Sprintf("https://app.trade.xyz/trade?market=%s-USDC&ghost=%s", assetName, walletAddr)
+		tradeURL = fmt.Sprintf("https://app.trade.xyz/?market=%s-USDC&ghost=%s", assetName, walletAddr)
 	} else {
 		// 无持仓时：不包含market参数
-		tradeURL = fmt.Sprintf("https://app.trade.xyz/trade?ghost=%s", walletAddr)
+		tradeURL = fmt.Sprintf("https://app.trade.xyz/?ghost=%s", walletAddr)
 	}
 	hyperbotURL := fmt.Sprintf("https://hyperbot.network/trader/%s", walletAddr)
 
