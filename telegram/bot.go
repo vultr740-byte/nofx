@@ -2266,8 +2266,7 @@ func (tbm *TelegramBotManager) handlePromptSwitchCancelCallback(callback *tgbota
 	tbm.answerCallbackQuery(callback.ID, "已取消")
 
 	if callback.Message != nil {
-		updatedText := "✅ 已取消策略切换"
-		tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup())
+		tbm.deleteMessage(chatID, callback.Message.MessageID)
 		return
 	}
 
