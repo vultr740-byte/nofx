@@ -423,6 +423,18 @@ func (ttm *TelegramTraderManager) ensureReferralBound(traderRecord *config.TgTra
 		referrer = agentReferrer
 	}
 	if referrer != "" {
+		boundCode := walletCode
+		if boundCode == "" {
+			boundCode = agentCode
+		}
+		if strings.TrimSpace(traderRecord.ReferralCode) == "" && boundCode != "" {
+			traderRecord.ReferralCode = boundCode
+			if err := ttm.db.UpdateTgTraderConfig(traderRecord.TgUserID, traderRecord.ID, traderRecord); err != nil {
+				log.Printf("⚠️ 更新 referral_code 失败: %v", err)
+			} else {
+				log.Printf("✅ 已写入已绑定 referral_code: %s", boundCode)
+			}
+		}
 		log.Printf("ℹ️ 已存在 referrer (%s)，跳过绑定（trader_id=%s）", referrer, traderRecord.ID)
 		return
 	}
