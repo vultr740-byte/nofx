@@ -13,6 +13,7 @@ import (
 	"nofx/trader"
 
 	"github.com/google/uuid"
+	"github.com/sonirico/go-hyperliquid"
 )
 
 // TelegramTraderManager Telegram 交易员管理器
@@ -372,8 +373,6 @@ func (ttm *TelegramTraderManager) UpdateTraderPromptTemplate(telegramID int64, t
 }
 
 func (ttm *TelegramTraderManager) ensureReferralBound(traderRecord *config.TgTraderRecord) {
-	const referralAlreadySetMarker = "already_set"
-
 	if traderRecord == nil {
 		log.Printf("⚠️ referral 绑定跳过：交易员记录为空")
 		return
@@ -388,14 +387,6 @@ func (ttm *TelegramTraderManager) ensureReferralBound(traderRecord *config.TgTra
 		log.Printf("ℹ️ referral 绑定跳过：referral code 为空（trader_id=%s）", traderRecord.ID)
 		return
 	}
-	if strings.EqualFold(traderRecord.ReferralCode, code) {
-		log.Printf("ℹ️ referral 绑定跳过：数据库已是相同 code（trader_id=%s）", traderRecord.ID)
-		return
-	}
-	if strings.EqualFold(traderRecord.ReferralCode, referralAlreadySetMarker) {
-		log.Printf("ℹ️ referral 绑定跳过：referrer 已绑定（trader_id=%s）", traderRecord.ID)
-		return
-	}
 	if traderRecord.PrivateKey == "" || traderRecord.WalletAddress == "" {
 		log.Printf("⚠️ referral 绑定跳过：缺少私钥或地址（trader_id=%s）", traderRecord.ID)
 		return
@@ -407,18 +398,38 @@ func (ttm *TelegramTraderManager) ensureReferralBound(traderRecord *config.TgTra
 		return
 	}
 
-	state, err := traderObj.QueryReferralState()
+	walletAddr := strings.ToLower(traderRecord.WalletAddress)
+	state, err := traderObj.QueryReferralStateFor(walletAddr)
 	if err != nil {
-		log.Printf("⚠️ 查询 referral 状态失败: %v", err)
+		log.Printf("⚠️ 查询 referral 状态失败 (wallet=%s): %v", walletAddr, err)
 	} else {
-		log.Printf("ℹ️ referral 状态: %+v", state)
+		log.Printf("ℹ️ referral 状态 (wallet=%s): %+v", walletAddr, state)
 	}
 
-	if state != nil && state.Referrer != "" {
-		log.Printf("ℹ️ 已存在 referrer (%s)，尝试覆盖为 %s", state.Referrer, code)
-	} else {
-		log.Printf("📝 尝试绑定 referral code: %s", code)
+	agentAddr := strings.ToLower(traderObj.AgentAddress())
+	var agentState *hyperliquid.ReferralState
+	if agentAddr != "" && agentAddr != walletAddr {
+		agentState, err = traderObj.QueryReferralStateFor(agentAddr)
+		if err != nil {
+			log.Printf("⚠️ 查询 referral 状态失败 (agent=%s): %v", agentAddr, err)
+		} else {
+			log.Printf("ℹ️ referral 状态 (agent=%s): %+v", agentAddr, agentState)
+		}
 	}
+
+	referrer := ""
+	if state != nil && state.Referrer != "" {
+		referrer = state.Referrer
+	}
+	if referrer == "" && agentState != nil && agentState.Referrer != "" {
+		referrer = agentState.Referrer
+	}
+	if referrer != "" {
+		log.Printf("ℹ️ 已存在 referrer (%s)，跳过绑定（trader_id=%s）", referrer, traderRecord.ID)
+		return
+	}
+
+	log.Printf("📝 尝试绑定 referral code: %s", code)
 
 	resp, err := traderObj.SetReferrerCode(code)
 	if err != nil {
@@ -429,14 +440,6 @@ func (ttm *TelegramTraderManager) ensureReferralBound(traderRecord *config.TgTra
 		log.Printf("ℹ️ 设置 referral code 响应: %+v", resp)
 	}
 	if resp != nil && resp.Status != "" && strings.ToLower(resp.Status) != "ok" {
-		if strings.Contains(strings.ToLower(resp.Response), "referrer already set") {
-			log.Printf("ℹ️ referrer 已绑定，跳过设置并标记数据库（trader_id=%s）", traderRecord.ID)
-			traderRecord.ReferralCode = referralAlreadySetMarker
-			if err := ttm.db.UpdateTgTraderConfig(traderRecord.TgUserID, traderRecord.ID, traderRecord); err != nil {
-				log.Printf("⚠️ 更新 referral_code 失败: %v", err)
-			}
-			return
-		}
 		log.Printf("⚠️ 设置 referral code 返回异常: status=%s error=%s response=%s", resp.Status, resp.Error, resp.Response)
 		return
 	}

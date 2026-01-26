@@ -643,12 +643,25 @@ func (t *HyperliquidTrader) EnsureBuilderApproved() error {
 
 // QueryReferralState 查询 referral 绑定状态
 func (t *HyperliquidTrader) QueryReferralState() (*hyperliquid.ReferralState, error) {
-	return t.exchange.Info().QueryReferralState(t.ctx, t.walletAddr)
+	return t.QueryReferralStateFor(t.walletAddr)
+}
+
+// QueryReferralStateFor 查询指定地址的 referral 绑定状态
+func (t *HyperliquidTrader) QueryReferralStateFor(user string) (*hyperliquid.ReferralState, error) {
+	return t.exchange.Info().QueryReferralState(t.ctx, user)
 }
 
 // SetReferrerCode 绑定 referral code（使用当前签名私钥）
 func (t *HyperliquidTrader) SetReferrerCode(code string) (*hyperliquid.SetReferrerResponse, error) {
 	return t.exchange.SetReferrer(t.ctx, code)
+}
+
+// AgentAddress 返回 Agent 钱包地址
+func (t *HyperliquidTrader) AgentAddress() string {
+	if t.agentPrivateKey == nil {
+		return ""
+	}
+	return crypto.PubkeyToAddress(*t.agentPrivateKey.Public().(*ecdsa.PublicKey)).Hex()
 }
 
 type orderRef struct {
