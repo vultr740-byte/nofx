@@ -641,6 +641,16 @@ func (t *HyperliquidTrader) EnsureBuilderApproved() error {
 	return t.ApproveBuilder()
 }
 
+// QueryReferralState 查询 referral 绑定状态
+func (t *HyperliquidTrader) QueryReferralState() (*hyperliquid.ReferralState, error) {
+	return t.exchange.Info().QueryReferralState(t.ctx, t.walletAddr)
+}
+
+// SetReferrerCode 绑定 referral code（使用当前签名私钥）
+func (t *HyperliquidTrader) SetReferrerCode(code string) (*hyperliquid.SetReferrerResponse, error) {
+	return t.exchange.SetReferrer(t.ctx, code)
+}
+
 type orderRef struct {
 	oid   int64
 	cloid string

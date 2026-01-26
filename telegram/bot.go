@@ -117,7 +117,7 @@ func NewTelegramBotManager(cfg *config.TelegramBotConfig, db config.DatabaseInte
 	log.Printf("✅ Telegram Bot 初始化成功: %s (Hyperliquid: %s)", bot.Self.UserName, network)
 
 	// 创建交易员管理器
-	tgTraderMgr := NewTelegramTraderManager(db, traderMgr, cfg.HyperliquidTestnet)
+	tgTraderMgr := NewTelegramTraderManager(db, traderMgr, cfg.HyperliquidTestnet, cfg.ReferralCode)
 	configWizard := NewConfigWizard(tgTraderMgr)
 
 	// 创建自然语言解析器（暂时使用 nil MCP 客户端，后续可以从交易员获取）

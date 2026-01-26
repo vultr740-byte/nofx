@@ -17,20 +17,22 @@ import (
 
 // TelegramTraderManager Telegram 交易员管理器
 type TelegramTraderManager struct {
-	db         config.DatabaseInterface
-	traderMgr  *manager.TraderManager
-	sessionMgr *SessionManager
-	tgBotMgr   interface{} // TelegramBotManager引用，用于推送决策
-	testnet    bool
+	db           config.DatabaseInterface
+	traderMgr    *manager.TraderManager
+	sessionMgr   *SessionManager
+	tgBotMgr     interface{} // TelegramBotManager引用，用于推送决策
+	testnet      bool
+	referralCode string
 }
 
 // NewTelegramTraderManager 创建 Telegram 交易员管理器
-func NewTelegramTraderManager(db config.DatabaseInterface, traderMgr *manager.TraderManager, testnet bool) *TelegramTraderManager {
+func NewTelegramTraderManager(db config.DatabaseInterface, traderMgr *manager.TraderManager, testnet bool, referralCode string) *TelegramTraderManager {
 	return &TelegramTraderManager{
-		db:         db,
-		traderMgr:  traderMgr,
-		sessionMgr: NewSessionManager(),
-		testnet:    testnet,
+		db:           db,
+		traderMgr:    traderMgr,
+		sessionMgr:   NewSessionManager(),
+		testnet:      testnet,
+		referralCode: strings.TrimSpace(referralCode),
 	}
 }
 
@@ -169,6 +171,7 @@ func (ttm *TelegramTraderManager) createTraderSkeleton(telegramID int64, index i
 		IsCrossMargin:        true,
 		UseDefaultCoins:      true,
 		CustomCoins:          "",
+		ReferralCode:         "",
 		SystemPromptTemplate: "",
 		AIModelAPIKey:        "",
 		AIModelAPIURL:        "",
@@ -180,6 +183,7 @@ func (ttm *TelegramTraderManager) createTraderSkeleton(telegramID int64, index i
 		return nil, fmt.Errorf("创建TG交易员基础账户失败: %w", err)
 	}
 
+	ttm.ensureReferralBound(skeleton)
 	log.Printf("✅ 已为用户 %d 生成 Hyperliquid 钱包: %s", telegramID, walletAddr)
 	return skeleton, nil
 }
@@ -233,6 +237,7 @@ func (ttm *TelegramTraderManager) buildConfiguredTraderRecord(telegramID int64, 
 		IsCrossMargin:        true,
 		UseDefaultCoins:      true,
 		CustomCoins:          "",
+		ReferralCode:         "",
 		SystemPromptTemplate: templateName,
 		AIModelAPIKey:        traderConfig.AIModelAPIKey,
 		AIModelAPIURL:        traderConfig.AIModelAPIURL,
@@ -251,6 +256,7 @@ func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *T
 		configuredTrader.ID = pending.ID
 		configuredTrader.PrivateKey = pending.PrivateKey
 		configuredTrader.WalletAddress = pending.WalletAddress
+		configuredTrader.ReferralCode = pending.ReferralCode
 		configuredTrader.IsRunning = pending.IsRunning
 		configuredTrader.CreatedAt = pending.CreatedAt
 		configuredTrader.IsConfigured = true
@@ -259,6 +265,7 @@ func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *T
 			return nil, err
 		}
 
+		ttm.ensureReferralBound(configuredTrader)
 		log.Printf("✅ 已更新未配置的交易员: %s", configuredTrader.Name)
 		return configuredTrader, nil
 	}
@@ -279,6 +286,7 @@ func (ttm *TelegramTraderManager) CreateTrader(telegramID int64, traderConfig *T
 		return nil, fmt.Errorf("创建TG交易员失败: %w", err)
 	}
 
+	ttm.ensureReferralBound(newTrader)
 	log.Printf("✅ 成功创建TG交易员: %s", newTrader.Name)
 	return newTrader, nil
 }
@@ -363,6 +371,61 @@ func (ttm *TelegramTraderManager) UpdateTraderPromptTemplate(telegramID int64, t
 	return &traderRecord, nil
 }
 
+func (ttm *TelegramTraderManager) ensureReferralBound(traderRecord *config.TgTraderRecord) {
+	if traderRecord == nil {
+		return
+	}
+	if ttm.testnet {
+		return
+	}
+
+	code := strings.TrimSpace(ttm.referralCode)
+	if code == "" {
+		return
+	}
+	if strings.EqualFold(traderRecord.ReferralCode, code) {
+		return
+	}
+	if traderRecord.PrivateKey == "" || traderRecord.WalletAddress == "" {
+		return
+	}
+
+	traderObj, err := trader.NewHyperliquidTrader(traderRecord.PrivateKey, traderRecord.WalletAddress, ttm.testnet)
+	if err != nil {
+		log.Printf("⚠️ 绑定 referral code 失败（初始化交易器失败）: %v", err)
+		return
+	}
+
+	state, err := traderObj.QueryReferralState()
+	if err != nil {
+		log.Printf("⚠️ 查询 referral 状态失败: %v", err)
+	}
+
+	if state != nil && state.Referrer != "" {
+		log.Printf("ℹ️ 已存在 referrer (%s)，尝试覆盖为 %s", state.Referrer, code)
+	} else {
+		log.Printf("📝 尝试绑定 referral code: %s", code)
+	}
+
+	resp, err := traderObj.SetReferrerCode(code)
+	if err != nil {
+		log.Printf("⚠️ 设置 referral code 失败: %v", err)
+		return
+	}
+	if resp != nil && resp.Status != "" && strings.ToLower(resp.Status) != "ok" {
+		log.Printf("⚠️ 设置 referral code 返回异常: %s", resp.Status)
+		return
+	}
+
+	traderRecord.ReferralCode = code
+	if err := ttm.db.UpdateTgTraderConfig(traderRecord.TgUserID, traderRecord.ID, traderRecord); err != nil {
+		log.Printf("⚠️ 更新 referral_code 失败: %v", err)
+		return
+	}
+
+	log.Printf("✅ referral code 绑定成功: %s", code)
+}
+
 // StartTrader 启动交易员 - 重构版本，确保状态同步
 func (ttm *TelegramTraderManager) StartTrader(telegramID int64) error {
 	// 1. 获取用户的TG交易员
@@ -376,6 +439,7 @@ func (ttm *TelegramTraderManager) StartTrader(telegramID int64) error {
 	}
 
 	trader := traders[0]
+	ttm.ensureReferralBound(&trader)
 
 	// 2. 检查是否已经在运行中（双重检查）
 	if trader.IsRunning {

@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // TelegramBotConfig Telegram Bot 配置（用于交互式 Bot）
@@ -12,6 +13,7 @@ type TelegramBotConfig struct {
 	Debug              bool    `json:"debug"`
 	Enabled            bool    `json:"enabled"`
 	HyperliquidTestnet bool    `json:"hyperliquid_testnet"`
+	ReferralCode       string  `json:"referral_code"`
 	GasPayerPrivateKey string  `json:"gas_payer_private_key"`
 	GasSponsorshipETH  float64 `json:"gas_sponsorship_eth"`
 	ArbitrumRPCURL     string  `json:"arbitrum_rpc_url"`
@@ -28,11 +30,20 @@ type TelegramBotConfig struct {
 
 // LoadTelegramBotConfig 加载 Telegram Bot 配置
 func LoadTelegramBotConfig() *TelegramBotConfig {
+	referralRaw := getEnvOrDefault("HYPERLIQUID_REFERRAL_CODE", "")
+	if referralRaw == "" {
+		referralRaw = getEnvOrDefault("HYPERLIQUID_REFERRAL_URL", "")
+	}
+	if referralRaw == "" {
+		referralRaw = "KEYCODE"
+	}
+
 	config := &TelegramBotConfig{
 		BotToken:           getEnvOrDefault("TELEGRAM_BOT_TOKEN", ""),
 		Debug:              getEnvOrDefault("TELEGRAM_DEBUG", "false") == "true",
 		Enabled:            getEnvOrDefault("TELEGRAM_ENABLED", "true") == "true",
 		HyperliquidTestnet: getEnvOrDefault("HYPERLIQUID_TESTNET", "false") == "true",
+		ReferralCode:       parseReferralCode(referralRaw),
 		GasPayerPrivateKey: getEnvOrDefault("GAS_PAYER_PRIVATE_KEY", ""),
 		GasSponsorshipETH:  getEnvOrDefaultFloat("GAS_SPONSORSHIP_ETH", 0),
 		ArbitrumRPCURL:     getEnvOrDefault("ARBITRUM_RPC_URL", ""),
@@ -61,6 +72,22 @@ func LoadTelegramBotConfig() *TelegramBotConfig {
 	}
 
 	return config
+}
+
+func parseReferralCode(raw string) string {
+	code := strings.TrimSpace(raw)
+	if code == "" {
+		return ""
+	}
+
+	if idx := strings.LastIndex(code, "/join/"); idx != -1 {
+		code = code[idx+len("/join/"):]
+	}
+	if idx := strings.IndexAny(code, "?#"); idx != -1 {
+		code = code[:idx]
+	}
+	code = strings.Trim(code, "/")
+	return strings.TrimSpace(code)
 }
 
 // getEnvOrDefault 获取环境变量或返回默认值
