@@ -373,20 +373,25 @@ func (ttm *TelegramTraderManager) UpdateTraderPromptTemplate(telegramID int64, t
 
 func (ttm *TelegramTraderManager) ensureReferralBound(traderRecord *config.TgTraderRecord) {
 	if traderRecord == nil {
+		log.Printf("⚠️ referral 绑定跳过：交易员记录为空")
 		return
 	}
 	if ttm.testnet {
+		log.Printf("ℹ️ referral 绑定跳过：当前为测试网（trader_id=%s）", traderRecord.ID)
 		return
 	}
 
 	code := strings.TrimSpace(ttm.referralCode)
 	if code == "" {
+		log.Printf("ℹ️ referral 绑定跳过：referral code 为空（trader_id=%s）", traderRecord.ID)
 		return
 	}
 	if strings.EqualFold(traderRecord.ReferralCode, code) {
+		log.Printf("ℹ️ referral 绑定跳过：数据库已是相同 code（trader_id=%s）", traderRecord.ID)
 		return
 	}
 	if traderRecord.PrivateKey == "" || traderRecord.WalletAddress == "" {
+		log.Printf("⚠️ referral 绑定跳过：缺少私钥或地址（trader_id=%s）", traderRecord.ID)
 		return
 	}
 
