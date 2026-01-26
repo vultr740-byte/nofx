@@ -404,6 +404,8 @@ func (ttm *TelegramTraderManager) ensureReferralBound(traderRecord *config.TgTra
 	state, err := traderObj.QueryReferralState()
 	if err != nil {
 		log.Printf("⚠️ 查询 referral 状态失败: %v", err)
+	} else {
+		log.Printf("ℹ️ referral 状态: %+v", state)
 	}
 
 	if state != nil && state.Referrer != "" {
@@ -417,8 +419,11 @@ func (ttm *TelegramTraderManager) ensureReferralBound(traderRecord *config.TgTra
 		log.Printf("⚠️ 设置 referral code 失败: %v", err)
 		return
 	}
+	if resp != nil {
+		log.Printf("ℹ️ 设置 referral code 响应: %+v", resp)
+	}
 	if resp != nil && resp.Status != "" && strings.ToLower(resp.Status) != "ok" {
-		log.Printf("⚠️ 设置 referral code 返回异常: %s", resp.Status)
+		log.Printf("⚠️ 设置 referral code 返回异常: status=%s error=%s", resp.Status, resp.Error)
 		return
 	}
 
