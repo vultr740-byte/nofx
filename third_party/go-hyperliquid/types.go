@@ -540,8 +540,9 @@ type CreateSubAccountResponse struct {
 }
 
 type SetReferrerResponse struct {
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	Status   string `json:"status"`
+	Error    string `json:"error,omitempty"`
+	Response string `json:"response,omitempty"`
 }
 
 type ScheduleCancelResponse struct {
