@@ -317,6 +317,52 @@ func (ttm *TelegramTraderManager) UpdateTraderAPIConfig(telegramID int64, provid
 	return &traderRecord, nil
 }
 
+// UpdateTraderPromptTemplate 更新交易员的策略提示词模板
+func (ttm *TelegramTraderManager) UpdateTraderPromptTemplate(telegramID int64, templateName string) (*config.TgTraderRecord, error) {
+	templateName = strings.TrimSpace(templateName)
+	if templateName == "" {
+		return nil, fmt.Errorf("无效的交易策略")
+	}
+
+	valid := false
+	for _, template := range GetAvailablePromptTemplates() {
+		if template.Name == templateName {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return nil, fmt.Errorf("未找到该交易策略")
+	}
+
+	traders, err := ttm.db.GetTgTraders(telegramID)
+	if err != nil {
+		return nil, fmt.Errorf("获取交易员失败: %w", err)
+	}
+	if len(traders) == 0 {
+		return nil, fmt.Errorf("您还没有创建交易员，请先使用 /start 初始化账号")
+	}
+
+	traderRecord := traders[0]
+	if !traderRecord.IsConfigured {
+		return nil, fmt.Errorf("交易员尚未配置，请先使用 /create_trader 完成设置")
+	}
+
+	traderRecord.SystemPromptTemplate = templateName
+	if err := ttm.db.UpdateTgTraderConfig(telegramID, traderRecord.ID, &traderRecord); err != nil {
+		return nil, err
+	}
+
+	if ttm.traderMgr != nil {
+		if traderObj, err := ttm.traderMgr.GetTrader(traderRecord.ID); err == nil {
+			traderObj.SetSystemPromptTemplate(templateName)
+			log.Printf("🔁 已同步内存中的交易员 %s 的策略模板: %s", traderRecord.Name, templateName)
+		}
+	}
+
+	return &traderRecord, nil
+}
+
 // StartTrader 启动交易员 - 重构版本，确保状态同步
 func (ttm *TelegramTraderManager) StartTrader(telegramID int64) error {
 	// 1. 获取用户的TG交易员

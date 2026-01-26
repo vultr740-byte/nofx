@@ -2196,9 +2196,82 @@ func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(buttonText, fmt.Sprintf("%s|%d", buttonAction, telegramID)),
 		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔁 切换策略", fmt.Sprintf("prompt_switch|%d", telegramID)),
+		),
 	)
 
 	tbm.sendMessageWithInlineKeyboard(chatID, traderStatusMsg, keyboard)
+}
+
+func (tbm *TelegramBotManager) handlePromptSwitchCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	tbm.answerCallbackQuery(callback.ID, "请选择交易策略")
+
+	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
+		return
+	}
+
+	trader, err := tbm.getPrimaryTrader(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, "❌ 您还没有创建交易员，请先使用 /start 初始化账号")
+		return
+	}
+	if !trader.IsConfigured {
+		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /create_trader 完成设置")
+		return
+	}
+
+	message := tbm.buildPromptSwitchMessage(trader.SystemPromptTemplate)
+	keyboard := tbm.buildPromptSwitchInlineKeyboard(telegramID)
+	tbm.sendMessageWithInlineKeyboard(chatID, message, keyboard)
+}
+
+func (tbm *TelegramBotManager) handlePromptSwitchSelectCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
+	if len(parts) < 3 {
+		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
+		return
+	}
+	templateName := strings.TrimSpace(parts[2])
+	if templateName == "" {
+		tbm.answerCallbackQuery(callback.ID, "无效策略")
+		return
+	}
+
+	if !tbm.isPromptTemplateAvailable(templateName) {
+		tbm.answerCallbackQuery(callback.ID, "无效策略")
+		tbm.sendMessage(chatID, "❌ 未找到该交易策略")
+		return
+	}
+
+	if _, err := tbm.tgTraderMgr.UpdateTraderPromptTemplate(telegramID, templateName); err != nil {
+		tbm.answerCallbackQuery(callback.ID, "切换失败")
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ %s", esc(err)))
+		return
+	}
+
+	displayName := tbm.getPromptDisplayName(templateName)
+	tbm.answerCallbackQuery(callback.ID, "✅ 已切换策略")
+
+	updatedText := fmt.Sprintf("✅ 已切换策略：%s\n\n如果交易员正在运行，将立即生效。", esc(displayName))
+	if callback.Message != nil {
+		tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup())
+		return
+	}
+
+	tbm.sendMessage(chatID, updatedText)
+}
+
+func (tbm *TelegramBotManager) handlePromptSwitchCancelCallback(callback *tgbotapi.CallbackQuery, chatID int64) {
+	tbm.answerCallbackQuery(callback.ID, "已取消")
+
+	if callback.Message != nil {
+		updatedText := "✅ 已取消策略切换"
+		tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup())
+		return
+	}
+
+	tbm.sendMessage(chatID, "✅ 已取消策略切换")
 }
 
 // getPromptDisplayName 获取提示词显示名称
@@ -2210,6 +2283,66 @@ func (tbm *TelegramBotManager) getPromptDisplayName(templateName string) string 
 		}
 	}
 	return templateName
+}
+
+func (tbm *TelegramBotManager) isPromptTemplateAvailable(templateName string) bool {
+	templates := GetAvailablePromptTemplates()
+	for _, template := range templates {
+		if template.Name == templateName {
+			return true
+		}
+	}
+	return false
+}
+
+func (tbm *TelegramBotManager) buildPromptSwitchMessage(currentTemplate string) string {
+	templates := GetAvailablePromptTemplates()
+	var message strings.Builder
+
+	message.WriteString("🔁 <b>切换交易策略</b>\n\n")
+	message.WriteString("请选择要切换的策略：\n\n")
+
+	for _, template := range templates {
+		displayName := template.DisplayName
+		if template.PlainName != "" {
+			displayName = template.PlainName
+		}
+		if template.Name == currentTemplate {
+			message.WriteString("✅ ")
+		}
+		message.WriteString(fmt.Sprintf("<b>%s</b>\n", html.EscapeString(displayName)))
+		if template.Description != "" {
+			message.WriteString(fmt.Sprintf("   %s\n", html.EscapeString(template.Description)))
+		}
+		message.WriteString("\n")
+	}
+
+	message.WriteString("点击下方按钮完成切换：")
+	return message.String()
+}
+
+func (tbm *TelegramBotManager) buildPromptSwitchInlineKeyboard(telegramID int64) tgbotapi.InlineKeyboardMarkup {
+	templates := GetAvailablePromptTemplates()
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(templates)+1)
+
+	for _, template := range templates {
+		displayName := template.DisplayName
+		if template.PlainName != "" {
+			displayName = template.PlainName
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(
+				displayName,
+				fmt.Sprintf("prompt_switch_select|%d|%s", telegramID, template.Name),
+			),
+		))
+	}
+
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🗑️ 取消", fmt.Sprintf("prompt_switch_cancel|%d", telegramID)),
+	))
+
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 // PushDecisionToUser 推送AI决策到指定用户（用户友好的分段指示）
@@ -2575,6 +2708,12 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleAIProviderCallback(callback, chatID, telegramID, parts)
 	case "prompt_select":
 		tbm.handlePromptTemplateCallback(callback, chatID, telegramID, parts)
+	case "prompt_switch":
+		tbm.handlePromptSwitchCallback(callback, chatID, telegramID)
+	case "prompt_switch_select":
+		tbm.handlePromptSwitchSelectCallback(callback, chatID, telegramID, parts)
+	case "prompt_switch_cancel":
+		tbm.handlePromptSwitchCancelCallback(callback, chatID)
 	case "confirm_trader":
 		tbm.handleConfirmTraderCallback(callback, chatID, telegramID, parts)
 	default:

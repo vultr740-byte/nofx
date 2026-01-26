@@ -186,7 +186,7 @@ func GetAvailablePromptTemplates() []PromptTemplate {
 	return []PromptTemplate{
 		{
 			Name:                "default",
-			DisplayName:         "🛡️ 结构趋势策略",
+			DisplayName:         "🔹 结构趋势策略",
 			PlainName:           "结构趋势策略",
 			Description:         "结构驱动多周期趋势跟随，强调趋势共振与关键位入场；ATR风控、保本移动止损、低频高纪律",
 			RiskLevel:           "保守",
@@ -206,7 +206,7 @@ func GetAvailablePromptTemplates() []PromptTemplate {
 		},
 		{
 			Name:                "structure_trend",
-			DisplayName:         "🧭 结构趋势（RSI过滤）",
+			DisplayName:         "🔹 结构趋势（RSI过滤）",
 			PlainName:           "结构趋势（RSI过滤）",
 			Description:         "结构趋势共振 + RSI过滤极端/背离，15m关键位入场，ATR风控与移动止损",
 			RiskLevel:           "标准",
