@@ -13,7 +13,6 @@ import (
 	"nofx/trader"
 
 	"github.com/google/uuid"
-	"github.com/sonirico/go-hyperliquid"
 )
 
 // TelegramTraderManager Telegram 交易员管理器
@@ -399,34 +398,36 @@ func (ttm *TelegramTraderManager) ensureReferralBound(traderRecord *config.TgTra
 	}
 
 	walletAddr := strings.ToLower(traderRecord.WalletAddress)
-	state, err := traderObj.QueryReferralStateFor(walletAddr)
-	if err != nil {
-		log.Printf("⚠️ 查询 referral 状态失败 (wallet=%s): %v", walletAddr, err)
+	walletReferrer, walletCode, walletErr := traderObj.QueryReferralBinding(walletAddr)
+	if walletErr != nil {
+		log.Printf("⚠️ 查询 referral 失败 (wallet=%s): %v", walletAddr, walletErr)
 	} else {
-		log.Printf("ℹ️ referral 状态 (wallet=%s): %+v", walletAddr, state)
+		log.Printf("ℹ️ referral 状态 (wallet=%s): referrer=%s code=%s", walletAddr, walletReferrer, walletCode)
 	}
 
 	agentAddr := strings.ToLower(traderObj.AgentAddress())
-	var agentState *hyperliquid.ReferralState
+	agentReferrer := ""
+	agentCode := ""
+	var agentErr error
 	if agentAddr != "" && agentAddr != walletAddr {
-		agentState, err = traderObj.QueryReferralStateFor(agentAddr)
-		if err != nil {
-			log.Printf("⚠️ 查询 referral 状态失败 (agent=%s): %v", agentAddr, err)
+		agentReferrer, agentCode, agentErr = traderObj.QueryReferralBinding(agentAddr)
+		if agentErr != nil {
+			log.Printf("⚠️ 查询 referral 失败 (agent=%s): %v", agentAddr, agentErr)
 		} else {
-			log.Printf("ℹ️ referral 状态 (agent=%s): %+v", agentAddr, agentState)
+			log.Printf("ℹ️ referral 状态 (agent=%s): referrer=%s code=%s", agentAddr, agentReferrer, agentCode)
 		}
 	}
 
-	referrer := ""
-	if state != nil && state.Referrer != "" {
-		referrer = state.Referrer
-	}
-	if referrer == "" && agentState != nil && agentState.Referrer != "" {
-		referrer = agentState.Referrer
+	referrer := walletReferrer
+	if referrer == "" {
+		referrer = agentReferrer
 	}
 	if referrer != "" {
 		log.Printf("ℹ️ 已存在 referrer (%s)，跳过绑定（trader_id=%s）", referrer, traderRecord.ID)
 		return
+	}
+	if walletErr != nil && agentErr != nil {
+		log.Printf("⚠️ referral 查询全部失败，尝试继续绑定（trader_id=%s）", traderRecord.ID)
 	}
 
 	log.Printf("📝 尝试绑定 referral code: %s", code)

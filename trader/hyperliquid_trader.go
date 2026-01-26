@@ -651,6 +651,55 @@ func (t *HyperliquidTrader) QueryReferralStateFor(user string) (*hyperliquid.Ref
 	return t.exchange.Info().QueryReferralState(t.ctx, user)
 }
 
+type referralInfoResponse struct {
+	ReferredBy *struct {
+		Referrer string `json:"referrer"`
+		Code     string `json:"code"`
+	} `json:"referredBy"`
+}
+
+// QueryReferralBinding 查询指定地址的 referral 绑定信息
+func (t *HyperliquidTrader) QueryReferralBinding(user string) (referrer, code string, err error) {
+	payload := map[string]interface{}{
+		"type": "referral",
+		"user": user,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", "", fmt.Errorf("序列化请求失败: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", infoAPIURL(t.testnet), bytes.NewBuffer(body))
+	if err != nil {
+		return "", "", fmt.Errorf("创建请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("读取响应失败: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("referral status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result referralInfoResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", "", fmt.Errorf("解析响应失败: %w", err)
+	}
+	if result.ReferredBy == nil {
+		return "", "", nil
+	}
+	return result.ReferredBy.Referrer, result.ReferredBy.Code, nil
+}
+
 // SetReferrerCode 绑定 referral code（使用当前签名私钥）
 func (t *HyperliquidTrader) SetReferrerCode(code string) (*hyperliquid.SetReferrerResponse, error) {
 	return t.exchange.SetReferrer(t.ctx, code)
