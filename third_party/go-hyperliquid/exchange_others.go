@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/big"
 	"sort"
 	"strings"
@@ -162,6 +163,9 @@ func (e *Exchange) SetReferrer(ctx context.Context, code string) (*SetReferrerRe
 	resp, err := e.postAction(ctx, action, sig, nonce)
 	if err != nil {
 		return nil, err
+	}
+	if len(resp) > 0 {
+		log.Printf("ℹ️ [HL] setReferrer 原始响应: %s", string(resp))
 	}
 
 	var result SetReferrerResponse
