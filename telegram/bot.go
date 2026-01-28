@@ -781,9 +781,6 @@ func (tbm *TelegramBotManager) handleMenu(update tgbotapi.Update) {
 			tgbotapi.NewInlineKeyboardButtonData("🧠 更新 AI API KEY", fmt.Sprintf("menu_set_api|%d", telegramID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📝 自定义 Prompt", fmt.Sprintf("menu_custom_prompt|%d", telegramID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔑 导出 Agent 私钥", fmt.Sprintf("menu_export|%d", telegramID)),
 		),
 	)
@@ -1356,14 +1353,6 @@ func (tbm *TelegramBotManager) setupCommands() {
 		{
 			Command:     "create_trader",
 			Description: "🤖 创建 Agent",
-		},
-		{
-			Command:     "start_trader",
-			Description: "▶️ 启动 Agent",
-		},
-		{
-			Command:     "stop_trader",
-			Description: "⏹️ 停止 Agent",
 		},
 		{
 			Command:     "trader_status",
@@ -2148,6 +2137,14 @@ func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 	if status["is_running"].(bool) {
 		statusEmoji = "🟢"
 	}
+	customPromptStatus := "未设置"
+	if prompt, ok := status["custom_prompt"].(string); ok && strings.TrimSpace(prompt) != "" {
+		if override, ok := status["override_base_prompt"].(bool); ok && override {
+			customPromptStatus = "已设置(覆盖)"
+		} else {
+			customPromptStatus = "已设置(附加)"
+		}
+	}
 
 	traderStatusMsg := fmt.Sprintf(`🤖 <b>交易员状态</b>
 
@@ -2160,7 +2157,8 @@ func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 ⚙️ 配置参数
 • BTC/ETH杠杆: %s倍
 • 山寨币杠杆: %s倍
-• 扫描间隔: %s 分钟`,
+• 扫描间隔: %s 分钟
+• 自定义 Prompt: %s`,
 		esc(status["name"]),
 		esc(statusEmoji),
 		esc(status["status"]),
@@ -2169,6 +2167,7 @@ func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 		esc(fmt.Sprintf("%v", status["btc_eth_leverage"])),
 		esc(fmt.Sprintf("%v", status["altcoin_leverage"])),
 		esc(fmt.Sprintf("%v", status["scan_interval_minutes"])),
+		esc(customPromptStatus),
 	)
 
 	// 如果有实时状态，添加详细信息
@@ -2198,6 +2197,9 @@ func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔁 切换策略", fmt.Sprintf("prompt_switch|%d", telegramID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📝 自定义 Prompt", fmt.Sprintf("menu_custom_prompt|%d", telegramID)),
 		),
 	)
 

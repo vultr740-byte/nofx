@@ -815,6 +815,8 @@ func (ttm *TelegramTraderManager) GetTraderStatus(telegramID int64) (map[string]
 		"updated_at":            trader.UpdatedAt,
 		"status":                "停止",
 		"prompt_template":       trader.SystemPromptTemplate,
+		"custom_prompt":         trader.CustomPrompt,
+		"override_base_prompt":  trader.OverrideBasePrompt,
 	}
 
 	if actualRunningState {
