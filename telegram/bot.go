@@ -3347,15 +3347,23 @@ func (tbm *TelegramBotManager) sendOrderHistoryPage(chatID int64, telegramID int
 		return
 	}
 
-	keyboard := tbm.buildOrderHistoryPageKeyboard(telegramID, limit, hours, pageInfo.Page, pageInfo.TotalPages)
+	keyboard, hasButtons := tbm.buildOrderHistoryPageKeyboard(telegramID, limit, hours, pageInfo.Page, pageInfo.TotalPages)
 	if messageID > 0 {
-		tbm.editCallbackMessageWithInlineKeyboard(messageID, chatID, pageInfo.Text, keyboard)
+		if hasButtons {
+			tbm.editCallbackMessageWithInlineKeyboard(messageID, chatID, pageInfo.Text, keyboard)
+			return
+		}
+		tbm.editCallbackMessage(messageID, chatID, pageInfo.Text)
 		return
 	}
-	tbm.sendMessageWithInlineKeyboard(chatID, pageInfo.Text, keyboard)
+	if hasButtons {
+		tbm.sendMessageWithInlineKeyboard(chatID, pageInfo.Text, keyboard)
+		return
+	}
+	tbm.sendMessage(chatID, pageInfo.Text)
 }
 
-func (tbm *TelegramBotManager) buildOrderHistoryPageKeyboard(telegramID int64, limit int, hours int, page int, totalPages int) tgbotapi.InlineKeyboardMarkup {
+func (tbm *TelegramBotManager) buildOrderHistoryPageKeyboard(telegramID int64, limit int, hours int, page int, totalPages int) (tgbotapi.InlineKeyboardMarkup, bool) {
 	var rows [][]tgbotapi.InlineKeyboardButton
 	if totalPages > 1 {
 		navRow := []tgbotapi.InlineKeyboardButton{}
@@ -3369,7 +3377,10 @@ func (tbm *TelegramBotManager) buildOrderHistoryPageKeyboard(telegramID int64, l
 			rows = append(rows, navRow)
 		}
 	}
-	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+	if len(rows) == 0 {
+		return tgbotapi.InlineKeyboardMarkup{}, false
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(rows...), true
 }
 
 // handleClearCustomPrompt 处理清除自定义 Prompt
