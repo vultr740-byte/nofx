@@ -263,14 +263,12 @@ func (tbm *TelegramBotManager) handleCommand(update tgbotapi.Update) {
 		tbm.handleDeposit(update)
 	case "deposit_status":
 		tbm.handleDepositStatus(update)
-	case "create_trader":
-		tbm.handleCreateTrader(update)
+	case "my_agent":
+		tbm.handleMyAgent(update)
 	case "start_trader":
 		tbm.handleStartTrader(update)
 	case "stop_trader":
 		tbm.handleStopTrader(update)
-	case "trader_status":
-		tbm.handleTraderStatus(update)
 	case "leaderboard":
 		tbm.handleLeaderboard(update)
 	case "settings":
@@ -314,7 +312,7 @@ func (tbm *TelegramBotManager) handleStart(update tgbotapi.Update) {
 
 三步开始交易：
 1. /deposit - 充值
-2. /create_trader - 创建交易员
+2. /my_agent - 创建/查看交易员
 3. /start_trader - 启动交易员`
 
 	tbm.sendMessage(chatID, welcomeMsg)
@@ -342,9 +340,9 @@ func (tbm *TelegramBotManager) handleHelp(update tgbotapi.Update) {
 /leaderboard - 查看交易员盈利排行榜
 
 🤖 AI Agent 管理:
+/my_agent - 创建/查看 Agent
 /start_trader - 启动 Agent 开始交易
 /stop_trader - 停止 Agent
-/trader_status - 查看 Agent 运行状态
 /settings - 打开 ⚙️ 设置 面板（导出私钥等）
 
 🔒 安全提示:
@@ -1351,12 +1349,8 @@ func (tbm *TelegramBotManager) setupCommands() {
 			Description: "🏛️ 股票资产",
 		},
 		{
-			Command:     "create_trader",
-			Description: "🤖 创建 Agent",
-		},
-		{
-			Command:     "trader_status",
-			Description: "👁️ 查看 Agent",
+			Command:     "my_agent",
+			Description: "🤖 我的 Agent",
 		},
 		{
 			Command:     "leaderboard",
@@ -1640,7 +1634,7 @@ func (tbm *TelegramBotManager) ensureTraderConfigured(chatID int64, telegramID i
 	}
 
 	if !trader.IsConfigured {
-		tbm.sendMessage(chatID, "❌ 交易员尚未完成配置，请先使用 /create_trader 完成设置")
+		tbm.sendMessage(chatID, "❌ 交易员尚未完成配置，请先使用 /my_agent 完成设置")
 		return false
 	}
 
@@ -1902,7 +1896,7 @@ func (tbm *TelegramBotManager) startAPIKeyUpdate(chatID int64, telegramID int64)
 	}
 
 	if !trader.IsConfigured {
-		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /create_trader 完成设置")
+		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /my_agent 完成设置")
 		return false
 	}
 
@@ -1969,7 +1963,43 @@ func stringToBig(value string) *big.Int {
 	return new(big.Int)
 }
 
-// handleCreateTrader 处理 /create_trader 命令
+// handleMyAgent 处理 /my_agent 命令（创建或查看交易员）
+func (tbm *TelegramBotManager) handleMyAgent(update tgbotapi.Update) {
+	chatID := update.Message.Chat.ID
+	telegramID := update.Message.From.ID
+
+	// 检查用户是否已存在
+	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
+		return
+	}
+
+	status, err := tbm.tgTraderMgr.GetTraderStatus(telegramID)
+	if err != nil {
+		log.Printf("获取交易员状态失败: %v", err)
+		tbm.sendMessage(chatID, "❌ 获取交易员状态失败，请稍后重试")
+		return
+	}
+
+	if hasTrader, ok := status["has_trader"].(bool); !ok || !hasTrader {
+		if _, err := tbm.tgTraderMgr.EnsureTraderAccount(telegramID); err != nil {
+			log.Printf("创建交易员基础账户失败: %v", err)
+			tbm.sendMessage(chatID, "❌ 创建交易员失败，请稍后重试")
+			return
+		}
+		tbm.handleCreateTrader(update)
+		return
+	}
+
+	if configured, ok := status["is_configured"].(bool); ok && !configured {
+		tbm.handleCreateTrader(update)
+		return
+	}
+
+	tbm.handleTraderStatus(update)
+}
+
+// handleCreateTrader 处理交易员创建流程
 func (tbm *TelegramBotManager) handleCreateTrader(update tgbotapi.Update) {
 	chatID := update.Message.Chat.ID
 	telegramID := update.Message.From.ID
@@ -2023,14 +2053,14 @@ func (tbm *TelegramBotManager) handleStartTrader(update tgbotapi.Update) {
 	err = tbm.tgTraderMgr.StartTrader(telegramID)
 	if err != nil {
 		if err.Error() == "交易员已经在运行中" {
-			tbm.updateProgressMessage(chatID, progressMsgID, "✅ 交易员已经在运行中！使用 /trader_status 查看运行状态")
+			tbm.updateProgressMessage(chatID, progressMsgID, "✅ 交易员已经在运行中！使用 /my_agent 查看运行状态")
 		} else {
 			tbm.updateProgressMessage(chatID, progressMsgID, fmt.Sprintf("❌ 启动交易员失败: %s", esc(err)))
 		}
 		return
 	}
 
-	tbm.updateProgressMessage(chatID, progressMsgID, "🚀 交易员启动成功！使用 /trader_status 查看运行状态")
+	tbm.updateProgressMessage(chatID, progressMsgID, "🚀 交易员启动成功！使用 /my_agent 查看运行状态")
 }
 
 // handleStopTrader 处理 /stop_trader 命令
@@ -2085,7 +2115,7 @@ func (tbm *TelegramBotManager) handleStopTrader(update tgbotapi.Update) {
 	tbm.sendStopConfirmationMessage(chatID, telegramID, positionCount)
 }
 
-// handleTraderStatus 处理 /trader_status 命令
+// handleTraderStatus 处理交易员状态展示
 func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 	chatID := update.Message.Chat.ID
 	telegramID := update.Message.From.ID
@@ -2110,7 +2140,7 @@ func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 📊 您还没有创建交易员
 
 💡 <i>下一步操作:</i>
-/create_trader - 创建新的 AI 交易员`
+/my_agent - 创建/查看 AI 交易员`
 		tbm.sendMessage(chatID, noTraderMsg)
 		return
 	}
@@ -2125,7 +2155,7 @@ func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 • 钱包地址: <code>%s</code>
 • 状态: 💤 未配置
 
-💡 请使用 /create_trader 完成模型与策略配置
+💡 请使用 /my_agent 完成模型与策略配置
 • /deposit - 充值 USDC
 • /balance - 查看账户余额`, esc(walletAddr))
 		tbm.sendMessage(chatID, msg)
@@ -2220,7 +2250,7 @@ func (tbm *TelegramBotManager) handlePromptSwitchCallback(callback *tgbotapi.Cal
 		return
 	}
 	if !trader.IsConfigured {
-		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /create_trader 完成设置")
+		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /my_agent 完成设置")
 		return
 	}
 
@@ -2742,14 +2772,14 @@ func (tbm *TelegramBotManager) handleStartTraderCallback(callback *tgbotapi.Call
 
 	if err := tbm.tgTraderMgr.StartTrader(telegramID); err != nil {
 		if err.Error() == "交易员已经在运行中" {
-			tbm.updateProgressMessage(chatID, progressMsgID, "✅ 交易员已经在运行中！使用 /trader_status 查看运行状态")
+			tbm.updateProgressMessage(chatID, progressMsgID, "✅ 交易员已经在运行中！使用 /my_agent 查看运行状态")
 		} else {
 			tbm.updateProgressMessage(chatID, progressMsgID, fmt.Sprintf("❌ 启动交易员失败: %s", esc(err)))
 		}
 		return
 	}
 
-	tbm.updateProgressMessage(chatID, progressMsgID, "🚀 交易员启动成功！使用 /trader_status 查看运行状态")
+	tbm.updateProgressMessage(chatID, progressMsgID, "🚀 交易员启动成功！使用 /my_agent 查看运行状态")
 }
 
 // handlePromptTemplateCallback 处理策略选择按钮
@@ -3088,7 +3118,7 @@ func (tbm *TelegramBotManager) handleMenuCustomPrompt(callback *tgbotapi.Callbac
 	}
 
 	if !trader.IsConfigured {
-		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /create_trader 完成设置")
+		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /my_agent 完成设置")
 		return
 	}
 
@@ -3166,7 +3196,7 @@ func (tbm *TelegramBotManager) handleEditCustomPrompt(callback *tgbotapi.Callbac
 	}
 
 	if !trader.IsConfigured {
-		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /create_trader 完成设置")
+		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /my_agent 完成设置")
 		return
 	}
 

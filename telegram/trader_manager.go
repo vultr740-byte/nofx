@@ -140,7 +140,7 @@ func (ttm *TelegramTraderManager) EnsureTraderAccount(telegramID int64) (*config
 	return ttm.createTraderSkeleton(telegramID, len(traders)+1)
 }
 
-// createTraderSkeleton 只创建钱包账户，等待 /create_trader 完成配置
+// createTraderSkeleton 只创建钱包账户，等待 /my_agent 完成配置
 func (ttm *TelegramTraderManager) createTraderSkeleton(telegramID int64, index int) (*config.TgTraderRecord, error) {
 	traderID := uuid.New().String()
 
@@ -353,7 +353,7 @@ func (ttm *TelegramTraderManager) UpdateTraderPromptTemplate(telegramID int64, t
 
 	traderRecord := traders[0]
 	if !traderRecord.IsConfigured {
-		return nil, fmt.Errorf("交易员尚未配置，请先使用 /create_trader 完成设置")
+		return nil, fmt.Errorf("交易员尚未配置，请先使用 /my_agent 完成设置")
 	}
 
 	traderRecord.SystemPromptTemplate = templateName
