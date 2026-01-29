@@ -56,17 +56,48 @@ type OrderHistoryItem struct {
 	StopPrice *float64 // 若有止损价格则填充
 }
 
+// OrderHistoryPage 分页后的历史成交展示
+type OrderHistoryPage struct {
+	Text       string
+	Page       int
+	TotalPages int
+}
+
+const orderHistoryPageSize = 20
+
 // GetOrderHistory 获取历史成交并格式化
 func (s *HyperliquidService) GetOrderHistory(agentKey, walletAddr string, testnet bool, lookback time.Duration, limit int, loc *time.Location) (string, error) {
+	items, err := s.getOrderHistoryItems(agentKey, walletAddr, testnet, lookback, limit)
+	if err != nil {
+		return "", err
+	}
+	return formatOrderHistory(items, lookback, loc), nil
+}
+
+// GetOrderHistoryPage 获取历史成交分页文本
+func (s *HyperliquidService) GetOrderHistoryPage(agentKey, walletAddr string, testnet bool, lookback time.Duration, limit int, page int, loc *time.Location) (OrderHistoryPage, error) {
+	items, err := s.getOrderHistoryItems(agentKey, walletAddr, testnet, lookback, limit)
+	if err != nil {
+		return OrderHistoryPage{}, err
+	}
+	text, curPage, totalPages := formatOrderHistoryPage(items, lookback, loc, page, orderHistoryPageSize)
+	return OrderHistoryPage{
+		Text:       text,
+		Page:       curPage,
+		TotalPages: totalPages,
+	}, nil
+}
+
+func (s *HyperliquidService) getOrderHistoryItems(agentKey, walletAddr string, testnet bool, lookback time.Duration, limit int) ([]OrderHistoryItem, error) {
 	traderObj, err := trader.NewHyperliquidTrader(agentKey, walletAddr, testnet)
 	if err != nil {
-		return "", fmt.Errorf("创建 Hyperliquid 交易器失败: %w", err)
+		return nil, fmt.Errorf("创建 Hyperliquid 交易器失败: %w", err)
 	}
 
 	start := time.Now().Add(-lookback)
 	fills, err := traderObj.GetUserFillsByTime(start, nil)
 	if err != nil {
-		return "", fmt.Errorf("获取历史成交失败: %w", err)
+		return nil, fmt.Errorf("获取历史成交失败: %w", err)
 	}
 
 	items := make([]OrderHistoryItem, 0, len(fills))
@@ -92,7 +123,7 @@ func (s *HyperliquidService) GetOrderHistory(agentKey, walletAddr string, testne
 		items = items[:limit]
 	}
 
-	return formatOrderHistory(items, lookback, loc), nil
+	return items, nil
 }
 
 // CountFills 获取指定时间窗口内的成交条数
@@ -626,11 +657,36 @@ func categorizeStocks(assets []PerpMetaAsset) []StockCategory {
 
 // formatOrderHistory 格式化历史成交
 func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration, loc *time.Location) string {
+	text, _, _ := formatOrderHistoryPage(items, lookback, loc, 0, orderHistoryPageSize)
+	return text
+}
+
+func formatOrderHistoryPage(items []OrderHistoryItem, lookback time.Duration, loc *time.Location, page int, pageSize int) (string, int, int) {
 	if loc == nil {
 		loc = time.UTC
 	}
 	if len(items) == 0 {
-		return fmt.Sprintf("📜 <b>历史成交</b>\n%s内无成交记录。", formatLookback(lookback))
+		return fmt.Sprintf("📜 <b>历史成交</b>\n%s内无成交记录。", formatLookback(lookback)), 0, 1
+	}
+	if pageSize <= 0 {
+		pageSize = orderHistoryPageSize
+	}
+
+	totalPages := (len(items) + pageSize - 1) / pageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page < 0 {
+		page = 0
+	}
+	if page >= totalPages {
+		page = totalPages - 1
+	}
+
+	start := page * pageSize
+	end := start + pageSize
+	if end > len(items) {
+		end = len(items)
 	}
 
 	// 统计
@@ -653,13 +709,14 @@ func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration, loc *t
 		winRate = float64(win) / float64(len(items)) * 100
 	}
 	b.WriteString(fmt.Sprintf("统计窗口: %s | 笔数: %d | 胜率: %.1f%%\n", formatLookback(lookback), len(items), winRate))
-	b.WriteString(fmt.Sprintf("累计盈亏: %s USDC | 手续费: %.2f USDC\n\n", formatSigned(totalPnl), totalFee))
-
-	maxDisplay := len(items)
-	if maxDisplay > 20 {
-		maxDisplay = 20
+	b.WriteString(fmt.Sprintf("累计盈亏: %s USDC | 手续费: %.2f USDC\n", formatSigned(totalPnl), totalFee))
+	if totalPages > 1 {
+		b.WriteString(fmt.Sprintf("页码: %d/%d | 显示: %d-%d\n\n", page+1, totalPages, start+1, end))
+	} else {
+		b.WriteString("\n")
 	}
-	for i := 0; i < maxDisplay; i++ {
+
+	for i := start; i < end; i++ {
 		it := items[i]
 		sideEmoji := "📈"
 		if strings.EqualFold(it.Side, "sell") || strings.Contains(strings.ToLower(it.Dir), "short") {
@@ -674,8 +731,9 @@ func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration, loc *t
 		}
 
 		ts := it.Timestamp.In(loc)
+		displayIndex := i + 1
 		lines := []string{
-			fmt.Sprintf("#%d %s %s", i+1, sideEmoji, it.Symbol),
+			fmt.Sprintf("#%d %s %s", displayIndex, sideEmoji, it.Symbol),
 			fmt.Sprintf("• 数量/价格: %.4f × %.4f", it.Size, it.Price),
 			fmt.Sprintf("• 方向: %s", it.Dir),
 			fmt.Sprintf("• 时间: %s", ts.Format("2006-01-02 15:04:05")),
@@ -692,10 +750,10 @@ func formatOrderHistory(items []OrderHistoryItem, lookback time.Duration, loc *t
 		}
 		b.WriteString("\n")
 	}
-	if len(items) > maxDisplay {
-		b.WriteString(fmt.Sprintf("… 还有 %d 条未展示，可调整范围查看更多。", len(items)-maxDisplay))
+	if remaining := len(items) - end; remaining > 0 {
+		b.WriteString(fmt.Sprintf("… 还有 %d 条未展示，点击\"下一页\"继续查看。", remaining))
 	}
-	return b.String()
+	return b.String(), page, totalPages
 }
 
 // formatLookback 将时间窗口转为可读文本

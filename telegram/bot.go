@@ -2687,6 +2687,8 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handleStocksCategoryCallback(callback, chatID, telegramID, parts)
 	case "orders_recent":
 		tbm.handleOrdersRecentCallback(callback, chatID, telegramID, parts)
+	case "orders_recent_page":
+		tbm.handleOrdersRecentPageCallback(callback, chatID, telegramID, parts)
 	case "deposit_arb":
 		tbm.handleDepositArbitrumCallback(callback, chatID, telegramID)
 	case "deposit_xchain":
@@ -3259,22 +3261,70 @@ func (tbm *TelegramBotManager) handleOrdersRecentCallback(callback *tgbotapi.Cal
 		tbm.answerCallbackQuery(callback.ID, "参数错误")
 		return
 	}
-	lookback := 7 * 24 * time.Hour
+	hours := 7 * 24
 	if len(parts) == 4 {
-		hours, convErr := strconv.Atoi(parts[3])
-		if convErr != nil || hours <= 0 {
+		parsedHours, convErr := strconv.Atoi(parts[3])
+		if convErr != nil || parsedHours <= 0 {
 			tbm.answerCallbackQuery(callback.ID, "时间窗口错误")
 			return
 		}
-		lookback = time.Duration(hours) * time.Hour
+		hours = parsedHours
 	}
 
+	tbm.answerCallbackQuery(callback.ID, "⏳ 正在查询...")
+
+	messageID := 0
+	if callback != nil && callback.Message != nil {
+		messageID = callback.Message.MessageID
+	}
+	go func() {
+		tbm.sendOrderHistoryPage(chatID, telegramID, limit, hours, 0, messageID, callback)
+	}()
+}
+
+// handleOrdersRecentPageCallback 处理历史成交翻页
+func (tbm *TelegramBotManager) handleOrdersRecentPageCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
+	// orders_recent_page|user|limit|hours|page
+	if len(parts) != 5 {
+		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
+		return
+	}
+	limit, err := strconv.Atoi(parts[2])
+	if err != nil || limit <= 0 {
+		tbm.answerCallbackQuery(callback.ID, "参数错误")
+		return
+	}
+	hours, err := strconv.Atoi(parts[3])
+	if err != nil || hours <= 0 {
+		tbm.answerCallbackQuery(callback.ID, "时间窗口错误")
+		return
+	}
+	page, err := strconv.Atoi(parts[4])
+	if err != nil || page < 0 {
+		tbm.answerCallbackQuery(callback.ID, "页码错误")
+		return
+	}
+
+	tbm.answerCallbackQuery(callback.ID, "切换页码")
+
+	messageID := 0
+	if callback != nil && callback.Message != nil {
+		messageID = callback.Message.MessageID
+	}
+	go func() {
+		tbm.sendOrderHistoryPage(chatID, telegramID, limit, hours, page, messageID, callback)
+	}()
+}
+
+func (tbm *TelegramBotManager) sendOrderHistoryPage(chatID int64, telegramID int64, limit int, hours int, page int, messageID int, callback *tgbotapi.CallbackQuery) {
 	// 提取账号
 	agentKey, walletAddr, err := tbm.extractAgentKeyAndWallet(telegramID)
 	if err != nil {
-		tbm.answerCallbackQuery(callback.ID, "账号信息获取失败")
+		tbm.sendMessage(chatID, "❌ 账号信息获取失败")
 		return
 	}
+
+	lookback := time.Duration(hours) * time.Hour
 
 	// 推断用户时区（优先使用 DB 存储的 language_code，再尝试 Telegram 回调里的语言，最终回退 UTC）
 	lang := ""
@@ -3291,16 +3341,35 @@ func (tbm *TelegramBotManager) handleOrdersRecentCallback(callback *tgbotapi.Cal
 	}
 	loc := inferLocationFromLanguage(lang)
 
-	tbm.answerCallbackQuery(callback.ID, "⏳ 正在查询...")
+	pageInfo, err := tbm.hlService.GetOrderHistoryPage(agentKey, walletAddr, tbm.testnet, lookback, limit, page, loc)
+	if err != nil {
+		tbm.sendMessage(chatID, fmt.Sprintf("❌ 查询失败: %s", esc(err)))
+		return
+	}
 
-	go func() {
-		text, err := tbm.hlService.GetOrderHistory(agentKey, walletAddr, tbm.testnet, lookback, limit, loc)
-		if err != nil {
-			tbm.sendMessage(chatID, fmt.Sprintf("❌ 查询失败: %s", esc(err)))
-			return
+	keyboard := tbm.buildOrderHistoryPageKeyboard(telegramID, limit, hours, pageInfo.Page, pageInfo.TotalPages)
+	if messageID > 0 {
+		tbm.editCallbackMessageWithInlineKeyboard(messageID, chatID, pageInfo.Text, keyboard)
+		return
+	}
+	tbm.sendMessageWithInlineKeyboard(chatID, pageInfo.Text, keyboard)
+}
+
+func (tbm *TelegramBotManager) buildOrderHistoryPageKeyboard(telegramID int64, limit int, hours int, page int, totalPages int) tgbotapi.InlineKeyboardMarkup {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	if totalPages > 1 {
+		navRow := []tgbotapi.InlineKeyboardButton{}
+		if page > 0 {
+			navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("⬅️ 上一页", fmt.Sprintf("orders_recent_page|%d|%d|%d|%d", telegramID, limit, hours, page-1)))
 		}
-		tbm.sendMessage(chatID, text)
-	}()
+		if page < totalPages-1 {
+			navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("➡️ 下一页", fmt.Sprintf("orders_recent_page|%d|%d|%d|%d", telegramID, limit, hours, page+1)))
+		}
+		if len(navRow) > 0 {
+			rows = append(rows, navRow)
+		}
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 // handleClearCustomPrompt 处理清除自定义 Prompt
