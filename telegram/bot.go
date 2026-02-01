@@ -2286,7 +2286,7 @@ func (tbm *TelegramBotManager) handlePromptSwitchSelectCallback(callback *tgbota
 	}
 
 	if callback.Message != nil {
-		tbm.editCallbackMessageWithInlineKeyboard(
+		tbm.tryEditCallbackMessageWithInlineKeyboard(
 			callback.Message.MessageID,
 			chatID,
 			"⏳ 正在切换策略...",
@@ -2298,7 +2298,9 @@ func (tbm *TelegramBotManager) handlePromptSwitchSelectCallback(callback *tgbota
 		tbm.answerCallbackQuery(callback.ID, "切换失败")
 		errMsg := fmt.Sprintf("❌ %s", esc(err))
 		if callback.Message != nil {
-			tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, errMsg, tgbotapi.NewInlineKeyboardMarkup())
+			if !tbm.tryEditCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, errMsg, tgbotapi.NewInlineKeyboardMarkup()) {
+				tbm.sendMessage(chatID, errMsg)
+			}
 			return
 		}
 		tbm.sendMessage(chatID, errMsg)
@@ -2310,7 +2312,9 @@ func (tbm *TelegramBotManager) handlePromptSwitchSelectCallback(callback *tgbota
 
 	updatedText := fmt.Sprintf("✅ 已切换策略：%s（立即生效）", esc(displayName))
 	if callback.Message != nil {
-		tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup())
+		if !tbm.tryEditCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup()) {
+			tbm.sendMessage(chatID, updatedText)
+		}
 		return
 	}
 
@@ -3707,6 +3711,9 @@ func (tbm *TelegramBotManager) editCallbackMessage(messageID int, chatID int64, 
 func (tbm *TelegramBotManager) editCallbackMessageWithInlineKeyboard(messageID int, chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) {
 	editConfig := tgbotapi.NewEditMessageText(chatID, messageID, text)
 	editConfig.ParseMode = "HTML"
+	if keyboard.InlineKeyboard == nil {
+		keyboard.InlineKeyboard = [][]tgbotapi.InlineKeyboardButton{}
+	}
 	editConfig.ReplyMarkup = &keyboard
 
 	if _, err := tbm.bot.Request(editConfig); err != nil {
@@ -3722,6 +3729,31 @@ func (tbm *TelegramBotManager) editCallbackMessageWithInlineKeyboard(messageID i
 	} else {
 		log.Printf("✅ 编辑回调消息成功 (MessageID: %d)", messageID)
 	}
+}
+
+func (tbm *TelegramBotManager) tryEditCallbackMessageWithInlineKeyboard(messageID int, chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) bool {
+	editConfig := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	editConfig.ParseMode = "HTML"
+	if keyboard.InlineKeyboard == nil {
+		keyboard.InlineKeyboard = [][]tgbotapi.InlineKeyboardButton{}
+	}
+	editConfig.ReplyMarkup = &keyboard
+
+	if _, err := tbm.bot.Request(editConfig); err != nil {
+		if strings.Contains(err.Error(), "message is not modified") {
+			log.Printf("ℹ️ 回调消息无需更新 (MessageID: %d)", messageID)
+			return true
+		}
+		log.Printf("⚠️ 编辑消息HTML格式失败，尝试纯文本 (MessageID: %d): %v", messageID, err)
+		editConfig.ParseMode = ""
+		if _, err2 := tbm.bot.Request(editConfig); err2 != nil {
+			log.Printf("❌ 编辑回调消息失败 (MessageID: %d): %v", messageID, err2)
+			return false
+		}
+	}
+
+	log.Printf("✅ 编辑回调消息成功 (MessageID: %d)", messageID)
+	return true
 }
 
 func splitMessageIntoChunks(text string, chunkSize int) []string {
