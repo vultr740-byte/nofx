@@ -2276,16 +2276,39 @@ func (tbm *TelegramBotManager) handlePromptSwitchSelectCallback(callback *tgbota
 		return
 	}
 
+	tbm.answerCallbackQuery(callback.ID, "⏳ 正在切换策略...")
+
+	if trader, err := tbm.getPrimaryTrader(telegramID); err == nil {
+		if strings.TrimSpace(trader.SystemPromptTemplate) == templateName {
+			tbm.answerCallbackQuery(callback.ID, "当前已是该策略")
+			return
+		}
+	}
+
+	if callback.Message != nil {
+		tbm.editCallbackMessageWithInlineKeyboard(
+			callback.Message.MessageID,
+			chatID,
+			"⏳ 正在切换策略...",
+			tgbotapi.NewInlineKeyboardMarkup(),
+		)
+	}
+
 	if _, err := tbm.tgTraderMgr.UpdateTraderPromptTemplate(telegramID, templateName); err != nil {
 		tbm.answerCallbackQuery(callback.ID, "切换失败")
-		tbm.sendMessage(chatID, fmt.Sprintf("❌ %s", esc(err)))
+		errMsg := fmt.Sprintf("❌ %s", esc(err))
+		if callback.Message != nil {
+			tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, errMsg, tgbotapi.NewInlineKeyboardMarkup())
+			return
+		}
+		tbm.sendMessage(chatID, errMsg)
 		return
 	}
 
 	displayName := tbm.getPromptDisplayName(templateName)
 	tbm.answerCallbackQuery(callback.ID, "✅ 已切换策略")
 
-	updatedText := fmt.Sprintf("✅ 已切换策略：%s\n\n如果交易员正在运行，将立即生效。", esc(displayName))
+	updatedText := fmt.Sprintf("✅ 已切换策略：%s（立即生效）", esc(displayName))
 	if callback.Message != nil {
 		tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup())
 		return
