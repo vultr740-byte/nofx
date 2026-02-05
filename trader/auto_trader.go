@@ -1288,6 +1288,16 @@ func (at *AutoTrader) Run() (err error) {
 	// 启动回撤监控
 	at.startDrawdownMonitor()
 
+	if delay, window := computeStartStagger(at.id, at.name, at.userID, at.config.ScanInterval); delay > 0 {
+		log.Printf("⏳ [%s] 启动错峰延迟: %s (window=%s)", at.name, delay.Round(time.Millisecond), window)
+		select {
+		case <-time.After(delay):
+		case <-at.stopMonitorCh:
+			log.Printf("🛑 [%s] 启动错峰等待中收到停止信号，退出AI决策循环", at.name)
+			return nil
+		}
+	}
+
 	ticker := time.NewTicker(at.config.ScanInterval)
 	defer ticker.Stop()
 

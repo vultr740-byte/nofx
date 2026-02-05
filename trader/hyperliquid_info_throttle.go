@@ -117,11 +117,15 @@ func (t *HyperliquidTrader) getFrontendOpenOrdersCached(ttl time.Duration) ([]hy
 			return cached, nil
 		}
 
+		waitStart := time.Now()
 		if err := hyperliquidInfoLimiter.Wait(t.ctx); err != nil {
 			return nil, err
 		}
+		waitDur := time.Since(waitStart)
 
+		reqID, startedAt := startHLInfoTrace("FrontendOpenOrders", t.walletAddr, t.testnet, "getFrontendOpenOrdersCached", waitDur)
 		orders, err := t.exchange.Info().FrontendOpenOrders(t.ctx, t.walletAddr)
+		endHLInfoTrace(reqID, "FrontendOpenOrders", t.walletAddr, t.testnet, startedAt, err)
 		if err != nil {
 			return nil, err
 		}
@@ -174,11 +178,15 @@ func (t *HyperliquidTrader) getOpenOrdersCached(ttl time.Duration) ([]hyperliqui
 			return cached, nil
 		}
 
+		waitStart := time.Now()
 		if err := hyperliquidInfoLimiter.Wait(t.ctx); err != nil {
 			return nil, err
 		}
+		waitDur := time.Since(waitStart)
 
+		reqID, startedAt := startHLInfoTrace("OpenOrders", t.walletAddr, t.testnet, "getOpenOrdersCached", waitDur)
 		orders, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
+		endHLInfoTrace(reqID, "OpenOrders", t.walletAddr, t.testnet, startedAt, err)
 		if err != nil {
 			return nil, err
 		}

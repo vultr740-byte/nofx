@@ -897,10 +897,15 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 		}
 	}
 	if !spotFromWS {
-		if err := hyperliquidInfoLimiter.Wait(t.ctx); err != nil {
-			logf("⚠️ 等待 Hyperliquid info 限流失败(spot): %v", err)
+		waitStart := time.Now()
+		waitErr := hyperliquidInfoLimiter.Wait(t.ctx)
+		waitDur := time.Since(waitStart)
+		if waitErr != nil {
+			logf("⚠️ 等待 Hyperliquid info 限流失败(spot): %v", waitErr)
 		}
+		reqID, startedAt := startHLInfoTrace("SpotUserState", t.walletAddr, t.testnet, "GetBalance", waitDur)
 		spotState, err := t.exchange.Info().SpotUserState(t.ctx, t.walletAddr)
+		endHLInfoTrace(reqID, "SpotUserState", t.walletAddr, t.testnet, startedAt, err)
 		if err != nil {
 			logf("⚠️ 查询 Spot 余额失败（可能无现货资产）: %v", err)
 		} else if spotState != nil && len(spotState.Balances) > 0 {
@@ -1545,7 +1550,9 @@ func dexForCoin(coin string) string {
 
 // spotBalanceByToken 返回指定 tokenIndex 的 total 余额
 func (t *HyperliquidTrader) spotBalanceByToken(tokenIndex int) (float64, error) {
+	reqID, startedAt := startHLInfoTrace("SpotUserState", t.walletAddr, t.testnet, "spotBalanceByToken", 0)
 	state, err := t.exchange.Info().SpotUserState(t.ctx, t.walletAddr)
+	endHLInfoTrace(reqID, "SpotUserState", t.walletAddr, t.testnet, startedAt, err)
 	if err != nil {
 		return 0, err
 	}
@@ -2433,7 +2440,9 @@ func (t *HyperliquidTrader) CancelAllOrders(symbol string) error {
 	}
 
 	// 获取所有挂单
+	reqID, startedAt := startHLInfoTrace("OpenOrders", t.walletAddr, t.testnet, "CancelAllOrders", 0)
 	openOrders, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
+	endHLInfoTrace(reqID, "OpenOrders", t.walletAddr, t.testnet, startedAt, err)
 	if err != nil {
 		return fmt.Errorf("获取挂单失败: %w", err)
 	}
@@ -2462,7 +2471,9 @@ func (t *HyperliquidTrader) CancelStopOrders(symbol string) error {
 	}
 
 	// 获取所有挂单
+	reqID, startedAt := startHLInfoTrace("OpenOrders", t.walletAddr, t.testnet, "CancelStopOrders", 0)
 	openOrders, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
+	endHLInfoTrace(reqID, "OpenOrders", t.walletAddr, t.testnet, startedAt, err)
 	if err != nil {
 		return fmt.Errorf("获取挂单失败: %w", err)
 	}
@@ -2580,7 +2591,9 @@ func extractOid(status hyperliquid.OrderStatus) int64 {
 // triggerOrdersBySymbol 获取当前币种的触发类挂单（仅 ReduceOnly）
 func (t *HyperliquidTrader) triggerOrdersBySymbol(symbol string) ([]hyperliquid.FrontendOpenOrder, error) {
 	coin := convertSymbolToHyperliquid(symbol)
+	reqID, startedAt := startHLInfoTrace("FrontendOpenOrders", t.walletAddr, t.testnet, "triggerOrdersBySymbol", 0)
 	orders, err := t.exchange.Info().FrontendOpenOrders(t.ctx, t.walletAddr)
+	endHLInfoTrace(reqID, "FrontendOpenOrders", t.walletAddr, t.testnet, startedAt, err)
 	if err != nil {
 		return nil, err
 	}
