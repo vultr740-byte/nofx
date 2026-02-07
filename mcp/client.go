@@ -274,12 +274,16 @@ func (client *Client) callOnce(systemPrompt, userPrompt string) (string, error) 
 
 	// 创建HTTP请求
 	var url string
+	baseURL := strings.TrimRight(client.BaseURL, "/")
 	if client.UseFullURL {
 		// 使用完整URL，不添加/chat/completions
-		url = client.BaseURL
+		url = baseURL
+	} else if strings.HasSuffix(baseURL, "/chat/completions") {
+		// BaseURL 已包含 /chat/completions，直接使用
+		url = baseURL
 	} else {
 		// 默认行为：添加/chat/completions
-		url = fmt.Sprintf("%s/chat/completions", client.BaseURL)
+		url = fmt.Sprintf("%s/chat/completions", baseURL)
 	}
 	log.Printf("📡 [MCP] 请求 URL: %s", url)
 
