@@ -1514,6 +1514,10 @@ func (tbm *TelegramBotManager) updateProgressMessage(chatID int64, messageID int
 	editConfig.ParseMode = "HTML"
 
 	if _, err := tbm.bot.Send(editConfig); err != nil {
+		// 避免重复发送：Telegram 返回 "message is not modified" 时说明内容已是最新
+		if strings.Contains(err.Error(), "message is not modified") {
+			return
+		}
 		log.Printf("⚠️ 更新进度消息失败 (ChatID: %d, MsgID: %d): %v", chatID, messageID, err)
 		tbm.sendMessage(chatID, text)
 	}
@@ -2506,9 +2510,6 @@ func (tbm *TelegramBotManager) buildModelSwitchMessage(currentProvider string) s
 
 	for _, provider := range providers {
 		displayName := aiProviderDisplayName(provider)
-		if provider == "openai" {
-			displayName = "OpenAI (gpt-5.2)"
-		}
 		if provider == current {
 			message.WriteString("✅ ")
 		}
@@ -2525,9 +2526,6 @@ func (tbm *TelegramBotManager) buildModelSwitchInlineKeyboard(telegramID int64) 
 
 	for _, provider := range providers {
 		displayName := aiProviderDisplayName(provider)
-		if provider == "openai" {
-			displayName = "OpenAI (gpt-5.2)"
-		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(
 				displayName,
