@@ -225,6 +225,7 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		UseQwen:               aiModelCfg.Provider == "qwen",
 		DeepSeekKey:           "",
 		QwenKey:               "",
+		OpenAIKey:             "",
 		CustomAPIURL:          aiModelCfg.CustomAPIURL,    // 自定义API URL
 		CustomModelName:       aiModelCfg.CustomModelName, // 自定义模型名称
 		ScanInterval:          time.Duration(traderCfg.ScanIntervalMinutes) * time.Minute,
@@ -257,6 +258,8 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 	// 根据AI模型设置API密钥
 	if aiModelCfg.Provider == "qwen" {
 		traderConfig.QwenKey = aiModelCfg.APIKey
+	} else if aiModelCfg.Provider == "openai" {
+		traderConfig.OpenAIKey = aiModelCfg.APIKey
 	} else if aiModelCfg.Provider == "deepseek" {
 		traderConfig.DeepSeekKey = aiModelCfg.APIKey
 	}
@@ -327,6 +330,7 @@ func (tm *TraderManager) AddTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		UseQwen:               aiModelCfg.Provider == "qwen",
 		DeepSeekKey:           "",
 		QwenKey:               "",
+		OpenAIKey:             "",
 		CustomAPIURL:          aiModelCfg.CustomAPIURL,    // 自定义API URL
 		CustomModelName:       aiModelCfg.CustomModelName, // 自定义模型名称
 		ScanInterval:          time.Duration(traderCfg.ScanIntervalMinutes) * time.Minute,
@@ -357,6 +361,8 @@ func (tm *TraderManager) AddTraderFromDB(traderCfg *config.TraderRecord, aiModel
 	// 根据AI模型设置API密钥
 	if aiModelCfg.Provider == "qwen" {
 		traderConfig.QwenKey = aiModelCfg.APIKey
+	} else if aiModelCfg.Provider == "openai" {
+		traderConfig.OpenAIKey = aiModelCfg.APIKey
 	} else if aiModelCfg.Provider == "deepseek" {
 		traderConfig.DeepSeekKey = aiModelCfg.APIKey
 	}
@@ -1102,12 +1108,18 @@ func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord,
 	}
 
 	if apiKey == "" {
-		if useQwen {
+		switch provider {
+		case "qwen":
 			apiKey = os.Getenv("QWEN_API_KEY")
 			if apiKey != "" {
 				log.Printf("🔑 使用环境变量QWEN_API_KEY")
 			}
-		} else {
+		case "openai":
+			apiKey = os.Getenv("OPENAI_API_KEY")
+			if apiKey != "" {
+				log.Printf("🔑 使用环境变量OPENAI_API_KEY")
+			}
+		default:
 			apiKey = os.Getenv("DEEPSEEK_API_KEY")
 			if apiKey != "" {
 				log.Printf("🔑 使用环境变量DEEPSEEK_API_KEY")
@@ -1127,10 +1139,13 @@ func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord,
 		log.Printf("🧠 使用系统自定义模型名称: %s", customModelName)
 	}
 
-	var deepSeekKey, qwenKey string
-	if useQwen {
+	var deepSeekKey, qwenKey, openAIKey string
+	switch provider {
+	case "qwen":
 		qwenKey = apiKey
-	} else {
+	case "openai":
+		openAIKey = apiKey
+	default:
 		deepSeekKey = apiKey
 	}
 
@@ -1164,6 +1179,7 @@ func (tm *TraderManager) createTGTraderInstance(tgTrader *config.TgTraderRecord,
 			HyperliquidTestnet:    useTestnet,
 			DeepSeekKey:           deepSeekKey,
 			QwenKey:               qwenKey,
+			OpenAIKey:             openAIKey,
 			CustomAPIURL:          apiURL,
 			CustomModelName:       customModelName,
 			UseQwen:               useQwen,
@@ -1245,6 +1261,8 @@ func selectAIModelConfigForTG(models []*config.AIModelConfig, aiModelID string) 
 func normalizeAIProviderID(value string) string {
 	trimmed := strings.ToLower(strings.TrimSpace(value))
 	switch trimmed {
+	case "openai", "open-ai", "open ai", "gpt":
+		return "openai"
 	case "qwen", "qianwen", "tongyi", "通义", "通義":
 		return "qwen"
 	case "deepseek", "deepseek-chat", "deepseek-reasoner", "deepseekcoder":
@@ -1257,6 +1275,8 @@ func normalizeAIProviderID(value string) string {
 // aiProviderDisplayNameInternal 返回用于日志展示的提供商名称
 func aiProviderDisplayNameInternal(provider string) string {
 	switch normalizeAIProviderID(provider) {
+	case "openai":
+		return "OpenAI"
 	case "qwen":
 		return "Qwen"
 	case "deepseek":
@@ -1508,6 +1528,7 @@ func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiMode
 		CustomAPIURL:         aiModelCfg.CustomAPIURL,    // 自定义API URL
 		CustomModelName:      aiModelCfg.CustomModelName, // 自定义模型名称
 		UseQwen:              aiModelCfg.Provider == "qwen",
+		OpenAIKey:            "",
 		MaxDailyLoss:         maxDailyLoss,
 		MaxDrawdown:          maxDrawdown,
 		StopTradingTime:      time.Duration(stopTradingMinutes) * time.Minute,
@@ -1534,6 +1555,8 @@ func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiMode
 	// 根据AI模型设置API密钥
 	if aiModelCfg.Provider == "qwen" {
 		traderConfig.QwenKey = aiModelCfg.APIKey
+	} else if aiModelCfg.Provider == "openai" {
+		traderConfig.OpenAIKey = aiModelCfg.APIKey
 	} else if aiModelCfg.Provider == "deepseek" {
 		traderConfig.DeepSeekKey = aiModelCfg.APIKey
 	}

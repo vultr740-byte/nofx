@@ -838,7 +838,7 @@ func (tbm *TelegramBotManager) handleAPIKeyUpdateFlow(update tgbotapi.Update, se
 
 	switch session.State {
 	case StateUpdatingAIProvider:
-		tbm.sendAIProviderSelectionMessage(chatID, telegramID, "❌ 请点击按钮选择 DeepSeek 或 Qwen。输入 \"cancel\" 可取消。")
+		tbm.sendAIProviderSelectionMessage(chatID, telegramID, "❌ 请点击按钮选择 DeepSeek / Qwen / OpenAI。输入 \"cancel\" 可取消。")
 	case StateUpdatingAPIKey:
 		provider := normalizeAIProvider(session.TraderConfig.AIProvider)
 		if !tbm.configWizard.validateAPIKeyForProvider(provider, input) {
@@ -1928,6 +1928,7 @@ func (tbm *TelegramBotManager) startAPIKeyUpdate(chatID int64, telegramID int64)
 请选择要使用的大模型：
 DeepSeek（默认，性价比高，推理速度快）
 Qwen / 通义千问（由阿里云 DashScope 提供，稳定可靠）
+OpenAI（GPT 系列，通用能力强）
 
 请点击下方按钮选择，输入 "cancel" 可取消。`,
 		esc(trader.Name),
@@ -2229,6 +2230,9 @@ func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 			tgbotapi.NewInlineKeyboardButtonData("🔁 切换策略", fmt.Sprintf("prompt_switch|%d", telegramID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔁 切换模型", fmt.Sprintf("model_switch|%d", telegramID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📝 自定义 Prompt", fmt.Sprintf("menu_custom_prompt|%d", telegramID)),
 		),
 	)
@@ -2332,6 +2336,119 @@ func (tbm *TelegramBotManager) handlePromptSwitchCancelCallback(callback *tgbota
 	tbm.sendMessage(chatID, "✅ 已取消策略切换")
 }
 
+func (tbm *TelegramBotManager) handleModelSwitchCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64) {
+	tbm.answerCallbackQuery(callback.ID, "请选择模型")
+
+	if _, err := tbm.db.GetTGUserByTelegramID(telegramID); err != nil {
+		tbm.sendMessage(chatID, "❌ 请先使用 /start 初始化账号")
+		return
+	}
+
+	trader, err := tbm.getPrimaryTrader(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, "❌ 您还没有创建交易员，请先使用 /start 初始化账号")
+		return
+	}
+	if !trader.IsConfigured {
+		tbm.sendMessage(chatID, "❌ 交易员尚未配置，请先使用 /my_agent 完成设置")
+		return
+	}
+
+	message := tbm.buildModelSwitchMessage(trader.AIModelID)
+	keyboard := tbm.buildModelSwitchInlineKeyboard(telegramID)
+	tbm.sendMessageWithInlineKeyboard(chatID, message, keyboard)
+}
+
+func (tbm *TelegramBotManager) handleModelSwitchSelectCallback(callback *tgbotapi.CallbackQuery, chatID int64, telegramID int64, parts []string) {
+	if len(parts) < 3 {
+		tbm.answerCallbackQuery(callback.ID, "请求格式错误")
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(parts[2]))
+	if !tbm.isAIProviderAvailable(provider) {
+		tbm.answerCallbackQuery(callback.ID, "无效模型")
+		tbm.sendMessage(chatID, "❌ 未找到该模型")
+		return
+	}
+
+	tbm.answerCallbackQuery(callback.ID, "⏳ 正在切换模型...")
+
+	trader, err := tbm.getPrimaryTrader(telegramID)
+	if err != nil {
+		tbm.sendMessage(chatID, "❌ 获取交易员失败，请稍后重试")
+		return
+	}
+	currentProvider := normalizeAIProvider(trader.AIModelID)
+	if currentProvider == provider {
+		tbm.answerCallbackQuery(callback.ID, "当前已是该模型")
+		return
+	}
+
+	if callback.Message != nil {
+		tbm.tryEditCallbackMessageWithInlineKeyboard(
+			callback.Message.MessageID,
+			chatID,
+			"⏳ 正在切换模型...",
+			tgbotapi.NewInlineKeyboardMarkup(),
+		)
+	}
+
+	apiKey := strings.TrimSpace(trader.AIModelAPIKey)
+	if apiKey == "" {
+		tbm.answerCallbackQuery(callback.ID, "请先配置 API KEY")
+		errMsg := "❌ 未检测到 API KEY，请先使用 /settings 配置后再切换模型"
+		if callback.Message != nil {
+			if !tbm.tryEditCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, errMsg, tgbotapi.NewInlineKeyboardMarkup()) {
+				tbm.sendMessage(chatID, errMsg)
+			}
+			return
+		}
+		tbm.sendMessage(chatID, errMsg)
+		return
+	}
+
+	modelName := ""
+	if provider == "openai" {
+		modelName = "gpt-5.2"
+	}
+	if _, err := tbm.tgTraderMgr.UpdateTraderAPIConfig(telegramID, provider, apiKey, modelName); err != nil {
+		tbm.answerCallbackQuery(callback.ID, "切换失败")
+		errMsg := fmt.Sprintf("❌ %s", esc(err))
+		if callback.Message != nil {
+			if !tbm.tryEditCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, errMsg, tgbotapi.NewInlineKeyboardMarkup()) {
+				tbm.sendMessage(chatID, errMsg)
+			}
+			return
+		}
+		tbm.sendMessage(chatID, errMsg)
+		return
+	}
+
+	displayName := aiProviderDisplayName(provider)
+	tbm.answerCallbackQuery(callback.ID, "✅ 已切换模型")
+
+	updatedText := fmt.Sprintf("✅ 已切换模型：%s（立即生效）", esc(displayName))
+	if callback.Message != nil {
+		if !tbm.tryEditCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup()) {
+			tbm.sendMessage(chatID, updatedText)
+		}
+		return
+	}
+
+	tbm.sendMessage(chatID, updatedText)
+}
+
+func (tbm *TelegramBotManager) handleModelSwitchCancelCallback(callback *tgbotapi.CallbackQuery, chatID int64) {
+	tbm.answerCallbackQuery(callback.ID, "已取消")
+
+	if callback.Message != nil {
+		tbm.deleteMessage(chatID, callback.Message.MessageID)
+		return
+	}
+
+	tbm.sendMessage(chatID, "✅ 已取消模型切换")
+}
+
 // getPromptDisplayName 获取提示词显示名称
 func (tbm *TelegramBotManager) getPromptDisplayName(templateName string) string {
 	templates := GetAvailablePromptTemplates()
@@ -2401,6 +2518,66 @@ func (tbm *TelegramBotManager) buildPromptSwitchInlineKeyboard(telegramID int64)
 	))
 
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+func (tbm *TelegramBotManager) buildModelSwitchMessage(currentProvider string) string {
+	providers := tbm.getAvailableAIProviders()
+	current := normalizeAIProvider(currentProvider)
+	var message strings.Builder
+
+	message.WriteString("🔁 <b>切换模型</b>\n\n")
+	message.WriteString("请选择要切换的模型：\n\n")
+
+	for _, provider := range providers {
+		displayName := aiProviderDisplayName(provider)
+		if provider == "openai" {
+			displayName = "OpenAI (gpt-5.2)"
+		}
+		if provider == current {
+			message.WriteString("✅ ")
+		}
+		message.WriteString(fmt.Sprintf("<b>%s</b>\n\n", html.EscapeString(displayName)))
+	}
+
+	message.WriteString("点击下方按钮完成切换：")
+	return message.String()
+}
+
+func (tbm *TelegramBotManager) buildModelSwitchInlineKeyboard(telegramID int64) tgbotapi.InlineKeyboardMarkup {
+	providers := tbm.getAvailableAIProviders()
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(providers)+1)
+
+	for _, provider := range providers {
+		displayName := aiProviderDisplayName(provider)
+		if provider == "openai" {
+			displayName = "OpenAI (gpt-5.2)"
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(
+				displayName,
+				fmt.Sprintf("model_switch_select|%d|%s", telegramID, provider),
+			),
+		))
+	}
+
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🗑️ 取消", fmt.Sprintf("model_switch_cancel|%d", telegramID)),
+	))
+
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+func (tbm *TelegramBotManager) getAvailableAIProviders() []string {
+	return []string{"deepseek", "qwen", "openai"}
+}
+
+func (tbm *TelegramBotManager) isAIProviderAvailable(provider string) bool {
+	for _, p := range tbm.getAvailableAIProviders() {
+		if p == provider {
+			return true
+		}
+	}
+	return false
 }
 
 // PushDecisionToUser 推送AI决策到指定用户（用户友好的分段指示）
@@ -2774,6 +2951,12 @@ func (tbm *TelegramBotManager) handleCallbackQuery(update tgbotapi.Update) {
 		tbm.handlePromptSwitchSelectCallback(callback, chatID, telegramID, parts)
 	case "prompt_switch_cancel":
 		tbm.handlePromptSwitchCancelCallback(callback, chatID)
+	case "model_switch":
+		tbm.handleModelSwitchCallback(callback, chatID, telegramID)
+	case "model_switch_select":
+		tbm.handleModelSwitchSelectCallback(callback, chatID, telegramID, parts)
+	case "model_switch_cancel":
+		tbm.handleModelSwitchCancelCallback(callback, chatID)
 	case "confirm_trader":
 		tbm.handleConfirmTraderCallback(callback, chatID, telegramID, parts)
 	default:
@@ -2868,8 +3051,8 @@ func (tbm *TelegramBotManager) handleAIProviderCallback(callback *tgbotapi.Callb
 		}
 		tbm.sendMessage(chatID, response)
 	case StateUpdatingAIProvider:
-		normalized := normalizeAIProvider(provider)
-		if normalized != "deepseek" && normalized != "qwen" {
+		normalized := strings.ToLower(strings.TrimSpace(provider))
+		if normalized != "deepseek" && normalized != "qwen" && normalized != "openai" {
 			tbm.answerCallbackQuery(callback.ID, "选择失败")
 			tbm.sendMessage(chatID, "❌ 无效的 AI 提供商")
 			return

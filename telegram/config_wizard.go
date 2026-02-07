@@ -304,6 +304,15 @@ func (cw *ConfigWizard) processAPIKeyInput(telegramID int64, input string) (stri
 // getAPIKeyMessage 获取 API KEY 输入消息
 func (cw *ConfigWizard) getAPIKeyMessage(provider string) string {
 	switch normalizeAIProvider(provider) {
+	case "openai":
+		return `🔐 创建 AI 交易员 - 输入 OpenAI API KEY
+
+🔗 获取 OpenAI API KEY：
+1. 访问 https://platform.openai.com/api-keys
+2. 登录并创建新的 API KEY
+3. 复制完整的 API KEY
+
+请直接粘贴您的 OpenAI API KEY：`
 	case "qwen":
 		return `🔐 创建 AI 交易员 - 输入 Qwen API KEY
 
@@ -327,6 +336,8 @@ func (cw *ConfigWizard) getAPIKeyMessage(provider string) string {
 
 func (cw *ConfigWizard) getAPIKeyFormatHint(provider string) string {
 	switch normalizeAIProvider(provider) {
+	case "openai":
+		return "❌ API KEY 格式错误！\n• 至少 15 个字符\n• 仅支持可见ASCII字符（不含空格/换行/引号）"
 	case "qwen":
 		return "❌ API KEY 格式错误！\n• 必须以 sk- 开头\n• 至少 15 个字符\n• 仅支持可见ASCII字符（不含空格/换行/引号）"
 	default:
@@ -336,6 +347,8 @@ func (cw *ConfigWizard) getAPIKeyFormatHint(provider string) string {
 
 func (cw *ConfigWizard) validateAPIKeyForProvider(provider, apiKey string) bool {
 	switch normalizeAIProvider(provider) {
+	case "openai":
+		return validateAPIKeyNoPrefix(apiKey, 15)
 	case "qwen":
 		return validateAPIKeyCommon(apiKey, 15)
 	default:
@@ -354,6 +367,28 @@ func validateAPIKeyCommon(apiKey string, minLen int) bool {
 		return false
 	}
 	if !strings.HasPrefix(strings.ToLower(apiKey), "sk-") {
+		return false
+	}
+	for _, r := range apiKey {
+		if r < 33 || r > 126 {
+			return false
+		}
+		switch r {
+		case '"', '\'', '`':
+			return false
+		}
+	}
+	return true
+}
+
+func validateAPIKeyNoPrefix(apiKey string, minLen int) bool {
+	if apiKey == "" {
+		return false
+	}
+	if strings.TrimSpace(apiKey) != apiKey {
+		return false
+	}
+	if len(apiKey) < minLen {
 		return false
 	}
 	for _, r := range apiKey {
@@ -643,6 +678,7 @@ func (cw *ConfigWizard) getAIProviderMessage() string {
 请选择要使用的 AI 提供商：
 DeepSeek（默认，性价比高，推理速度快）
 Qwen / 通义千问（由阿里云 DashScope 提供，稳定可靠）
+OpenAI（GPT 系列，通用能力强）
 
 请点击下方按钮选择：`
 }
@@ -665,6 +701,8 @@ func detectAIProviderFromInput(input string) (string, bool) {
 		return "deepseek", true
 	case "2":
 		return "qwen", true
+	case "3":
+		return "openai", true
 	}
 
 	// 去掉常见的符号和空格，方便匹配
@@ -678,6 +716,9 @@ func detectAIProviderFromInput(input string) (string, bool) {
 	if strings.Contains(normalized, "qwen") || strings.Contains(normalized, "通义") || strings.Contains(normalized, "tongyi") {
 		return "qwen", true
 	}
+	if strings.Contains(normalized, "openai") || strings.Contains(normalized, "gpt") {
+		return "openai", true
+	}
 
 	return "", false
 }
@@ -689,8 +730,8 @@ func (cw *ConfigWizard) processAIProviderSelectionByName(telegramID int64, provi
 		session.TraderConfig = &TraderConfig{}
 	}
 
-	normalized := normalizeAIProvider(provider)
-	if normalized != "deepseek" && normalized != "qwen" {
+	normalized := strings.ToLower(strings.TrimSpace(provider))
+	if normalized != "deepseek" && normalized != "qwen" && normalized != "openai" {
 		return "", fmt.Errorf("无效的 AI 提供商")
 	}
 
@@ -707,6 +748,9 @@ func (cw *ConfigWizard) buildAIProviderInlineKeyboard(telegramID int64) tgbotapi
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("DeepSeek", fmt.Sprintf("ai_provider|%d|deepseek", telegramID)),
 			tgbotapi.NewInlineKeyboardButtonData("Qwen / 通义千问", fmt.Sprintf("ai_provider|%d|qwen", telegramID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("OpenAI", fmt.Sprintf("ai_provider|%d|openai", telegramID)),
 		),
 	)
 }

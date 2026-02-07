@@ -212,6 +212,7 @@ type AutoTraderConfig struct {
 	UseQwen     bool
 	DeepSeekKey string
 	QwenKey     string
+	OpenAIKey   string
 
 	// 自定义AI API配置
 	CustomAPIURL    string
@@ -330,6 +331,14 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 		// 使用自定义API
 		mcpClient.SetCustomAPI(config.CustomAPIURL, config.CustomAPIKey, config.CustomModelName)
 		log.Printf("🤖 [%s] 使用自定义AI API: %s (模型: %s)", config.Name, config.CustomAPIURL, config.CustomModelName)
+	} else if config.AIModel == "openai" {
+		// 使用OpenAI (支持自定义URL和Model)
+		mcpClient.SetOpenAIAPIKey(config.OpenAIKey, config.CustomAPIURL, config.CustomModelName)
+		if config.CustomAPIURL != "" || config.CustomModelName != "" {
+			log.Printf("🤖 [%s] 使用OpenAI (自定义URL: %s, 模型: %s)", config.Name, config.CustomAPIURL, config.CustomModelName)
+		} else {
+			log.Printf("🤖 [%s] 使用OpenAI", config.Name)
+		}
 	} else if config.UseQwen || config.AIModel == "qwen" {
 		// 使用Qwen (支持自定义URL和Model)
 		mcpClient.SetQwenAPIKey(config.QwenKey, config.CustomAPIURL, config.CustomModelName)
@@ -452,6 +461,8 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 
 func chatModelNameForProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return "gpt-5.2"
 	case "qwen":
 		return "qwen3-30b"
 	default:
@@ -477,6 +488,12 @@ func buildChatMCPClient(config AutoTraderConfig) *mcp.Client {
 		}
 		client.SetCustomAPI(config.CustomAPIURL, config.CustomAPIKey, config.CustomModelName)
 		return client
+	case "openai":
+		if config.CustomAPIURL == "" && config.CustomModelName == "" && config.OpenAIKey == "" {
+			return nil
+		}
+		client.SetOpenAIAPIKey(config.OpenAIKey, config.CustomAPIURL, chatModelNameForProvider("openai"))
+		return client
 	case "qwen":
 		client.SetQwenAPIKey(config.QwenKey, config.CustomAPIURL, chatModelNameForProvider("qwen"))
 		return client
@@ -500,6 +517,14 @@ func (at *AutoTrader) refreshChatMCPClient(provider string, apiKey string) {
 			return
 		}
 		client.SetCustomAPI(at.config.CustomAPIURL, apiKey, at.config.CustomModelName)
+		at.chatMcpClient = client
+		return
+	case "openai":
+		if at.config.CustomAPIURL == "" && at.config.CustomModelName == "" && apiKey == "" {
+			at.chatMcpClient = nil
+			return
+		}
+		client.SetOpenAIAPIKey(apiKey, at.config.CustomAPIURL, chatModelNameForProvider("openai"))
 		at.chatMcpClient = client
 		return
 	case "qwen":
@@ -2692,11 +2717,27 @@ func (at *AutoTrader) UpdateAIConfig(provider string, apiKey string, modelName s
 	modelName = strings.TrimSpace(modelName)
 	at.config.CustomModelName = modelName
 
+	if normalized == "openai" {
+		at.config.UseQwen = false
+		at.config.AIModel = "openai"
+		at.config.OpenAIKey = apiKey
+		at.config.DeepSeekKey = ""
+		at.config.QwenKey = ""
+		at.aiModel = "openai"
+		if at.mcpClient != nil {
+			at.mcpClient.SetOpenAIAPIKey(apiKey, at.config.CustomAPIURL, at.config.CustomModelName)
+		}
+		at.refreshChatMCPClient(normalized, apiKey)
+		log.Printf("🔁 [%s] AI 配置已更新为 OpenAI", at.name)
+		return
+	}
+
 	if normalized == "qwen" {
 		at.config.UseQwen = true
 		at.config.AIModel = "qwen"
 		at.config.QwenKey = apiKey
 		at.config.DeepSeekKey = ""
+		at.config.OpenAIKey = ""
 		at.aiModel = "qwen"
 		if at.mcpClient != nil {
 			at.mcpClient.SetQwenAPIKey(apiKey, at.config.CustomAPIURL, at.config.CustomModelName)
@@ -2710,6 +2751,7 @@ func (at *AutoTrader) UpdateAIConfig(provider string, apiKey string, modelName s
 	at.config.AIModel = "deepseek"
 	at.config.DeepSeekKey = apiKey
 	at.config.QwenKey = ""
+	at.config.OpenAIKey = ""
 	at.aiModel = "deepseek"
 	if at.mcpClient != nil {
 		at.mcpClient.SetDeepSeekAPIKey(apiKey, at.config.CustomAPIURL, at.config.CustomModelName)
@@ -2791,7 +2833,9 @@ func (at *AutoTrader) GetDecisionLogger() *logger.DecisionLogger {
 // GetStatus 获取系统状态（用于API）
 func (at *AutoTrader) GetStatus() map[string]interface{} {
 	aiProvider := "DeepSeek"
-	if at.config.UseQwen {
+	if strings.EqualFold(at.aiModel, "openai") {
+		aiProvider = "OpenAI"
+	} else if at.config.UseQwen || strings.EqualFold(at.aiModel, "qwen") {
 		aiProvider = "Qwen"
 	}
 

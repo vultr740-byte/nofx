@@ -5,6 +5,8 @@ import "strings"
 // normalizeAIProvider 统一AI提供商标识，默认返回deepseek
 func normalizeAIProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai", "open-ai", "open ai", "gpt":
+		return "openai"
 	case "qwen", "qianwen", "通义", "tongyi":
 		return "qwen"
 	default:
@@ -15,6 +17,8 @@ func normalizeAIProvider(provider string) string {
 // aiProviderDisplayName 获取提供商用于展示的名称
 func aiProviderDisplayName(provider string) string {
 	switch normalizeAIProvider(provider) {
+	case "openai":
+		return "OpenAI"
 	case "qwen":
 		return "Qwen"
 	default:

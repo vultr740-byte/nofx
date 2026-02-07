@@ -47,7 +47,7 @@ type TraderConfig struct {
 	BTCETHLeverage      int
 	AltcoinLeverage     int
 	ScanIntervalMinutes int
-	AIProvider          string // deepseek / qwen
+	AIProvider          string // deepseek / qwen / openai
 	AIModelName         string // 自定义模型名称
 	AIModelAPIKey       string // AI 模型 API KEY (对应数据库中的 ai_model_api_key 字段)
 	AIModelAPIURL       string // AI 模型 API URL (对应数据库中的 ai_model_api_url 字段)

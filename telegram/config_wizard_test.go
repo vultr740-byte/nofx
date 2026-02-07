@@ -83,6 +83,24 @@ func TestValidateAPIKeyForProvider(t *testing.T) {
 			key:      " sk-abcdefghijkl",
 			want:     false,
 		},
+		{
+			name:     "openai valid",
+			provider: "openai",
+			key:      "sk-abcdefghijklmnop",
+			want:     true,
+		},
+		{
+			name:     "openai valid no prefix",
+			provider: "openai",
+			key:      "oa-abcdefghijklmnop",
+			want:     true,
+		},
+		{
+			name:     "openai too short",
+			provider: "openai",
+			key:      "sk-abcdefg",
+			want:     false,
+		},
 	}
 
 	for _, tc := range cases {

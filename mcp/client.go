@@ -20,6 +20,7 @@ type Provider string
 const (
 	ProviderDeepSeek Provider = "deepseek"
 	ProviderQwen     Provider = "qwen"
+	ProviderOpenAI   Provider = "openai"
 	ProviderCustom   Provider = "custom"
 )
 
@@ -133,6 +134,31 @@ func (client *Client) SetQwenAPIKey(apiKey string, customURL string, customModel
 	}
 }
 
+// SetOpenAIAPIKey 设置OpenAI API密钥
+// customURL 为空时使用默认URL，customModel 为空时使用默认模型
+func (client *Client) SetOpenAIAPIKey(apiKey string, customURL string, customModel string) {
+	client.Provider = ProviderOpenAI
+	client.APIKey = apiKey
+	if customURL != "" {
+		client.BaseURL = customURL
+		log.Printf("🔧 [MCP] OpenAI 使用自定义 BaseURL: %s", customURL)
+	} else {
+		client.BaseURL = "https://api.openai.com/v1"
+		log.Printf("🔧 [MCP] OpenAI 使用默认 BaseURL: %s", client.BaseURL)
+	}
+	if customModel != "" {
+		normalizedModel := strings.TrimSpace(customModel)
+		client.Model = normalizedModel
+		log.Printf("🔧 [MCP] OpenAI 使用自定义 Model: %s", normalizedModel)
+	} else {
+		client.Model = "gpt-5.2"
+		log.Printf("🔧 [MCP] OpenAI 使用默认 Model: %s", client.Model)
+	}
+	if apiKey != "" {
+		log.Printf("🔧 [MCP] OpenAI API Key 已设置 (len=%d)", len(apiKey))
+	}
+}
+
 // SetCustomAPI 设置自定义OpenAI兼容API
 func (client *Client) SetCustomAPI(apiURL, apiKey, modelName string) {
 	client.Provider = ProviderCustom
@@ -162,7 +188,7 @@ func (client *Client) SetClient(Client Client) {
 // CallWithMessages 使用 system + user prompt 调用AI API（推荐）
 func (client *Client) CallWithMessages(systemPrompt, userPrompt string) (string, error) {
 	if client.APIKey == "" {
-		return "", fmt.Errorf("AI API密钥未设置，请先调用 SetDeepSeekAPIKey() 或 SetQwenAPIKey()")
+		return "", fmt.Errorf("AI API密钥未设置，请先配置 API KEY")
 	}
 
 	// 重试配置
