@@ -259,9 +259,13 @@ func (client *Client) callOnce(systemPrompt, userPrompt string) (string, error) 
 	requestBody := map[string]interface{}{
 		"model":       client.Model,
 		"messages":    messages,
-		"temperature": 0.5, // 降低temperature以提高JSON格式稳定性
-		"max_tokens":  client.MaxTokens,
+		"temperature": 0.5,  // 降低temperature以提高JSON格式稳定性
 		"stream":      true, // 启用流式，减少长响应截断概率
+	}
+	if client.Provider == ProviderOpenAI && openaiUseMaxCompletionTokens(client.Model) {
+		requestBody["max_completion_tokens"] = client.MaxTokens
+	} else {
+		requestBody["max_tokens"] = client.MaxTokens
 	}
 
 	// 注意：response_format 参数仅 OpenAI 支持，DeepSeek/Qwen 不支持
@@ -321,6 +325,63 @@ func (client *Client) callOnce(systemPrompt, userPrompt string) (string, error) 
 	}
 
 	return content, nil
+}
+
+func openaiUseMaxCompletionTokens(model string) bool {
+	version, ok := parseGPTVersion(model)
+	if !ok {
+		return false
+	}
+	major, minor := version[0], version[1]
+	if major > 5 {
+		return true
+	}
+	if major < 5 {
+		return false
+	}
+	return minor >= 2
+}
+
+// parseGPTVersion 解析形如 gpt-5.2 或 gpt-5.2-xxx 的版本号
+// 返回 [major, minor]，若无法解析则 ok=false
+func parseGPTVersion(model string) ([2]int, bool) {
+	var out [2]int
+	lower := strings.ToLower(strings.TrimSpace(model))
+	idx := strings.Index(lower, "gpt-")
+	if idx == -1 {
+		return out, false
+	}
+	start := idx + len("gpt-")
+	if start >= len(lower) {
+		return out, false
+	}
+	var versionBuilder strings.Builder
+	for i := start; i < len(lower); i++ {
+		ch := lower[i]
+		if (ch >= '0' && ch <= '9') || ch == '.' {
+			versionBuilder.WriteByte(ch)
+			continue
+		}
+		break
+	}
+	versionStr := versionBuilder.String()
+	if versionStr == "" {
+		return out, false
+	}
+	parts := strings.Split(versionStr, ".")
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return out, false
+	}
+	minor := 0
+	if len(parts) > 1 {
+		if parsed, err := strconv.Atoi(parts[1]); err == nil {
+			minor = parsed
+		}
+	}
+	out[0] = major
+	out[1] = minor
+	return out, true
 }
 
 // isRetryableError 判断错误是否可重试
