@@ -2371,7 +2371,7 @@ func (tbm *TelegramBotManager) handleModelSwitchSelectCallback(callback *tgbotap
 		return
 	}
 
-	tbm.answerCallbackQuery(callback.ID, "⏳ 正在切换模型...")
+	tbm.answerCallbackQuery(callback.ID, "⏳ 正在准备切换...")
 
 	trader, err := tbm.getPrimaryTrader(telegramID)
 	if err != nil {
@@ -2388,54 +2388,30 @@ func (tbm *TelegramBotManager) handleModelSwitchSelectCallback(callback *tgbotap
 		tbm.tryEditCallbackMessageWithInlineKeyboard(
 			callback.Message.MessageID,
 			chatID,
-			"⏳ 正在切换模型...",
+			"⏳ 已选择模型，等待输入 API KEY...",
 			tgbotapi.NewInlineKeyboardMarkup(),
 		)
 	}
 
-	apiKey := strings.TrimSpace(trader.AIModelAPIKey)
-	if apiKey == "" {
-		tbm.answerCallbackQuery(callback.ID, "请先配置 API KEY")
-		errMsg := "❌ 未检测到 API KEY，请先使用 /settings 配置后再切换模型"
-		if callback.Message != nil {
-			if !tbm.tryEditCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, errMsg, tgbotapi.NewInlineKeyboardMarkup()) {
-				tbm.sendMessage(chatID, errMsg)
-			}
-			return
-		}
-		tbm.sendMessage(chatID, errMsg)
-		return
-	}
-
-	modelName := ""
+	sessionMgr := tbm.tgTraderMgr.GetSessionManager()
+	session := sessionMgr.GetOrCreateSession(telegramID)
+	session.TraderConfig.AIProvider = provider
 	if provider == "openai" {
-		modelName = "gpt-5.2"
+		session.TraderConfig.AIModelName = "gpt-5.2"
+	} else {
+		session.TraderConfig.AIModelName = ""
 	}
-	if _, err := tbm.tgTraderMgr.UpdateTraderAPIConfig(telegramID, provider, apiKey, modelName); err != nil {
-		tbm.answerCallbackQuery(callback.ID, "切换失败")
-		errMsg := fmt.Sprintf("❌ %s", esc(err))
-		if callback.Message != nil {
-			if !tbm.tryEditCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, errMsg, tgbotapi.NewInlineKeyboardMarkup()) {
-				tbm.sendMessage(chatID, errMsg)
-			}
-			return
-		}
-		tbm.sendMessage(chatID, errMsg)
-		return
-	}
+	session.TraderConfig.Step = StateUpdatingAPIKey
+	sessionMgr.UpdateTraderConfig(telegramID, session.TraderConfig)
+	sessionMgr.UpdateSessionState(telegramID, StateUpdatingAPIKey)
 
 	displayName := aiProviderDisplayName(provider)
-	tbm.answerCallbackQuery(callback.ID, "✅ 已切换模型")
-
-	updatedText := fmt.Sprintf("✅ 已切换模型：%s（立即生效）", esc(displayName))
+	tbm.answerCallbackQuery(callback.ID, "✅ 已选择模型")
 	if callback.Message != nil {
-		if !tbm.tryEditCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup()) {
-			tbm.sendMessage(chatID, updatedText)
-		}
-		return
+		updatedText := fmt.Sprintf("%s\n\n✅ 已选择：%s\n\n请继续输入 API KEY", callback.Message.Text, esc(displayName))
+		tbm.editCallbackMessageWithInlineKeyboard(callback.Message.MessageID, chatID, updatedText, tgbotapi.NewInlineKeyboardMarkup())
 	}
-
-	tbm.sendMessage(chatID, updatedText)
+	tbm.sendMessage(chatID, tbm.configWizard.getAPIKeyMessage(provider))
 }
 
 func (tbm *TelegramBotManager) handleModelSwitchCancelCallback(callback *tgbotapi.CallbackQuery, chatID int64) {
