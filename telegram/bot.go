@@ -868,13 +868,19 @@ func (tbm *TelegramBotManager) handleAPIKeyUpdateFlow(update tgbotapi.Update, se
 		providerName := aiProviderDisplayName(provider)
 		maskedKey := tbm.configWizard.maskAPIKey(input)
 
+		statusHint := "配置已保存，启动交易员后生效。"
+		if traderRecord.IsRunning {
+			statusHint = "交易员正在运行，配置已热更新，下一次决策生效。"
+		}
+
 		successMsg := fmt.Sprintf(`✅ 已为 %s 更新 %s API KEY
 • 新密钥: <code>%s</code>
 
-如交易员正在运行，请执行 /stop_trader 后再 /start_trader 让新密钥生效。`,
+%s`,
 			esc(traderRecord.Name),
 			esc(providerName),
-			esc(maskedKey))
+			esc(maskedKey),
+			statusHint)
 
 		tbm.sendMessage(chatID, successMsg)
 	default:
