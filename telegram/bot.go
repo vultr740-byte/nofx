@@ -2231,7 +2231,7 @@ func (tbm *TelegramBotManager) handleTraderStatus(update tgbotapi.Update) {
 			tgbotapi.NewInlineKeyboardButtonData(buttonText, fmt.Sprintf("%s|%d", buttonAction, telegramID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔁 切换策略", fmt.Sprintf("prompt_switch|%d", telegramID)),
+			tgbotapi.NewInlineKeyboardButtonData("🧩 切换策略", fmt.Sprintf("prompt_switch|%d", telegramID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔁 切换模型", fmt.Sprintf("model_switch|%d", telegramID)),
