@@ -437,7 +437,7 @@ func buildUserPrompt(ctx *Context) string {
 		// 注释掉技术指标显示，default.txt 策略只使用结构分析
 		// sb.WriteString(fmt.Sprintf("BTC: %.2f (1h: %+.2f%%, 4h: %+.2f%%) | MACD: %.4f | RSI: %.2f\n\n",
 		// 	btcData.CurrentPrice, btcData.PriceChange1h, btcData.PriceChange4h,
-	// 	btcData.CurrentMACD, btcData.CurrentRSI14))
+		// 	btcData.CurrentMACD, btcData.CurrentRSI14))
 	}
 
 	// 账户
@@ -630,12 +630,11 @@ func extractCoTTrace(response string) string {
 // extractDecisions 提取JSON决策列表
 func extractDecisions(response string) ([]Decision, error) {
 	// 预清洗：去零宽/BOM
-	s := removeInvisibleRunes(response)
+	s := ensureUTF8Validity(removeInvisibleRunes(response))
 	s = strings.TrimSpace(s)
 
-	// 🔧 关键修复 (Critical Fix)：在正则匹配之前就先修复全角字符！
-	// 否则正则表达式 \[ 无法匹配全角的 ［
-	s = fixMissingQuotes(s)
+	// 🔧 仅在全局做安全的括号修复，避免干扰 reasoning 中的引号
+	s = normalizeJSONBrackets(s)
 
 	// 方法1: 优先尝试从 <decision> 标签中提取
 	var jsonPart string
@@ -652,8 +651,8 @@ func extractDecisions(response string) ([]Decision, error) {
 		log.Printf("⚠️  未找到 <decision> 标签，使用全文搜索JSON")
 	}
 
-	// 修复 jsonPart 中的全角字符
-	jsonPart = fixMissingQuotes(jsonPart)
+	// 修复 jsonPart 中的结构性全角字符（仅对字符串外生效）
+	jsonPart = normalizeJSONPunctuation(jsonPart)
 
 	// 特殊容错：如果含有 ```json 但围栏未闭合，尝试手动截取到最后一个 ']'
 	if strings.Contains(jsonPart, "```json") {
@@ -664,7 +663,7 @@ func extractDecisions(response string) ([]Decision, error) {
 		if salvaged := salvageJSONArray(block); salvaged != "" {
 			jsonContent := strings.TrimSpace(salvaged)
 			jsonContent = compactArrayOpen(jsonContent)
-			jsonContent = fixMissingQuotes(jsonContent)
+			jsonContent = normalizeJSONPunctuation(jsonContent)
 			jsonContent = stripThousandSeparators(jsonContent)
 			jsonContent = normalizeRangeNumbers(jsonContent)
 			if err := validateJSONFormat(jsonContent); err == nil {
@@ -679,8 +678,8 @@ func extractDecisions(response string) ([]Decision, error) {
 	// 1) 优先从 ```json 代码块中提取
 	if m := reJSONFence.FindStringSubmatch(jsonPart); m != nil && len(m) > 1 {
 		jsonContent := strings.TrimSpace(m[1])
-		jsonContent = compactArrayOpen(jsonContent) // 把 "[ {" 规整为 "[{"
-		jsonContent = fixMissingQuotes(jsonContent) // 二次修复（防止 regex 提取后还有残留全角）
+		jsonContent = compactArrayOpen(jsonContent)         // 把 "[ {" 规整为 "[{"
+		jsonContent = normalizeJSONPunctuation(jsonContent) // 二次修复（仅结构性字符）
 		jsonContent = stripThousandSeparators(jsonContent)
 		jsonContent = normalizeRangeNumbers(jsonContent)
 		if err := validateJSONFormat(jsonContent); err != nil {
@@ -694,7 +693,7 @@ func extractDecisions(response string) ([]Decision, error) {
 	}
 
 	// 2) 退而求其次 (Fallback)：全文寻找首个对象数组
-	// 注意：此时 jsonPart 已经过 fixMissingQuotes()，全角字符已转换为半角
+	// 注意：此时 jsonPart 已经过结构性字符修复
 	jsonContent := strings.TrimSpace(reJSONArray.FindString(jsonPart))
 	if jsonContent == "" {
 		jsonContent = salvageJSONArray(jsonPart)
@@ -721,7 +720,7 @@ func extractDecisions(response string) ([]Decision, error) {
 
 	// 🔧 规整格式（此时全角字符已在前面修复过）
 	jsonContent = compactArrayOpen(jsonContent)
-	jsonContent = fixMissingQuotes(jsonContent) // 二次修复（防止 regex 提取后还有残留全角）
+	jsonContent = normalizeJSONPunctuation(jsonContent) // 二次修复（仅结构性字符）
 	jsonContent = stripThousandSeparators(jsonContent)
 	jsonContent = normalizeRangeNumbers(jsonContent)
 
@@ -744,33 +743,90 @@ func extractDecisions(response string) ([]Decision, error) {
 	return decisions, nil
 }
 
-// fixMissingQuotes 替换中文引号和全角字符为英文引号和半角字符（避免AI输出全角JSON字符导致解析失败）
-func fixMissingQuotes(jsonStr string) string {
-	// 替换中文引号
-	jsonStr = strings.ReplaceAll(jsonStr, "\u201c", "\"") // "
-	jsonStr = strings.ReplaceAll(jsonStr, "\u201d", "\"") // "
-	jsonStr = strings.ReplaceAll(jsonStr, "\u2018", "'")  // '
-	jsonStr = strings.ReplaceAll(jsonStr, "\u2019", "'")  // '
+// normalizeJSONBrackets 仅修复全角/中文括号，避免影响 reasoning 内容
+func normalizeJSONBrackets(s string) string {
+	s = strings.ReplaceAll(s, "［", "[") // U+FF3B 全角左方括号
+	s = strings.ReplaceAll(s, "］", "]") // U+FF3D 全角右方括号
+	s = strings.ReplaceAll(s, "｛", "{") // U+FF5B 全角左花括号
+	s = strings.ReplaceAll(s, "｝", "}") // U+FF5D 全角右花括号
+	s = strings.ReplaceAll(s, "【", "[") // U+3010
+	s = strings.ReplaceAll(s, "】", "]") // U+3011
+	s = strings.ReplaceAll(s, "〔", "[") // U+3014
+	s = strings.ReplaceAll(s, "〕", "]") // U+3015
+	return s
+}
 
-	// ⚠️ 替换全角括号、冒号、逗号（防止AI输出全角JSON字符）
-	jsonStr = strings.ReplaceAll(jsonStr, "［", "[") // U+FF3B 全角左方括号
-	jsonStr = strings.ReplaceAll(jsonStr, "］", "]") // U+FF3D 全角右方括号
-	jsonStr = strings.ReplaceAll(jsonStr, "｛", "{") // U+FF5B 全角左花括号
-	jsonStr = strings.ReplaceAll(jsonStr, "｝", "}") // U+FF5D 全角右花括号
-	jsonStr = strings.ReplaceAll(jsonStr, "：", ":") // U+FF1A 全角冒号
-	jsonStr = strings.ReplaceAll(jsonStr, "，", ",") // U+FF0C 全角逗号
+// normalizeJSONPunctuation 修复 JSON 的结构性全角字符（仅在字符串外生效）
+func normalizeJSONPunctuation(jsonStr string) string {
+	jsonStr = ensureUTF8Validity(jsonStr)
 
-	// ⚠️ 替换CJK标点符号（AI在中文上下文中也可能输出这些）
-	jsonStr = strings.ReplaceAll(jsonStr, "【", "[") // CJK左方头括号 U+3010
-	jsonStr = strings.ReplaceAll(jsonStr, "】", "]") // CJK右方头括号 U+3011
-	jsonStr = strings.ReplaceAll(jsonStr, "〔", "[") // CJK左龟壳括号 U+3014
-	jsonStr = strings.ReplaceAll(jsonStr, "〕", "]") // CJK右龟壳括号 U+3015
-	jsonStr = strings.ReplaceAll(jsonStr, "、", ",") // CJK顿号 U+3001
+	var b strings.Builder
+	b.Grow(len(jsonStr))
 
-	// ⚠️ 替换全角空格为半角空格（JSON中不应该有全角空格）
-	jsonStr = strings.ReplaceAll(jsonStr, "　", " ") // U+3000 全角空格
+	inString := false
+	escaped := false
+	delimCurly := false
 
-	return jsonStr
+	for _, r := range jsonStr {
+		if inString {
+			if escaped {
+				escaped = false
+				b.WriteRune(r)
+				continue
+			}
+			if r == '\\' {
+				escaped = true
+				b.WriteRune(r)
+				continue
+			}
+			if !delimCurly && r == '"' {
+				inString = false
+				b.WriteRune(r)
+				continue
+			}
+			if delimCurly && (r == '\u201c' || r == '\u201d') {
+				inString = false
+				delimCurly = false
+				b.WriteByte('"')
+				continue
+			}
+			b.WriteRune(r)
+			continue
+		}
+
+		switch r {
+		case '"':
+			inString = true
+			delimCurly = false
+			b.WriteRune(r)
+		case '\u201c', '\u201d': // 中文双引号作为字符串起始
+			inString = true
+			delimCurly = true
+			b.WriteByte('"')
+		case '［':
+			b.WriteByte('[')
+		case '］':
+			b.WriteByte(']')
+		case '｛':
+			b.WriteByte('{')
+		case '｝':
+			b.WriteByte('}')
+		case '：':
+			b.WriteByte(':')
+		case '，', '、':
+			b.WriteByte(',')
+		case '【', '〔':
+			b.WriteByte('[')
+		case '】', '〕':
+			b.WriteByte(']')
+		case '　':
+			b.WriteByte(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+
+	return b.String()
 }
 
 // validateJSONFormat 验证 JSON 格式，检测常见错误
