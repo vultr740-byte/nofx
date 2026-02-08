@@ -3305,9 +3305,16 @@ func (at *AutoTrader) checkPositionDrawdown() {
 		return
 	}
 
+	activeKeys := make(map[string]struct{}, len(positions))
+
 	for _, pos := range positions {
-		symbol := pos["symbol"].(string)
-		side := pos["side"].(string)
+		symbol, _ := pos["symbol"].(string)
+		side, _ := pos["side"].(string)
+		if symbol == "" || side == "" {
+			continue
+		}
+		activeKeys[symbol+"_"+side] = struct{}{}
+
 		entryPrice := pos["entryPrice"].(float64)
 		markPrice := pos["markPrice"].(float64)
 		quantity := pos["positionAmt"].(float64)
@@ -3370,6 +3377,9 @@ func (at *AutoTrader) checkPositionDrawdown() {
 				symbol, side, currentPnLPct, peakPnLPct, drawdownPct)
 		}
 	}
+
+	// 清理已不存在的持仓峰值缓存，避免复用旧峰值
+	at.prunePeakPnLCache(activeKeys)
 }
 
 // 紧急平仓函数
@@ -3432,6 +3442,17 @@ func (at *AutoTrader) ClearPeakPnLCache(symbol, side string) {
 
 	posKey := symbol + "_" + side
 	delete(at.peakPnLCache, posKey)
+}
+
+func (at *AutoTrader) prunePeakPnLCache(activeKeys map[string]struct{}) {
+	at.peakPnLCacheMutex.Lock()
+	defer at.peakPnLCacheMutex.Unlock()
+
+	for key := range at.peakPnLCache {
+		if _, ok := activeKeys[key]; !ok {
+			delete(at.peakPnLCache, key)
+		}
+	}
 }
 
 func (at *AutoTrader) GetMCPClient() *mcp.Client {
